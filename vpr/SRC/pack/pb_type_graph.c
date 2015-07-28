@@ -1314,7 +1314,7 @@ static boolean realloc_and_load_pb_graph_pin_ptrs_at_var(INP int line_num,
 
 	ipb = pb_lsb;
 
-	while (ipb != pb_msb + add_or_subtract_pin) {
+	while (ipb != pb_msb + add_or_subtract_pb) {
 		ipin = pin_lsb;
 		j = 0;
 		while (ipin != pin_msb + add_or_subtract_pin) {

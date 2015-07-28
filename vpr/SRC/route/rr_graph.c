@@ -2663,7 +2663,7 @@ static t_clb_to_clb_directs * alloc_and_load_clb_to_clb_directs(INP t_direct_inf
 /* Add all direct clb-pin-to-clb-pin edges to given opin */ 
 static int get_opin_direct_connecions(int x, int y, int opin, INOUTP t_linked_edge ** edge_list_ptr, INP t_ivec *** L_rr_node_indices, 
 	INP int delayless_switch, INP t_direct_inf *directs, INP int num_directs, INP t_clb_to_clb_directs *clb_to_clb_directs) {
-	t_type_ptr type;
+	t_type_ptr type, target_type;
 	int grid_ofs;
 	int i, ipin, inode;
 	t_linked_edge *edge_list_head;
@@ -2678,6 +2678,16 @@ static int get_opin_direct_connecions(int x, int y, int opin, INOUTP t_linked_ed
 	for(i = 0; i < num_directs; i++) {
 		/* Find matching direct clb-to-clb connections with the same type as current grid location */
 		if(clb_to_clb_directs[i].from_clb_type == type) {
+
+
+            if(x + directs[i].x_offset < nx + 1 &&
+               x + directs[i].x_offset > 0 &&
+               y + directs[i].y_offset < ny + 1 &&
+               y + directs[i].y_offset > 0) {
+
+                //Only add connections if the target clb type matches the type in the direct specification
+                target_type = grid[x + directs[i].x_offset][y + directs[i].y_offset].type;
+                if(clb_to_clb_directs[i].to_clb_type == target_type) {
 			/* Compute index of opin with regards to given pins */ 
 			if(clb_to_clb_directs[i].from_clb_pin_start_index > clb_to_clb_directs[i].from_clb_pin_end_index) {
 				swap = TRUE;
@@ -2691,10 +2701,6 @@ static int get_opin_direct_connecions(int x, int y, int opin, INOUTP t_linked_ed
 			if(max_index >= opin && min_index <= opin) {
 				offset = opin - min_index;
 				/* This opin is specified to connect directly to an ipin, now compute which ipin to connect to */
-				if(x + directs[i].x_offset < nx + 1 &&
-				   x + directs[i].x_offset > 0 &&
-				   y + directs[i].y_offset < ny + 1 &&
-				   y + directs[i].y_offset > 0) {
 					   ipin = OPEN;
 						if(clb_to_clb_directs[i].to_clb_pin_start_index > clb_to_clb_directs[i].to_clb_pin_end_index) {
 							if(swap == TRUE) {
@@ -2715,6 +2721,7 @@ static int get_opin_direct_connecions(int x, int y, int opin, INOUTP t_linked_ed
 					   edge_list_head = insert_in_edge_list(edge_list_head, inode, delayless_switch);
 					   new_edges++;
 				}
+			}
 			}
 		}
 	}

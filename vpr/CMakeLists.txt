@@ -77,6 +77,3 @@ set_source_files_properties(${srcs} PROPERTIES LANGUAGE CXX)
 add_library(Vpr STATIC
 	${srcs}
 )
-add_dependencies(Vpr Pch)
-
-target_link_libraries(Vpr)

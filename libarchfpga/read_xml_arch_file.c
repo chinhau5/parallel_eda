@@ -1750,6 +1750,15 @@ static void ProcessModels(INOUTP ezxml_t Node, OUTP struct s_arch *arch) {
 				tp->min_size = -1; /* determined later by pb_types */
 				tp->next = temp->outputs;
 				tp->dir = OUT_PORT;
+				Prop = FindProperty(p, "is_clock", FALSE);
+				if (Prop && my_atoi(Prop) != 0) {
+					tp->is_clock = TRUE;
+				}
+				ezxml_set_attr(p, "is_clock", NULL);
+				if (tp->is_clock == TRUE && tp->is_non_clock_global == TRUE) {
+					vpr_printf(TIO_MESSAGE_ERROR,
+							"[LINE %d] Signal cannot be both a clock and a non-clock signal simultaneously\n", p->line);
+				}
 				temp->outputs = tp;
 				junk = p;
 				p = ezxml_next(p);
