@@ -51,8 +51,11 @@ set(srcs
 	SRC/route/check_rr_graph.c
 	SRC/route/route_breadth_first.c
 	SRC/route/route_common.c
+	SRC/route/route_common_local.c
 	SRC/route/route_timing.c
+	SRC/route/parallel_route_timing.c
 	SRC/route/route_tree_timing.c
+	SRC/route/route_tree_timing_local.c
 	SRC/route/rr_graph2.c
 	SRC/route/rr_graph_area.c
 	SRC/route/rr_graph.c
@@ -77,3 +80,35 @@ set_source_files_properties(${srcs} PROPERTIES LANGUAGE CXX)
 add_library(Vpr STATIC
 	${srcs}
 )
+
+target_include_directories(Vpr PUBLIC 
+	#${CMAKE_CURRENT_SOURCE_DIR}
+	#printhandler/SRC/TIO_InputOutputHandlers 
+	#libarchfpga/include 
+	SRC/util
+	SRC/timing 
+	SRC/pack 
+	SRC/place 
+	SRC/base 
+	SRC/route 
+	SRC/power 
+)
+
+target_compile_options(Vpr PRIVATE
+	-std=c++11
+	-g -O0
+	-fno-omit-frame-pointer #-fPIC
+	-Wall -Wno-write-strings -Wno-unused-variable -Wno-unused-private-field
+	-DNO_GRAPHICS) 
+
+if (CMAKE_SYSTEM_NAME STREQUAL "Linux" AND SANITIZE EQUAL 1)
+target_compile_options(Vpr PRIVATE
+	-fsanitize=memory
+	-fsanitize-blacklist=/home/chinhau5/vpr_parallel/blacklist.txt)
+endif()
+
+target_link_libraries(Vpr
+	ArchFpga	
+	PrintHandler
+	Pcre
+	)

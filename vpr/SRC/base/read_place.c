@@ -26,6 +26,7 @@ void read_place(INP const char *place_file, INP const char *arch_file,
 	infile = fopen(place_file, "r");
 
 	/* Check filenames in first line match */
+	printf("reading first line\n");
 	tokens = ReadLineTokens(infile, &line);
 	error = 0;
 	if (NULL == tokens) {
@@ -63,6 +64,7 @@ void read_place(INP const char *place_file, INP const char *arch_file,
 	free(*tokens);
 	free(tokens);
 
+	printf("reading second line\n");
 	/* Check array size in second line matches */
 	tokens = ReadLineTokens(infile, &line);
 	error = 0;
@@ -98,6 +100,7 @@ void read_place(INP const char *place_file, INP const char *arch_file,
 	free(*tokens);
 	free(tokens);
 
+	printf("starting parse\n");
 	tokens = ReadLineTokens(infile, &line);
 	while (tokens) {
 		/* Linear search to match pad to netlist */
@@ -126,6 +129,7 @@ void read_place(INP const char *place_file, INP const char *arch_file,
 		free(*tokens);
 		free(tokens);
 		tokens = ReadLineTokens(infile, &line);
+		printf("parsed line %d\n", line);
 	}
 
 	fclose(infile);

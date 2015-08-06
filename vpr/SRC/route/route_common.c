@@ -15,6 +15,7 @@
 #include "rr_graph.h"
 #include "read_xml_arch_file.h"
 #include "ReadOptions.h"
+#include "parallel_route_timing.h"
 
 /***************** Variables shared only by route modules *******************/
 
@@ -286,7 +287,7 @@ boolean try_route(int width_fac, struct s_router_opts router_opts,
 	} else { /* TIMING_DRIVEN route */
 		vpr_printf(TIO_MESSAGE_INFO, "Confirming Router Algorithm: TIMING_DRIVEN.\n");
 		assert(router_opts.route_type != GLOBAL);
-		success = try_timing_driven_route(router_opts, net_delay, slacks,
+		success = try_parallel_timing_driven_route(router_opts, net_delay, slacks,
 			clb_opins_used_locally,timing_inf.timing_analysis_enabled);
 	}
 

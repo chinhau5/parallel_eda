@@ -35,6 +35,7 @@
 
 #include "arch_types.h"
 #include <map>
+#include <pthread.h>
 
 /*******************************************************************************
  * Global data types and constants
@@ -895,8 +896,11 @@ typedef struct s_rr_node {
 	short ptc_num;
 
 	short cost_index;
-	short occ;
 	short capacity;
+	short occ;
+	float pres_cost;
+	float acc_cost;
+	pthread_mutex_t lock; /* protects occ pres_cost and acc_cost */
 	short fan_in;
 	short num_edges;
 	t_rr_type type;
@@ -920,6 +924,7 @@ typedef struct s_rr_node {
 	float pack_intrinsic_cost;
 
 	int z; /* For IPIN, source, and sink nodes, helps identify which location this rr_node belongs to */
+
 } t_rr_node;
 /* Main structure describing one routing resource node.  Everything in       *
  * this structure should describe the graph -- information needed only       *

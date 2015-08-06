@@ -404,6 +404,11 @@ void build_rr_graph(INP t_graph_type graph_type, INP int L_num_types,
 			Fc_out, Fc_xofs, Fc_yofs, rr_node_indices, nodes_per_chan, sb_type,
 			delayless_switch, directionality, wire_to_ipin_switch, &Fc_clipped, directs, num_directs, clb_to_clb_directs);
 
+	for (i = 0; i < num_rr_nodes; i++) {
+		rr_node[i].acc_cost = 1;
+		rr_node[i].pres_cost = 1;
+	}
+
 #ifdef MUX_SIZE_DIST_DISPLAY
 	if (UNI_DIRECTIONAL == directionality)
 	{
@@ -423,10 +428,10 @@ void build_rr_graph(INP t_graph_type graph_type, INP int L_num_types,
 
 	rr_graph_externals(timing_inf, segment_inf, num_seg_types, nodes_per_chan,
 			wire_to_ipin_switch, base_cost_type);
-	if (getEchoEnabled() && isEchoFileEnabled(E_ECHO_RR_GRAPH)) {
+/*	if (getEchoEnabled() && isEchoFileEnabled(E_ECHO_RR_GRAPH)) {*/
 		dump_rr_graph(getEchoFileName(E_ECHO_RR_GRAPH));
-	} else
-		;
+/*	} else*/
+/*		;*/
 
 	check_rr_graph(graph_type, types, L_nx, L_ny, nodes_per_chan, Fs,
 			num_seg_types, num_switches, segment_inf, global_route_switch,
