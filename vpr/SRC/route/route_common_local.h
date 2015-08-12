@@ -1,6 +1,8 @@
 #include <queue>
 #include "route_common_types.h"
 
+void print_route(char *route_file, int **sink_order);
+
 float get_rr_cong_cost(int inode, int num_sinks);
 
 void node_to_heap(int inode, float cost, int prev_node, int prev_edge,
@@ -10,7 +12,7 @@ void node_to_heap(int inode, float cost, int prev_node, int prev_edge,
 
 void thread_safe_free_traceback(int inet);
 
-void thread_safe_pathfinder_update_one_cost(struct s_trace *route_segment_start,
+void thread_safe_pathfinder_update_one_cost(int inet, struct s_trace *route_segment_start,
 		int add_or_sub, float pres_fac);
 
 void thread_safe_pathfinder_update_cost(float pres_fac, float acc_fac);

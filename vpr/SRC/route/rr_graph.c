@@ -2,6 +2,8 @@
 #include <math.h>
 #include <assert.h>
 #include <string.h>
+#include <zlog.h>
+#include <queue>
 #include "util.h"
 #include "vpr_types.h"
 #include "globals.h"
@@ -43,6 +45,10 @@ typedef struct s_clb_to_clb_directs {
 } t_clb_to_clb_directs;
 
 /* UDSD Modifications by WMF End */
+
+static const char *rr_types[] =  {
+	"SOURCE", "SINK", "IPIN", "OPIN", "CHANX", "CHANY", "INTRA_CLUSTER_EDGE"
+};
 
 /******************* Variables local to this module. ***********************/
 
@@ -189,6 +195,190 @@ static int **alloc_and_load_actual_fc(INP int L_num_types, INP t_type_ptr types,
 
 /******************* Subroutine definitions *******************************/
 
+enum class NodeColor {
+	WHITE, GRAY, BLACK
+};
+
+void postorder_dfs(int inode, NodeColor *node_color);
+void load_reachability();
+
+void test_dfs()
+{
+	num_rr_nodes = 7;
+	rr_node = new t_rr_node[num_rr_nodes];
+
+	rr_node[0].num_edges = 2;
+	rr_node[0].edges = new int[rr_node[0].num_edges];
+	rr_node[0].edges[0] = 1;
+	rr_node[0].edges[1] = 2;
+
+	rr_node[1].num_edges = 1;
+	rr_node[1].edges = new int[rr_node[1].num_edges];
+	rr_node[1].edges[0] = 3;
+
+	rr_node[2].num_edges = 1;
+	rr_node[2].edges = new int[rr_node[2].num_edges];
+	rr_node[2].edges[0] = 3;
+
+	rr_node[3].num_edges = 2;
+	rr_node[3].edges = new int[rr_node[3].num_edges];
+	rr_node[3].edges[0] = 4;
+	rr_node[3].edges[1] = 5;
+
+	rr_node[4].num_edges = 1;
+	rr_node[4].edges = new int[rr_node[4].num_edges];
+	rr_node[4].edges[0] = 6;
+	
+	rr_node[5].num_edges = 1;
+	rr_node[5].edges = new int[rr_node[5].num_edges];
+	rr_node[5].edges[0] = 6;
+
+	rr_node[6].num_edges = 0;
+	/*rr_node[6].edges = new int[rr_node[6].num_edges];*/
+	/*rr_node[6].edges[0] = 4;*/
+	/*rr_node[6].edges[1] = 5;*/
+
+	NodeColor *node_color = new NodeColor[num_rr_nodes];
+	for (int i = 0; i < num_rr_nodes; ++i) {
+		node_color[i] = NodeColor::WHITE;
+	}
+
+	postorder_dfs(0, node_color);
+	/*load_reachability();*/
+
+	for (int i = 0; i < num_rr_nodes; ++i) {
+		dzlog_debug("Node %d can reach\n", i);
+		for (const auto &n : rr_node[i].reachable_nodes) {
+			dzlog_debug("%d ", n);	
+		}
+		dzlog_debug("\n");	
+	}
+}
+
+
+void postorder_dfs(int inode, NodeColor *node_color)
+{
+	struct stack_item {
+		int inode;
+	};
+
+	/*struct node_state {*/
+		/*node_state() {*/
+			/*visited = false;*/
+			/*neighbor_visited = 0;*/
+			/*parent_inode = -1;*/
+		/*}*/
+		/*bool visited;*/
+		/*int neighbor_visited;*/
+		/*int parent_inode;*/
+	/*};*/
+	/*node_state *ns = new node_state[num_rr_nodes];*/
+
+	std::deque<stack_item> s;
+	s.push_back({ inode });
+
+	while (!s.empty()) {
+		const stack_item item = s.back();
+
+		t_rr_node *current = &rr_node[item.inode];
+		node_color[item.inode] = NodeColor::GRAY;
+
+		dzlog_debug("Current: %d\n", item.inode);
+
+		bool all_children_visited = true;
+		int num_pushes = 0;
+		for (int iedge = 0; iedge < current->num_edges; ++iedge) {
+			int child_inode = current->edges[iedge];
+
+			current->reachable_nodes.insert(child_inode);
+
+			dzlog_debug("Child: %d color: %d ", child_inode, node_color[child_inode]);
+
+			if (node_color[child_inode] == NodeColor::WHITE) {
+				dzlog_debug("pushed to stack");
+				s.push_back({ child_inode });
+				++num_pushes;
+			}
+
+			dzlog_debug("\n");
+
+			if (all_children_visited) {
+				all_children_visited = node_color[child_inode] != NodeColor::WHITE;
+			}
+		}
+
+		if (!all_children_visited && num_pushes == 0) {
+			dzlog_debug("We're gonna stall\n");
+			assert(false);
+		}
+		if (all_children_visited) { /* true if current node is a leaf or all children visited */
+			dzlog_debug("All children of %d visited\n", item.inode);
+			for (int iedge = 0; iedge < current->num_edges; ++iedge) {
+				int child_inode = current->edges[iedge];
+				t_rr_node *child = &rr_node[child_inode];
+
+				/*dzlog_debug("Child %d has reachable_nodes:\n", child_inode);*/
+				/*for (const auto &n: child->reachable_nodes) {*/
+					/*dzlog_debug("%d\n", n);*/
+				/*}*/
+
+				current->reachable_nodes.insert(
+						child->reachable_nodes.begin(), child->reachable_nodes.end());
+			}
+			node_color[item.inode] = NodeColor::BLACK;
+			s.pop_back();
+		} 
+	}
+
+	/*delete [] ns;*/
+}
+
+void explore_nodes(int inode, bool *visited, int &visit_count, int level)
+{	
+	if (!visited[inode]) {
+		visited[inode] = true;
+		++visit_count;
+
+		dzlog_debug("inode: %d level: %d\n", inode, level);
+
+		for (int iedge = 0; iedge < rr_node[inode].num_edges; ++iedge) {
+			explore_nodes(rr_node[inode].edges[iedge], visited, visit_count, level+1);
+		}
+
+		for (int iedge = 0; iedge < rr_node[inode].num_edges; ++iedge) {
+			rr_node[inode].reachable_nodes.insert(rr_node[inode].edges[iedge]);
+		}
+		for (int iedge = 0; iedge < rr_node[inode].num_edges; ++iedge) {
+			t_rr_node *neighbor = &rr_node[rr_node[inode].edges[iedge]];
+			rr_node[inode].reachable_nodes.insert(
+					neighbor->reachable_nodes.begin(), neighbor->reachable_nodes.end());
+		}
+	}
+}
+
+void load_reachability()
+{
+	int visit_count = 0;
+	bool *visited = new bool[num_rr_nodes];
+
+	for (int i = 0; i < num_rr_nodes; ++i) {
+		visited[i] = false;
+	}
+
+	NodeColor *node_color = new NodeColor[num_rr_nodes];
+	for (int i = 0; i < num_rr_nodes; ++i) {
+		node_color[i] = NodeColor::WHITE;
+	}
+
+	for (int i = 0; i < num_rr_nodes; ++i) {
+		/*explore_nodes(i, visited, visit_count, 0);*/
+		postorder_dfs(i, node_color);
+	}
+
+	delete [] visited;
+	delete [] node_color;
+}
+
 void build_rr_graph(INP t_graph_type graph_type, INP int L_num_types,
 		INP t_type_ptr types, INP int L_nx, INP int L_ny,
 		INP struct s_grid_tile **L_grid, INP int chan_width,
@@ -325,10 +515,15 @@ void build_rr_graph(INP t_graph_type graph_type, INP int L_num_types,
 	num_rr_nodes = 0;
 	rr_node_indices = alloc_and_load_rr_node_indices(nodes_per_chan, L_nx, L_ny,
 			&num_rr_nodes, seg_details);
-	rr_node = (t_rr_node *) my_malloc(sizeof(t_rr_node) * num_rr_nodes);
-	memset(rr_node, 0, sizeof(t_rr_node) * num_rr_nodes);
+	rr_node = new t_rr_node[num_rr_nodes]; //(t_rr_node *) my_malloc(sizeof(t_rr_node) * num_rr_nodes);
+	
+	/*memset(rr_node, 0, sizeof(t_rr_node) * num_rr_nodes);*/
 	L_rr_edge_done = (boolean *) my_malloc(sizeof(boolean) * num_rr_nodes);
 	memset(L_rr_edge_done, 0, sizeof(boolean) * num_rr_nodes);
+
+	for (int i = 0; i < num_rr_nodes; ++i) {
+		assert(!pthread_mutex_init(&rr_node[i].lock, NULL));
+	}
 
 	/* These are data structures used by the the unidir opin mapping. */
 	if (UNI_DIRECTIONAL == directionality) {
@@ -404,6 +599,7 @@ void build_rr_graph(INP t_graph_type graph_type, INP int L_num_types,
 			Fc_out, Fc_xofs, Fc_yofs, rr_node_indices, nodes_per_chan, sb_type,
 			delayless_switch, directionality, wire_to_ipin_switch, &Fc_clipped, directs, num_directs, clb_to_clb_directs);
 
+
 	for (i = 0; i < num_rr_nodes; i++) {
 		rr_node[i].acc_cost = 1;
 		rr_node[i].pres_cost = 1;
@@ -432,6 +628,8 @@ void build_rr_graph(INP t_graph_type graph_type, INP int L_num_types,
 		dump_rr_graph(getEchoFileName(E_ECHO_RR_GRAPH));
 /*	} else*/
 /*		;*/
+
+	load_reachability();
 
 	check_rr_graph(graph_type, types, L_nx, L_ny, nodes_per_chan, Fs,
 			num_seg_types, num_switches, segment_inf, global_route_switch,
@@ -1813,6 +2011,28 @@ void dump_rr_graph(INP const char *file_name) {
 #endif
 
 	fclose(fp);
+}
+
+void print_rr_node(int inode)
+{
+	dzlog_debug("%d %s ", inode, rr_types[rr_node[inode].type]);
+	if (rr_node[inode].direction == INC_DIRECTION) {
+		if (rr_node[inode].type == CHANX) {
+			dzlog_debug("(%d->%d,%d) ", rr_node[inode].xlow, rr_node[inode].xhigh, rr_node[inode].ylow);
+		} else if (rr_node[inode].type == CHANY) {
+			dzlog_debug("(%d,%d->%d) ", rr_node[inode].xlow, rr_node[inode].ylow, rr_node[inode].yhigh);
+		} else {
+			dzlog_debug("(%d,%d)(%d,%d) ", rr_node[inode].xlow, rr_node[inode].ylow, rr_node[inode].xhigh, rr_node[inode].yhigh);
+		}
+	} else {
+		if (rr_node[inode].type == CHANX) {
+			dzlog_debug("(%d->%d,%d) ", rr_node[inode].xhigh, rr_node[inode].xlow, rr_node[inode].ylow);
+		} else if (rr_node[inode].type == CHANY) {
+			dzlog_debug("(%d,%d->%d) ", rr_node[inode].xlow, rr_node[inode].yhigh, rr_node[inode].ylow);
+		} else {
+			dzlog_debug("(%d,%d)(%d,%d) ", rr_node[inode].xhigh, rr_node[inode].yhigh, rr_node[inode].xlow, rr_node[inode].ylow);
+		}
+	}
 }
 
 /* Prints all the data about node inode to file fp.                    */

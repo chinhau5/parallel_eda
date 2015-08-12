@@ -91,6 +91,38 @@ static int find_label_of_track(int *wire_mux_on_track, int num_wire_muxes,
 
 /******************** Subroutine definitions *******************************/
 
+std::pair<int, int> get_node_start(int inode)
+{
+	std::pair<int, int> start;
+	if (rr_node[inode].direction == INC_DIRECTION) {
+		start.first = rr_node[inode].xlow;
+		start.second = rr_node[inode].ylow;
+	} else if (rr_node[inode].direction == DEC_DIRECTION) {
+		start.first = rr_node[inode].xhigh;
+		start.second = rr_node[inode].yhigh;
+	} else {
+		start.first = rr_node[inode].xlow;
+		start.second = rr_node[inode].ylow;
+	}
+	return start;
+}
+
+std::pair<int, int> get_node_end(int inode)
+{
+	std::pair<int, int> start;
+	if (rr_node[inode].direction == INC_DIRECTION) {
+		start.first = rr_node[inode].xhigh;
+		start.second = rr_node[inode].yhigh;
+	} else if (rr_node[inode].direction == DEC_DIRECTION) {
+		start.first = rr_node[inode].xlow;
+		start.second = rr_node[inode].ylow;
+	} else {
+		start.first = rr_node[inode].xhigh;
+		start.second = rr_node[inode].yhigh;
+	}
+	return start;
+}
+
 /* This assigns tracks (individually or pairs) to segment types.
  * It tries to match requested ratio. If use_full_seg_groups is
  * true, then segments are assigned only in multiples of their

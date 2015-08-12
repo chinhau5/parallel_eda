@@ -31,16 +31,6 @@ target_include_directories(PrintHandler PUBLIC
 )
 
 target_compile_options(PrintHandler PRIVATE
-	-std=c++11
-	-g -O0
 	-ansi -pedantic
-	-fno-omit-frame-pointer #-fPIC
-	-Wall -Wpointer-arith -Wcast-qual -Wshadow -Wcast-align -Wno-write-strings
+	-Wpointer-arith -Wcast-qual -Wshadow -Wcast-align -Wno-write-strings
 	-D__USE_FIXED_PROTOTYPES__ -D_POSIX_SOURCE -DLINUX24_64 -DLINUX_X86_64 -D EZXML_NOMMAP -D_POSIX_C_SOURCE)
-
-if (CMAKE_SYSTEM_NAME STREQUAL "Linux" AND SANITIZE EQUAL 1)
-target_compile_options(PrintHandler PRIVATE
-	-fsanitize=memory
-	-fsanitize-blacklist=/home/chinhau5/vpr_parallel/blacklist.txt)
-endif()
-

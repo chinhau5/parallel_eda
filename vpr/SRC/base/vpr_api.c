@@ -245,6 +245,10 @@ void vpr_init_pre_place_and_route(INP t_vpr_setup vpr_setup, INP t_arch Arch) {
 				&num_nets, &clb_net);
 		/* This is done so that all blocks have subblocks and can be treated the same */
 		check_netlist();
+
+		for (int i = 0; i < num_nets; ++i) {
+			assert(!pthread_mutex_init(&clb_net[i].lock, NULL));
+		}
 	}
 
 	/* Output the current settings to console. */

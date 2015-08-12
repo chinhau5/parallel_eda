@@ -1,6 +1,8 @@
 #ifndef RR_GRAPH2_H
 #define RR_GRAPH2_H
 
+#include <utility>
+
 /************** Global variables shared only by the rr_* modules. ************/
 
 extern boolean *rr_edge_done; /* [0..num_rr_nodes-1].  Used to keep track  *
@@ -9,6 +11,9 @@ extern boolean *rr_edge_done; /* [0..num_rr_nodes-1].  Used to keep track  *
  * that's being constructed. Ensure that there are no duplicate edges.   */
 
 /******************* Subroutines exported by rr_graph2.c *********************/
+
+std::pair<int, int> get_node_start(int inode);
+std::pair<int, int> get_node_end(int inode);
 
 struct s_ivec ***alloc_and_load_rr_node_indices(INP int nodes_per_chan, 
 		INP int L_nx,

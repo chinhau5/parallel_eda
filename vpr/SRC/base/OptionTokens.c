@@ -57,6 +57,7 @@ struct s_TokenPair OptionBaseTokenList[] = {
 		{ "power_output_file", OT_POWER_OUT_FILE }, /* Output file for power results */
 		{ "power", OT_POWER }, /* Run power estimation? */
 		{ "tech_properties", OT_CMOS_TECH_BEHAVIOR_FILE }, /* Technology properties */
+        { "num_threads", OT_NUM_THREADS },
 		{ NULL, OT_BASE_UNKNOWN } /* End of list marker */
 };
 

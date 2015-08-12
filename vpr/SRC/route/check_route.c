@@ -541,10 +541,14 @@ static void recompute_occupancy_from_scratch(t_ivec ** clb_opins_used_locally) {
 	int inode, inet, iblk, iclass, ipin, num_local_opins;
 	struct s_trace *tptr;
 
+	int *old_occ = (int *)malloc(sizeof(int) * num_rr_nodes);
+
 	/* First set the occupancy of everything to zero. */
 
-	for (inode = 0; inode < num_rr_nodes; inode++)
+	for (inode = 0; inode < num_rr_nodes; inode++) {
+		old_occ[inode] = rr_node[inode].occ;
 		rr_node[inode].occ = 0;
+	}
 
 	/* Now go through each net and count the tracks and pins used everywhere */
 
@@ -568,6 +572,7 @@ static void recompute_occupancy_from_scratch(t_ivec ** clb_opins_used_locally) {
 			}
 
 			tptr = tptr->next;
+            assert(tptr);
 		}
 	}
 
@@ -583,6 +588,11 @@ static void recompute_occupancy_from_scratch(t_ivec ** clb_opins_used_locally) {
 				inode = clb_opins_used_locally[iblk][iclass].list[ipin];
 				rr_node[inode].occ++;
 			}
+		}
+	}
+
+	for (int i = 0; i < num_rr_nodes; ++i) {
+		if (rr_node[i].occ != old_occ[i]) {
 		}
 	}
 }

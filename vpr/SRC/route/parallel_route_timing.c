@@ -9,6 +9,7 @@
 #include <unistd.h>
 #include <semaphore.h>
 #include <queue>
+#include <zlog.h>
 #include "util.h"
 #include "vpr_types.h"
 /*#include "globals.h"*/
@@ -21,6 +22,10 @@
 #include "net_delay.h"
 #include "stats.h"
 #include "ReadOptions.h"
+#include "rr_graph_util.h"
+#include "rr_graph2.h"
+#include "rr_graph.h"
+#include "parallel_route_timing.h"
 
 extern int num_nets;
 extern struct s_net *clb_net;
@@ -34,6 +39,10 @@ extern struct s_switch_inf *switch_inf; /* [0..det_routing_arch.num_switch-1] */
 extern struct s_bb *route_bb;
 
 #define PARALLEL_ROUTE
+
+static const char *rr_types[] =  {
+	"SOURCE", "SINK", "IPIN", "OPIN", "CHANX", "CHANY", "INTRA_CLUSTER_EDGE"
+};
 
 void reserve_locally_used_opins(float pres_fac, boolean rip_up_local_opins,
 		t_ivec ** clb_opins_used_locally);
@@ -53,7 +62,7 @@ static void add_route_tree_to_heap(t_rt_node * rt_node, int target_node,
 
 static void timing_driven_expand_neighbours(const struct s_heap *current, int inet,
 		float bend_cost, float criticality_fac, int target_node,
-		float astar_fac, int highfanout_rlim,
+		float astar_fac, int highfanout_rlim, bool monotonic,
 		int *num_heap_pushes,
 		t_rr_node_route_inf *l_rr_node_route_inf,
 		std::priority_queue<struct s_heap> &heap);
@@ -126,6 +135,7 @@ typedef struct thread_info {
 	float *pres_fac;
 	float **net_delay;
 	t_slack *slacks;
+	int **sink_order; //[0..inet-1][1..num_sinks]
 
 	bool successful;
 } thread_info;
@@ -200,7 +210,7 @@ void *worker_thread(void *arg)
 
 		int inet = get_next_net(info->net_index);
 		while (inet >= 0) {
-			printf("Routing net %d\n", inet);
+			dzlog_debug("Routing net %d\n", inet);
 
 			num_heap_pushes = 0;
 			is_routable = parallel_timing_driven_route_net(inet, *info->pres_fac,
@@ -220,6 +230,10 @@ void *worker_thread(void *arg)
 				/*			free(net_index);*/
 				/*			free(sinks);*/
 				exit(-1);
+			}
+
+			for (int i = 0; i < clb_net[inet].num_sinks; ++i) {
+				info->sink_order[inet][i] = sink_order[i+1]; //sink order is offset by 1 due to allocation
 			}
 			inet = get_next_net(info->net_index);
 		}
@@ -243,6 +257,12 @@ void init_thread_info(int num_threads, thread_info *tinfo, int *net_index, float
 		exit(-1);
 	}
 
+	int **sink_order = (int **)malloc(sizeof(int *) * num_nets);
+	int max_num_pins = get_max_pins_per_net();
+	for (int i = 0; i < num_nets; ++i) {
+		sink_order[i] = (int *)malloc(sizeof(int) * max_num_pins);
+	}
+
 	for (int i = 0; i < num_threads; ++i) {
 		sprintf(str, "complete_route_sem_%d", i);
 		tinfo[i].complete_route_sem = sem_open(str, O_CREAT, S_IWUSR | S_IRUSR, 0);
@@ -258,6 +278,7 @@ void init_thread_info(int num_threads, thread_info *tinfo, int *net_index, float
 		tinfo[i].router_opts = router_opts;
 		tinfo[i].successful = false;
 		tinfo[i].pres_fac = pres_fac;
+		tinfo[i].sink_order = sink_order;
 	}
 }
 
@@ -337,7 +358,7 @@ boolean try_parallel_timing_driven_route(struct s_router_opts router_opts,
 		exit(-1);
 	}
 
-	const int num_threads = 4;
+    int num_threads = router_opts.num_threads;
 	thread_info *tinfo = (thread_info *)malloc(sizeof(thread_info) * num_threads);
 	init_thread_info(num_threads, tinfo, net_index, net_delay, slacks, &router_opts, &pres_fac);
 
@@ -361,7 +382,7 @@ boolean try_parallel_timing_driven_route(struct s_router_opts router_opts,
 			assert(!sem_post(tinfo[i].start_route_sem));
 		}
 		
-		printf("Signaled threads\n");
+/*		printf("Signaled threads\n");*/
 
 		/* wait for the worker threads to complete */
 		for (i = 0; i < num_threads; ++i) {
@@ -370,9 +391,9 @@ boolean try_parallel_timing_driven_route(struct s_router_opts router_opts,
 			}
 		}
 
-		printf("Threads completed\n");
+/*		printf("Threads completed\n");*/
 #else
-		printf("Sequential route\n");
+/*		printf("Sequential route\n");*/
 		worker_thread(tinfo);
 #endif
 
@@ -428,7 +449,7 @@ boolean try_parallel_timing_driven_route(struct s_router_opts router_opts,
 
 		char buffer[256];
 		sprintf(buffer, "routes_%d.txt", itry);
-		print_route(buffer);
+		print_route(buffer, tinfo[0].sink_order);
 
 		/* Pathfinder guys quit after finding a feasible route. I may want to keep *
 		 * going longer, trying to improve timing.  Think about this some.         */
@@ -549,7 +570,7 @@ boolean parallel_timing_driven_route_net(int inet, float pres_fac, float max_cri
 	std::priority_queue<struct s_heap> heap;
 
 	/* Rip-up any old routing. */
-	thread_safe_pathfinder_update_one_cost(trace_head[inet], -1, pres_fac);
+	thread_safe_pathfinder_update_one_cost(inet, trace_head[inet], -1, pres_fac);
 	thread_safe_free_traceback(inet);
 	
 	for (ipin = 1; ipin <= clb_net[inet].num_sinks; ipin++) { 
@@ -604,7 +625,7 @@ boolean parallel_timing_driven_route_net(int inet, float pres_fac, float max_cri
 		target_pin = sink_order[itarget];
 		target_node = net_rr_terminals[inet][target_pin];
 		
-		printf("target node: %d\n", target_node);
+		dzlog_debug("Sink: "); print_rr_node(target_node); dzlog_debug("\n");
 
 		target_criticality = pin_criticality[target_pin];
 
@@ -631,7 +652,7 @@ boolean parallel_timing_driven_route_net(int inet, float pres_fac, float max_cri
 		assert(inode >= 0 && inode < num_rr_nodes);
 
 		while (inode != target_node) {
-			printf("Current inode: %d\n", inode);
+			dzlog_debug("Current: "); print_rr_node(inode); dzlog_debug("\n");
 			old_tcost = l_rr_node_route_inf[inode].path_cost;
 			new_tcost = current.cost;
 
@@ -661,7 +682,7 @@ boolean parallel_timing_driven_route_net(int inet, float pres_fac, float max_cri
 
 				timing_driven_expand_neighbours(&current, inet, bend_cost,
 						target_criticality, target_node, astar_fac,
-						highfanout_rlim,
+						highfanout_rlim, false,
 						num_heap_pushes,
 						l_rr_node_route_inf,
 						heap);
@@ -692,7 +713,7 @@ boolean parallel_timing_driven_route_net(int inet, float pres_fac, float max_cri
 		new_route_start_tptr = thread_safe_update_traceback(&current, l_rr_node_route_inf, inet);
 		rt_node_of_sink[target_pin] = thread_safe_update_route_tree(&current, l_rr_node_route_inf, l_rr_node_to_rt_node);
 /*		free_heap_data(current);*/
-		thread_safe_pathfinder_update_one_cost(new_route_start_tptr, 1, pres_fac);
+		thread_safe_pathfinder_update_one_cost(inet, new_route_start_tptr, 1, pres_fac);
 
 		/* clear the heap */
 		heap = std::priority_queue<struct s_heap>();
@@ -745,9 +766,41 @@ static void add_route_tree_to_heap(t_rt_node * rt_node, int target_node,
 	}
 }
 
+/*std::ostream &operator<<(std::ostream &out, const t_rr_node &node)*/
+/*{*/
+	/*out */
+		/*<< rr_types[node.type] << " ";*/
+	/*if (node.direction == INC_DIRECTION) {*/
+		/*if (node.type == CHANX) {*/
+			/*out */
+				/*<< "(" << node.xlow << "->" << node.xhigh << ", " << node.ylow << ")";*/
+		/*} else if (node.type == CHANY) {*/
+			/*out */
+				/*<< "(" << node.xlow << ", " << node.ylow << "->" << node.yhigh << ")";*/
+		/*} else {*/
+			/*out */
+				/*<< "(" << node.xlow << ", " << node.ylow << ")"*/
+				/*<< "(" << node.xhigh << ", " << node.yhigh << ")";*/
+		/*}*/
+	/*} else {*/
+		/*if (node.type == CHANX) {*/
+			/*out */
+				/*<< "(" << node.xhigh << "->" << node.xlow << ", " << node.ylow << ")";*/
+		/*} else if (node.type == CHANY) {*/
+			/*out */
+				/*<< "(" << node.xlow << ", " << node.yhigh << "->" << node.ylow << ")";*/
+		/*} else {*/
+			/*out */
+				/*<< "(" << node.xhigh << ", " << node.yhigh << ")"*/
+				/*<< "(" << node.xlow << ", " << node.ylow << ")";*/
+		/*}*/
+	/*}*/
+	/*return out;*/
+/*}*/
+
 static void timing_driven_expand_neighbours(const struct s_heap *current, int inet,
 		float bend_cost, float criticality_fac, int target_node,
-		float astar_fac, int highfanout_rlim,
+		float astar_fac, int highfanout_rlim, bool monotonic,
 		int *num_heap_pushes,
 		t_rr_node_route_inf *l_rr_node_route_inf,
 		std::priority_queue<struct s_heap> &heap) {
@@ -769,21 +822,58 @@ static void timing_driven_expand_neighbours(const struct s_heap *current, int in
 	target_x = rr_node[target_node].xhigh;
 	target_y = rr_node[target_node].yhigh;
 
+	assert(rr_node[target_node].xlow == rr_node[target_node].xhigh &&
+			rr_node[target_node].ylow == rr_node[target_node].yhigh);
+
 	for (iconn = 0; iconn < num_edges; iconn++) {
 		to_node = rr_node[inode].edges[iconn];
+
+		dzlog_debug("\tNeighbor: "); print_rr_node(to_node); dzlog_debug(" ");
+
+		std::pair<int, int> current_pos = get_node_start(inode); 
+		std::pair<int, int> sink_pos = get_node_start(target_node); 
+
+		/*Interval<int> hor(current_pos.first, sink_pos.first);*/
+		/*Interval<int> vert(current_pos.second, sink_pos.second);*/
+
+		std::pair<int, int> neighbor_pos = get_node_start(to_node); 
+
+		if (rr_node[inode].type == OPIN) {
+			assert(rr_node[inode].xlow == rr_node[inode].xhigh &&
+					rr_node[inode].ylow == rr_node[inode].yhigh);
+
+			current_pos = neighbor_pos;
+		}
+		
+		int current_to_sink_manhattan_distance = abs(current_pos.first - sink_pos.first) + abs(current_pos.second - sink_pos.second);
+		int neighbor_to_sink_manhattan_distance = abs(neighbor_pos.first - sink_pos.first) + abs(neighbor_pos.second - sink_pos.second);
+
+		if (neighbor_to_sink_manhattan_distance > current_to_sink_manhattan_distance) {
+			dzlog_debug("Neighbor is non-monotonic [%d > %d]\n", neighbor_to_sink_manhattan_distance, current_to_sink_manhattan_distance);
+			/*continue;*/
+		}
+
+		/*if ((!hor.contains(neighbor_pos.first) || !vert.contains(neighbor_pos.second)) && monotonic) {*/
+			/*DVLOG(2) << rr_node[inode] << " -> " << rr_node[to_node] << " is outside of " << rr_node[target_node];*/
+			/*continue;*/
+		/*}*/
 
 		if (rr_node[to_node].xhigh < route_bb[inet].xmin
 				|| rr_node[to_node].xlow > route_bb[inet].xmax
 				|| rr_node[to_node].yhigh < route_bb[inet].ymin
-				|| rr_node[to_node].ylow > route_bb[inet].ymax)
+				|| rr_node[to_node].ylow > route_bb[inet].ymax) {
+			dzlog_debug("Outside of bounding box\n");
 			continue; /* Node is outside (expanded) bounding box. */
+		}
 
 		if (clb_net[inet].num_sinks >= HIGH_FANOUT_NET_LIM) {
 			if (rr_node[to_node].xhigh < target_x - highfanout_rlim
 					|| rr_node[to_node].xlow > target_x + highfanout_rlim
 					|| rr_node[to_node].yhigh < target_y - highfanout_rlim
-					|| rr_node[to_node].ylow > target_y + highfanout_rlim)
+					|| rr_node[to_node].ylow > target_y + highfanout_rlim) {
+				dzlog_debug("Outside of high fanout bin\n");
 				continue; /* Node is outside high fanout bin. */
+			}
 		}
 
 		/* Prune away IPINs that lead to blocks other than the target one.  Avoids  *
@@ -792,10 +882,14 @@ static void timing_driven_expand_neighbours(const struct s_heap *current, int in
 		 * Change this if you want to investigate route-throughs.                   */
 
 		to_type = rr_node[to_node].type;
+		/*assert(to_type != IPIN || (rr_node[to_node].xlow == rr_node[to_node].xhigh &&*/
+					/*rr_node[to_node].ylow == rr_node[to_node].yhigh));*/
 		if (to_type == IPIN
 				&& (rr_node[to_node].xhigh != target_x
-						|| rr_node[to_node].yhigh != target_y))
+						|| rr_node[to_node].yhigh != target_y)) {
+			dzlog_debug("Not the target IPIN\n");
 			continue;
+		}
 
 		/* new_back_pcost stores the "known" part of the cost to this node -- the   *
 		 * congestion cost of all the routing resources back to the existing route  *
@@ -830,7 +924,6 @@ static void timing_driven_expand_neighbours(const struct s_heap *current, int in
 						* get_timing_driven_expected_cost(to_node, target_node,
 								criticality_fac, new_R_upstream, inet);
 
-		printf("Adding neighbor:\n");
 		node_to_heap(to_node, new_tot_cost, inode, iconn, new_back_pcost,
 				new_R_upstream, l_rr_node_route_inf, heap);
 		++(*num_heap_pushes);

@@ -85,6 +85,8 @@ target_include_directories(Vpr PUBLIC
 	#${CMAKE_CURRENT_SOURCE_DIR}
 	#printhandler/SRC/TIO_InputOutputHandlers 
 	#libarchfpga/include 
+	/usr/local/include
+	/opt/local/include
 	SRC/util
 	SRC/timing 
 	SRC/pack 
@@ -95,17 +97,8 @@ target_include_directories(Vpr PUBLIC
 )
 
 target_compile_options(Vpr PRIVATE
-	-std=c++11
-	-g -O0
-	-fno-omit-frame-pointer #-fPIC
-	-Wall -Wno-write-strings -Wno-unused-variable -Wno-unused-private-field
+	-Wno-write-strings -Wno-unused-variable -Wno-unused-private-field
 	-DNO_GRAPHICS) 
-
-if (CMAKE_SYSTEM_NAME STREQUAL "Linux" AND SANITIZE EQUAL 1)
-target_compile_options(Vpr PRIVATE
-	-fsanitize=memory
-	-fsanitize-blacklist=/home/chinhau5/vpr_parallel/blacklist.txt)
-endif()
 
 target_link_libraries(Vpr
 	ArchFpga	

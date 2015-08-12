@@ -78,6 +78,7 @@ struct s_options {
 	int RouteChanWidth;
 	enum e_router_algorithm RouterAlgorithm;
 	enum e_base_cost_type base_cost_type;
+    int num_threads;
 
 	/* Timing-driven router options only */
 	float astar_fac;

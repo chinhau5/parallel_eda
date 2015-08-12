@@ -304,13 +304,19 @@ boolean feasible_routing(void) {
 
 	int inode;
 
+	bool feasible = true;
+	int num_overused = 0;
+
 	for (inode = 0; inode < num_rr_nodes; inode++) {
 		if (rr_node[inode].occ > rr_node[inode].capacity) {
-			return (FALSE);
+			feasible = false;
+			++num_overused;
 		}
 	}
 
-	return (TRUE);
+	printf("Overused: %d/%d (%g)\n", num_overused, num_rr_nodes, (float)num_overused/num_rr_nodes*100);
+
+	return feasible ? TRUE : FALSE;
 }
 
 void pathfinder_update_one_cost(struct s_trace *route_segment_start,

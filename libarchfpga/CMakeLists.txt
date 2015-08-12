@@ -22,13 +22,4 @@ target_include_directories(ArchFpga PUBLIC
 )
 
 target_compile_options(ArchFpga PRIVATE
-	-std=c++11
-	-g -O0
-	-fno-omit-frame-pointer #-fPIC
-	-Wall -Wno-write-strings -Wno-unused-variable -Wno-unused-private-field)
-
-if (CMAKE_SYSTEM_NAME STREQUAL "Linux" AND SANITIZE EQUAL 1)
-target_compile_options(ArchFpga PRIVATE
-	-fsanitize=memory
-	-fsanitize-blacklist=/home/chinhau5/vpr_parallel/blacklist.txt)
-endif()
+	-Wno-write-strings -Wno-unused-variable -Wno-unused-private-field)

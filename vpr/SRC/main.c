@@ -15,7 +15,8 @@
 #include <string.h>
 #include <assert.h>
 #include <time.h>
-
+/*#include <glog/logging.h>*/
+#include <zlog.h>
 #include "vpr_api.h"
 
 /**
@@ -30,6 +31,9 @@
  * 3.  Place-and-route and timing analysis
  * 4.  Clean up
  */
+
+void test_dfs();
+
 int main(int argc, char **argv) {
 	t_options Options;
 	t_arch Arch;
@@ -37,6 +41,17 @@ int main(int argc, char **argv) {
 	clock_t entire_flow_begin,entire_flow_end;
 
 	entire_flow_begin = clock();
+
+	if (dzlog_init("log.conf", "default") == -1) {
+		printf("failed to init zlog\n");
+		return -1;
+	}
+
+	/*test_dfs();*/
+	/*return 0;*/
+
+	/*google::InitGoogleLogging(argv[0]);*/
+	/*LOG(INFO) << "test";*/
 
 	/* Read options, architecture, and circuit netlist */
 	vpr_init(argc, argv, &Options, &vpr_setup, &Arch);

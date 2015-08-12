@@ -456,6 +456,11 @@ static void SetupRouterOpts(INP t_options Options, INP boolean TimingEnabled,
 		if (!Options.Count[OT_TIMING_ANALYZE_ONLY_WITH_NET_DELAY])
 			RouterOpts->doRouting = TRUE;
 	}
+    
+    RouterOpts->num_threads = 1;
+    if (Options.Count[OT_NUM_THREADS]) {
+        RouterOpts->num_threads = Options.num_threads;
+    }
 
 }
 

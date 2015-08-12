@@ -3,6 +3,7 @@
 #include <assert.h>
 #include <time.h>
 #include <queue>
+#include <zlog.h>
 #include "util.h"
 #include "vpr_types.h"
 #include "vpr_utils.h"
@@ -14,17 +15,174 @@
 #include "route_breadth_first.h"
 #include "place_and_route.h"
 #include "rr_graph.h"
+#include "rr_graph_util.h"
+#include "rr_graph2.h"
 #include "read_xml_arch_file.h"
 #include "ReadOptions.h"
+#include "parallel_route_timing.h"
 
 static boolean is_parallel_route;
+
+void print_route(char *route_file, int **sink_order) {
+
+	/* Prints out the routing to file route_file.  */
+
+	int inet, inode, ipin, bnum, ilow, jlow, node_block_pin, iclass;
+	t_rr_type rr_type;
+	struct s_trace *tptr;
+	const char *name_type[] = { "SOURCE", "SINK", "IPIN", "OPIN", "CHANX", "CHANY",
+			"INTRA_CLUSTER_EDGE" };
+	FILE *fp;
+
+	fp = fopen(route_file, "w");
+
+	fprintf(fp, "Array size: %d x %d logic blocks.\n", nx, ny);
+	fprintf(fp, "\nRouting:");
+	for (inet = 0; inet < num_nets; inet++) {
+		if (clb_net[inet].is_global == FALSE) {
+			if (clb_net[inet].num_sinks == FALSE) {
+				fprintf(fp, "\n\nNet %d (%s)\n\n", inet, clb_net[inet].name);
+				fprintf(fp, "\n\nUsed in local cluster only, reserved one CLB pin\n\n");
+			} else {
+				fprintf(fp, "\n\nNet %d (%s)\n\n", inet, clb_net[inet].name);
+				tptr = trace_head[inet];
+
+				int source_node = tptr->index;
+				assert(rr_node[source_node].type == SOURCE);
+
+				int sink = 0;
+				while (tptr != NULL) {
+					inode = tptr->index;
+					rr_type = rr_node[inode].type;
+
+					if (rr_type == CHANX || rr_type == CHANY) {
+						if (rr_node[inode].direction == INC_DIRECTION) {
+							fprintf(fp, "Node:\t%d\t%6s (%d,%d) ", inode, name_type[rr_type], rr_node[inode].xlow, rr_node[inode].ylow);
+							fprintf(fp, "to (%d,%d) ", rr_node[inode].xhigh, rr_node[inode].yhigh);
+						} else {
+							fprintf(fp, "Node:\t%d\t%6s (%d,%d) ", inode, name_type[rr_type], rr_node[inode].xhigh, rr_node[inode].yhigh);
+							fprintf(fp, "to (%d,%d) ", rr_node[inode].xlow, rr_node[inode].ylow);
+						}
+					} else {
+						ilow = rr_node[inode].xlow;
+						jlow = rr_node[inode].ylow;
+
+						fprintf(fp, "Node:\t%d\t%6s (%d,%d) ", inode, name_type[rr_type], ilow, jlow);
+
+						if ((ilow != rr_node[inode].xhigh)
+								|| (jlow != rr_node[inode].yhigh))
+							fprintf(fp, "to (%d,%d) ", rr_node[inode].xhigh,
+									rr_node[inode].yhigh);
+					}
+
+					int current_sink_node = net_rr_terminals[inet][sink_order[inet][sink]];
+
+					std::pair<int, int> source_pos = get_node_start(source_node); 
+					std::pair<int, int> sink_pos = get_node_start(current_sink_node); 
+					std::pair<int, int> current_pos = get_node_start(inode); 
+					std::pair<int, int> neighbor_pos = tptr->next ? get_node_start(tptr->next->index) : current_pos;
+
+					if (rr_type == OPIN) {
+						current_pos = neighbor_pos;
+					}
+
+					/*Interval<int> hor(source_pos.first, sink_pos.first);*/
+					/*Interval<int> vert(source_pos.second, sink_pos.second);*/
+
+					switch (rr_type) {
+
+					case IPIN:
+					case OPIN:
+						if (grid[ilow][jlow].type == IO_TYPE) {
+							fprintf(fp, " Pad: ");
+						} else { /* IO Pad. */
+							fprintf(fp, " Pin: ");
+						}
+						break;
+
+					case CHANX:
+					case CHANY:
+						fprintf(fp, " Track: ");
+						break;
+
+					case SOURCE:
+					case SINK:
+						if (grid[ilow][jlow].type == IO_TYPE) {
+							fprintf(fp, " Pad: ");
+						} else { /* IO Pad. */
+							fprintf(fp, " Class: ");
+						}
+						if (rr_type == SINK) {
+							assert(current_sink_node == inode);
+							++sink;
+						}
+						break;
+
+					default:
+						vpr_printf(TIO_MESSAGE_ERROR, "in print_route: Unexpected traceback element type: %d (%s).\n", 
+								rr_type, name_type[rr_type]);
+						exit(1);
+						break;
+					}
+
+					fprintf(fp, "%d  ", rr_node[inode].ptc_num);
+
+					int current_to_sink_manhattan_distance = abs(current_pos.first - sink_pos.first) + abs(current_pos.second - sink_pos.second);
+					int neighbor_to_sink_manhattan_distance = abs(neighbor_pos.first - sink_pos.first) + abs(neighbor_pos.second - sink_pos.second);
+
+					if (neighbor_to_sink_manhattan_distance > current_to_sink_manhattan_distance) {
+						fprintf(fp, "Neighbor is non-monotonic [%d > %d]", neighbor_to_sink_manhattan_distance, current_to_sink_manhattan_distance);
+					}
+					if (rr_type == SINK) {
+						fprintf(fp, "\n");
+					}
+
+					/* Uncomment line below if you're debugging and want to see the switch types *
+					 * used in the routing.                                                      */
+					/*          fprintf (fp, "Switch: %d", tptr->iswitch);    */
+
+					fprintf(fp, "\n");
+
+					tptr = tptr->next;
+				}
+			}
+		}
+
+		else { /* Global net.  Never routed. */
+			fprintf(fp, "\n\nNet %d (%s): global net connecting:\n\n", inet,
+					clb_net[inet].name);
+
+			for (ipin = 0; ipin <= clb_net[inet].num_sinks; ipin++) {
+				bnum = clb_net[inet].node_block[ipin];
+
+				node_block_pin = clb_net[inet].node_block_pin[ipin];
+				iclass = block[bnum].type->pin_class[node_block_pin];
+
+				fprintf(fp, "Block %s (#%d) at (%d, %d), Pin class %d.\n",
+						block[bnum].name, bnum, block[bnum].x, block[bnum].y,
+						iclass);
+			}
+		}
+	}
+
+	fclose(fp);
+
+	/*if (getEchoEnabled() && isEchoFileEnabled(E_ECHO_MEM)) {*/
+		/*fp = my_fopen(getEchoFileName(E_ECHO_MEM), "w", 0);*/
+		/*fprintf(fp, "\nNum_heap_allocated: %d   Num_trace_allocated: %d\n",*/
+				/*num_heap_allocated, num_trace_allocated);*/
+		/*fprintf(fp, "Num_linked_f_pointer_allocated: %d\n",*/
+				/*num_linked_f_pointer_allocated);*/
+		/*fclose(fp);*/
+	/*}*/
+}
 
 void set_parallel_route(boolean _is_parallel_route)
 {
 	is_parallel_route = _is_parallel_route;
 }
 
-void thread_safe_pathfinder_update_one_cost(struct s_trace *route_segment_start,
+void thread_safe_pathfinder_update_one_cost(int inet, struct s_trace *route_segment_start,
 		int add_or_sub, float pres_fac) {
 
 	/* This routine updates the occupancy and pres_cost of the rr_nodes that are *
@@ -42,12 +200,17 @@ void thread_safe_pathfinder_update_one_cost(struct s_trace *route_segment_start,
 	if (tptr == NULL) /* No routing yet. */
 		return;
 
+/*	assert(!pthread_mutex_lock(&clb_net[inet].lock));*/
+    
 	for (;;) {
 		inode = tptr->index;
 
-		pthread_mutex_lock(&rr_node[inode].lock);
+		assert(!pthread_mutex_lock(&rr_node[inode].lock));
 
 		occ = rr_node[inode].occ + add_or_sub;
+		if (occ < 0) {
+			printf("occ is less than 0\n");
+		}
 		capacity = rr_node[inode].capacity;
 
 		rr_node[inode].occ = occ;
@@ -62,8 +225,8 @@ void thread_safe_pathfinder_update_one_cost(struct s_trace *route_segment_start,
 			rr_node[inode].pres_cost = 1.
 					+ (occ + 1 - capacity) * pres_fac;
 		}
-
-		pthread_mutex_unlock(&rr_node[inode].lock);
+    
+		assert(!pthread_mutex_unlock(&rr_node[inode].lock));
 
 		if (rr_node[inode].type == SINK) {
 			tptr = tptr->next; /* Skip next segment. */
@@ -74,6 +237,8 @@ void thread_safe_pathfinder_update_one_cost(struct s_trace *route_segment_start,
 		tptr = tptr->next;
 
 	} /* End while loop -- did an entire traceback. */
+	
+/*	assert(!pthread_mutex_unlock(&clb_net[inet].lock));*/
 }
 
 void thread_safe_pathfinder_update_cost(float pres_fac, float acc_fac) {
@@ -186,9 +351,11 @@ float get_rr_cong_cost(int inode, int num_sinks) {
 
 	cost_index = rr_node[inode].cost_index;
 /*	cost = rr_indexed_data[cost_index].saved_base_cost * sqrt((float)num_sinks)*/
+	assert(!pthread_mutex_lock(&rr_node[inode].lock));
 	cost = rr_indexed_data[cost_index].saved_base_cost
 			* rr_node[inode].acc_cost
 			* rr_node[inode].pres_cost;
+	assert(!pthread_mutex_unlock(&rr_node[inode].lock));
 	return (cost);
 }
 
@@ -206,8 +373,10 @@ void node_to_heap(int inode, float cost, int prev_node, int prev_edge,
 
 	struct s_heap item;
 
-	if (cost >= l_rr_node_route_inf[inode].path_cost)
+	if (cost >= l_rr_node_route_inf[inode].path_cost) {
+		dzlog_debug("Not adding to heap\n");
 		return;
+	}
 
 	item.index = inode;
 	item.cost = cost;
@@ -216,7 +385,7 @@ void node_to_heap(int inode, float cost, int prev_node, int prev_edge,
 	item.backward_path_cost = backward_path_cost;
 	item.R_upstream = R_upstream;
 
-	printf("Adding node: %d cost: %g backward_path_cost: %g prev_node: %d to heap\n", inode, cost, backward_path_cost, prev_node);
+	dzlog_debug("Adding node: %d cost: %g backward_path_cost: %g prev_node: %d to heap\n", inode, cost, backward_path_cost, prev_node);
 
 	heap.push(item);
 }
@@ -332,6 +501,7 @@ void thread_safe_reserve_locally_used_opins(float pres_fac, boolean rip_up_local
 					item.prev_edge = OPEN;
 					item.backward_path_cost = 0;
 					item.R_upstream = 0;
+					dzlog_debug("Adding node: %d cost: %g backward_path_cost: %g prev_node: %d to heap\n", to_node, cost, 0.0, OPEN);
 					heap.push(item);
 				}
 

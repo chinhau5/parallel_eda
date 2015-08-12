@@ -35,6 +35,8 @@
 
 #include "arch_types.h"
 #include <map>
+#include <set>
+#include <vector>
 #include <pthread.h>
 
 /*******************************************************************************
@@ -511,6 +513,7 @@ typedef struct s_net {
 	boolean is_global;
 	boolean is_const_gen;
 	t_net_power * net_power;
+	pthread_mutex_t lock;
 } t_net;
 
 /* s_grid_tile is the minimum tile of the fpga                         
@@ -711,6 +714,7 @@ struct s_router_opts {
 	boolean verify_binary_search;
 	boolean full_stats;
 	boolean doRouting;
+    int num_threads;
 };
 
 /* All the parameters controlling the router's operation are in this        *
@@ -888,6 +892,14 @@ typedef struct s_trace {
 #define NO_PREVIOUS -1
 
 typedef struct s_rr_node {
+	s_rr_node() {
+		edges = NULL;
+		switches = NULL;
+		num_edges = 0;
+		fan_in = 0;
+		//num_wire_drivers = 0;
+		//num_opin_drivers = 0;
+	}
 	short xlow;
 	short xhigh;
 	short ylow;
@@ -898,6 +910,7 @@ typedef struct s_rr_node {
 	short cost_index;
 	short capacity;
 	short occ;
+	std::vector<int> occupant_net_id;
 	float pres_cost;
 	float acc_cost;
 	pthread_mutex_t lock; /* protects occ pres_cost and acc_cost */
@@ -924,6 +937,8 @@ typedef struct s_rr_node {
 	float pack_intrinsic_cost;
 
 	int z; /* For IPIN, source, and sink nodes, helps identify which location this rr_node belongs to */
+
+	std::set<int> reachable_nodes;
 
 } t_rr_node;
 /* Main structure describing one routing resource node.  Everything in       *
