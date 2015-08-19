@@ -46,10 +46,6 @@ typedef struct s_clb_to_clb_directs {
 
 /* UDSD Modifications by WMF End */
 
-static const char *rr_types[] =  {
-	"SOURCE", "SINK", "IPIN", "OPIN", "CHANX", "CHANY", "INTRA_CLUSTER_EDGE"
-};
-
 /******************* Variables local to this module. ***********************/
 
 /* Used to free "chunked" memory.  If NULL, no rr_graph exists right now.  */
@@ -192,6 +188,10 @@ static t_seg_details *alloc_and_load_global_route_seg_details(
 static int **alloc_and_load_actual_fc(INP int L_num_types, INP t_type_ptr types,
 		INP int nodes_per_chan, INP boolean is_Fc_out,
 		INP enum e_directionality directionality, OUTP boolean * Fc_clipped, INP boolean ignore_Fc_0);
+
+static const char *rr_types[] =  {
+	"SOURCE", "SINK", "IPIN", "OPIN", "CHANX", "CHANY", "INTRA_CLUSTER_EDGE"
+};
 
 /******************* Subroutine definitions *******************************/
 
@@ -629,7 +629,7 @@ void build_rr_graph(INP t_graph_type graph_type, INP int L_num_types,
 /*	} else*/
 /*		;*/
 
-	load_reachability();
+	/*load_reachability();*/
 
 	check_rr_graph(graph_type, types, L_nx, L_ny, nodes_per_chan, Fs,
 			num_seg_types, num_switches, segment_inf, global_route_switch,
@@ -1029,7 +1029,7 @@ void free_rr_graph(void) {
 
 	assert(rr_node_indices);
 	free_rr_node_indices(rr_node_indices);
-	free(rr_node);
+	delete [] rr_node;
 	free(rr_indexed_data);
 	for (i = 0; i < num_blocks; i++) {
 		free(rr_blk_source[i]);
@@ -2013,24 +2013,23 @@ void dump_rr_graph(INP const char *file_name) {
 	fclose(fp);
 }
 
-void print_rr_node(int inode)
+void sprintf_rr_node(int inode, char *buffer)
 {
-	dzlog_debug("%d %s ", inode, rr_types[rr_node[inode].type]);
 	if (rr_node[inode].direction == INC_DIRECTION) {
 		if (rr_node[inode].type == CHANX) {
-			dzlog_debug("(%d->%d,%d) ", rr_node[inode].xlow, rr_node[inode].xhigh, rr_node[inode].ylow);
+			sprintf(buffer, "%d %s (%d->%d,%d) ", inode, rr_types[rr_node[inode].type], rr_node[inode].xlow, rr_node[inode].xhigh, rr_node[inode].ylow);
 		} else if (rr_node[inode].type == CHANY) {
-			dzlog_debug("(%d,%d->%d) ", rr_node[inode].xlow, rr_node[inode].ylow, rr_node[inode].yhigh);
+			sprintf(buffer, "%d %s (%d,%d->%d) ", inode, rr_types[rr_node[inode].type], rr_node[inode].xlow, rr_node[inode].ylow, rr_node[inode].yhigh);
 		} else {
-			dzlog_debug("(%d,%d)(%d,%d) ", rr_node[inode].xlow, rr_node[inode].ylow, rr_node[inode].xhigh, rr_node[inode].yhigh);
+			sprintf(buffer, "%d %s (%d,%d)(%d,%d) ", inode, rr_types[rr_node[inode].type], rr_node[inode].xlow, rr_node[inode].ylow, rr_node[inode].xhigh, rr_node[inode].yhigh);
 		}
 	} else {
 		if (rr_node[inode].type == CHANX) {
-			dzlog_debug("(%d->%d,%d) ", rr_node[inode].xhigh, rr_node[inode].xlow, rr_node[inode].ylow);
+			sprintf(buffer, "%d %s (%d->%d,%d) ", inode, rr_types[rr_node[inode].type], rr_node[inode].xhigh, rr_node[inode].xlow, rr_node[inode].ylow);
 		} else if (rr_node[inode].type == CHANY) {
-			dzlog_debug("(%d,%d->%d) ", rr_node[inode].xlow, rr_node[inode].yhigh, rr_node[inode].ylow);
+			sprintf(buffer, "%d %s (%d,%d->%d) ", inode, rr_types[rr_node[inode].type], rr_node[inode].xlow, rr_node[inode].yhigh, rr_node[inode].ylow);
 		} else {
-			dzlog_debug("(%d,%d)(%d,%d) ", rr_node[inode].xhigh, rr_node[inode].yhigh, rr_node[inode].xlow, rr_node[inode].ylow);
+			sprintf(buffer, "%d %s (%d,%d)(%d,%d) ", inode, rr_types[rr_node[inode].type], rr_node[inode].xhigh, rr_node[inode].yhigh, rr_node[inode].xlow, rr_node[inode].ylow);
 		}
 	}
 }

@@ -58,8 +58,8 @@ void place_and_route(enum e_operation operation,
 	char msg[BUFSIZE];
 	int width_fac, i;
 	boolean success, Fc_clipped;
-	float **net_delay = NULL;
-	t_slack * slacks = NULL;
+	/*float **net_delay = NULL;*/
+	/*t_slack * slacks = NULL;*/
 	t_chunk net_delay_ch = {NULL, 0, NULL};
 
 	/*struct s_linked_vptr *net_delay_chunk_list_head;*/
@@ -126,12 +126,12 @@ void place_and_route(enum e_operation operation,
 
 		clb_opins_used_locally = alloc_route_structs();
 
-		slacks = alloc_and_load_timing_graph(timing_inf);
-		net_delay = alloc_net_delay(&net_delay_ch, clb_net,
-					num_nets);
+		alloc_and_load_timing_graph_new(timing_inf);
 
-		success = try_route(width_fac, router_opts, det_routing_arch,
-				segment_inf, timing_inf, net_delay, slacks, chan_width_dist,
+		t_net_timing *net_timing = alloc_net_timing(clb_net, num_nets);
+
+		success = try_route_new(width_fac, router_opts, det_routing_arch,
+				segment_inf, timing_inf, net_timing, chan_width_dist,
 				clb_opins_used_locally, &Fc_clipped, directs, num_directs);
 
 		if (Fc_clipped) {
@@ -151,12 +151,12 @@ void place_and_route(enum e_operation operation,
 			vpr_printf(TIO_MESSAGE_INFO, "Circuit successfully routed with a channel width factor of %d.\n", width_fac);
 			vpr_printf(TIO_MESSAGE_INFO, "\n");
 
-			routing_stats(router_opts.full_stats, router_opts.route_type,
+			routing_stats_new(router_opts.full_stats, router_opts.route_type,
 					det_routing_arch.num_switch, segment_inf,
 					det_routing_arch.num_segment, det_routing_arch.R_minW_nmos,
 					det_routing_arch.R_minW_pmos,
 					det_routing_arch.directionality,
-					timing_inf.timing_analysis_enabled, net_delay, slacks);
+					timing_inf.timing_analysis_enabled, net_timing);
 
 			print_route(route_file);
 
@@ -175,7 +175,7 @@ void place_and_route(enum e_operation operation,
 		
 
 		if (timing_inf.timing_analysis_enabled) {
-			assert(slacks->slack);
+			/*assert(slacks->slack);*/
 
 			if (getEchoEnabled() && isEchoFileEnabled(E_ECHO_POST_FLOW_TIMING_GRAPH)) {
 				print_timing_graph_as_blif (getEchoFileName(E_ECHO_POST_FLOW_TIMING_GRAPH),
@@ -187,10 +187,10 @@ void place_and_route(enum e_operation operation,
 			    verilog_writer();
 			  }
 
-			free_timing_graph(slacks);
+			/*free_timing_graph(slacks);*/
 
-			assert(net_delay);
-			free_net_delay(net_delay, &net_delay_ch);
+			/*assert(net_delay);*/
+			/*free_net_delay(net_delay, &net_delay_ch);*/
 		}
 
 		fflush(stdout);

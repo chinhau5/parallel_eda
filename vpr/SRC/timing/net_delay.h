@@ -13,5 +13,8 @@ void free_net_delay(float **net_delay,
 void load_net_delay_from_routing(float **net_delay, struct s_net *nets,
 		int n_nets);
 
+void load_net_delay_from_routing_new(t_net_timing *net_timing, struct s_net *nets,
+		int n_nets);
+
 void load_constant_net_delay(float **net_delay, float delay_value,
 		struct s_net *nets, int n_nets);

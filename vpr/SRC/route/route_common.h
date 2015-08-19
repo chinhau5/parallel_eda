@@ -53,4 +53,4 @@ void reserve_locally_used_opins(float pres_fac, boolean rip_up_local_opins,
 
 void free_chunk_memory_trace(void);
 
-
+void load_route_bb(int bb_factor);

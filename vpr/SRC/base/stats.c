@@ -24,6 +24,85 @@ static void get_channel_occupancy_stats(void);
 
 /************************* Subroutine definitions ****************************/
 
+void routing_stats_new(boolean full_stats, enum e_route_type route_type,
+		int num_switch, t_segment_inf * segment_inf, int num_segment,
+		float R_minW_nmos, float R_minW_pmos,
+		enum e_directionality directionality, boolean timing_analysis_enabled,
+		t_net_timing *net_timing) {
+
+	/* Prints out various statistics about the current routing.  Both a routing *
+	 * and an rr_graph must exist when you call this routine.                   */
+
+	float area, used_area;
+	int i, j;
+
+	get_length_and_bends_stats();
+	get_channel_occupancy_stats();
+
+	vpr_printf(TIO_MESSAGE_INFO, "Logic area (in minimum width transistor areas, excludes I/Os and empty grid tiles)...\n");
+
+	area = 0;
+	for (i = 1; i <= nx; i++) {
+		for (j = 1; j <= ny; j++) {
+			if (grid[i][j].offset == 0) {
+				if (grid[i][j].type->area == UNDEFINED) {
+					area += grid_logic_tile_area * grid[i][j].type->height;
+				} else {
+					area += grid[i][j].type->area;
+				}
+			}
+		}
+	}
+	/* Todo: need to add pitch of routing to blocks with height > 3 */
+	vpr_printf(TIO_MESSAGE_INFO, "\tTotal logic block area (Warning, need to add pitch of routing to blocks with height > 3): %g\n", area);
+
+	used_area = 0;
+	for (i = 0; i < num_blocks; i++) {
+		if (block[i].type != IO_TYPE) {
+			if (block[i].type->area == UNDEFINED) {
+				used_area += grid_logic_tile_area * block[i].type->height;
+			} else {
+				used_area += block[i].type->area;
+			}
+		}
+	}
+	vpr_printf(TIO_MESSAGE_INFO, "\tTotal used logic block area: %g\n", used_area);
+
+	if (route_type == DETAILED) {
+		count_routing_transistors(directionality, num_switch, segment_inf,
+				R_minW_nmos, R_minW_pmos);
+		get_segment_usage_stats(num_segment, segment_inf);
+
+		if (timing_analysis_enabled) {
+			load_net_delay_from_routing_new(net_timing, clb_net, num_nets);
+
+			load_timing_graph_net_delays_new(net_timing);
+
+#ifdef HACK_LUT_PIN_SWAPPING			
+			do_timing_analysis_new(net_timing, FALSE, TRUE, TRUE);
+#else
+			do_timing_analysis_new(net_timing, FALSE, FALSE, TRUE);
+#endif
+			if (getEchoEnabled()) {
+				if(isEchoFileEnabled(E_ECHO_TIMING_GRAPH))
+					print_timing_graph(getEchoFileName(E_ECHO_TIMING_GRAPH));
+				if (isEchoFileEnabled(E_ECHO_NET_DELAY)) 
+					print_net_delay_new(net_timing, getEchoFileName(E_ECHO_NET_DELAY));
+				if(isEchoFileEnabled(E_ECHO_LUT_REMAPPING))
+					print_lut_remapping(getEchoFileName(E_ECHO_LUT_REMAPPING));
+			}
+
+			print_slack_new(net_timing, TRUE, getOutputFileName(E_SLACK_FILE));
+			print_criticality_new(net_timing, TRUE, getOutputFileName(E_CRITICALITY_FILE));
+			print_critical_path(getOutputFileName(E_CRIT_PATH_FILE));
+
+			print_timing_stats();
+		}
+	}
+
+	if (full_stats == TRUE)
+		print_wirelen_prob_dist();
+}
 void routing_stats(boolean full_stats, enum e_route_type route_type,
 		int num_switch, t_segment_inf * segment_inf, int num_segment,
 		float R_minW_nmos, float R_minW_pmos,

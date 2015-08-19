@@ -2,6 +2,7 @@
 #include <stdio.h>
 #include <assert.h>
 #include <time.h>
+#include <zlog.h>
 #include "util.h"
 #include "vpr_types.h"
 #include "vpr_utils.h"
@@ -84,7 +85,7 @@ static t_chunk linked_f_pointer_ch = {NULL, 0, NULL};
 /******************** Subroutines local to route_common.c *******************/
 
 static void free_trace_data(struct s_trace *tptr);
-static void load_route_bb(int bb_factor);
+/*static void load_route_bb(int bb_factor);*/
 
 static struct s_trace *alloc_trace_data(void);
 static void add_to_heap(struct s_heap *hptr);
@@ -218,9 +219,35 @@ void get_serial_num(void) {
 	vpr_printf(TIO_MESSAGE_INFO, "Serial number (magic cookie) for the routing is: %d\n", serial_num);
 }
 
-boolean try_route(int width_fac, struct s_router_opts router_opts,
+int *net_bb_area;
+
+void write_net_stats(const char *filename)
+{
+	FILE *file = fopen(filename, "w");
+	std::vector<int> area;
+	net_bb_area = new int[num_nets];
+	int total_area = (nx+2)*(ny+2);
+	for (int i = 0; i < num_nets; ++i) {
+		int a = abs(route_bb[i].xmin-route_bb[i].xmax) * abs(route_bb[i].ymin-route_bb[i].ymax);
+		dzlog_debug("net: %s xmin: %d xmax: %d ymin: %d ymax: %d area: %d\n", clb_net[i].name, route_bb[i].xmin, route_bb[i].xmax, route_bb[i].ymin, route_bb[i].ymax, a);
+		area.push_back(a);
+		net_bb_area[i] = a;
+	}
+	std::sort(area.begin(), area.end());
+	int inet = 0;
+	for (const auto &a : area) {
+		fprintf(file, "%d %d %g\n", inet++, a, (float)a/total_area*100);
+	}
+	fclose(file);
+}
+
+void run_hmetis(int num_partitions, const char *graph_filename);
+void write_hmetis_graph_file(const char *filename);
+void test_intervals();
+
+boolean try_route_new(int width_fac, struct s_router_opts router_opts,
 		struct s_det_routing_arch det_routing_arch, t_segment_inf * segment_inf,
-		t_timing_inf timing_inf, float **net_delay, t_slack * slacks,
+		t_timing_inf timing_inf, t_net_timing *net_timing, 
 		t_chan_width_dist chan_width_dist, t_ivec ** clb_opins_used_locally,
 		boolean * Fc_clipped, t_direct_inf *directs, int num_directs) {
 
@@ -247,6 +274,16 @@ boolean try_route(int width_fac, struct s_router_opts router_opts,
 	/* Set the channel widths */
 
 	init_chan(width_fac, chan_width_dist);
+
+	init_route_structs(router_opts.bb_factor);
+
+	/*write_net_stats("net_bb_area.txt");*/
+
+	/*test_intervals();*/
+
+	/*write_hmetis_graph_file("test.graph");*/
+	/*run_hmetis(4, "test.graph");*/
+	/*exit(-1);*/
 
 	/* Free any old routing graph, if one exists. */
 
@@ -278,7 +315,91 @@ boolean try_route(int width_fac, struct s_router_opts router_opts,
 
 	alloc_and_load_rr_node_route_structs();
 
+	if (router_opts.router_algorithm == BREADTH_FIRST) {
+		vpr_printf(TIO_MESSAGE_INFO, "Confirming Router Algorithm: BREADTH_FIRST.\n");
+		success = try_breadth_first_route(router_opts, clb_opins_used_locally,
+				width_fac);
+	} else { /* TIMING_DRIVEN route */
+		vpr_printf(TIO_MESSAGE_INFO, "Confirming Router Algorithm: TIMING_DRIVEN.\n");
+		assert(router_opts.route_type != GLOBAL);
+		success = try_parallel_timing_driven_route(router_opts, net_timing,
+			clb_opins_used_locally,timing_inf.timing_analysis_enabled);
+	}
+
+	free_rr_node_route_structs();
+
+	return (success);
+}
+
+boolean try_route(int width_fac, struct s_router_opts router_opts,
+		struct s_det_routing_arch det_routing_arch, t_segment_inf * segment_inf,
+		t_timing_inf timing_inf, float **net_delay, t_slack * slacks,
+		t_chan_width_dist chan_width_dist, t_ivec ** clb_opins_used_locally,
+		boolean * Fc_clipped, t_direct_inf *directs, int num_directs) {
+
+	/* Attempts a routing via an iterated maze router algorithm.  Width_fac *
+	 * specifies the relative width of the channels, while the members of   *
+	 * router_opts determine the value of the costs assigned to routing     *
+	 * resource node, etc.  det_routing_arch describes the detailed routing *
+	 * architecture (connection and switch boxes) of the FPGA; it is used   *
+	 * only if a DETAILED routing has been selected.                        */
+
+	int tmp;
+	clock_t begin, end;
+	boolean success;
+	t_graph_type graph_type;
+
+	if (router_opts.route_type == GLOBAL) {
+		graph_type = GRAPH_GLOBAL;
+	} else {
+		graph_type = (
+				det_routing_arch.directionality == BI_DIRECTIONAL ?
+						GRAPH_BIDIR : GRAPH_UNIDIR);
+	}
+
+	/* Set the channel widths */
+
+	init_chan(width_fac, chan_width_dist);
+
 	init_route_structs(router_opts.bb_factor);
+
+	/*write_net_stats("net_bb_area.txt");*/
+
+	/*test_intervals();*/
+
+	/*write_hmetis_graph_file("test.graph");*/
+	/*run_hmetis(4, "test.graph");*/
+	/*exit(-1);*/
+
+	/* Free any old routing graph, if one exists. */
+
+	free_rr_graph();
+
+	begin = clock();
+
+	/* Set up the routing resource graph defined by this FPGA architecture. */
+
+	build_rr_graph(graph_type, num_types, type_descriptors, nx, ny, grid,
+			chan_width_x[0], NULL, det_routing_arch.switch_block_type,
+			det_routing_arch.Fs, det_routing_arch.num_segment,
+			det_routing_arch.num_switch, segment_inf,
+			det_routing_arch.global_route_switch,
+			det_routing_arch.delayless_switch, timing_inf,
+			det_routing_arch.wire_to_ipin_switch, router_opts.base_cost_type,
+			directs, num_directs, FALSE,
+			&tmp);
+
+	end = clock();
+#ifdef CLOCKS_PER_SEC
+	vpr_printf(TIO_MESSAGE_INFO, "Build rr_graph took %g seconds.\n", (float)(end - begin) / CLOCKS_PER_SEC);
+#else
+	vpr_printf(TIO_MESSAGE_INFO, "Build rr_graph took %g seconds.\n", (float)(end - begin) / CLK_PER_SEC);
+#endif
+
+	/* Allocate and load some additional rr_graph information needed only by *
+	 * the router.                                                           */
+
+	alloc_and_load_rr_node_route_structs();
 
 	if (router_opts.router_algorithm == BREADTH_FIRST) {
 		vpr_printf(TIO_MESSAGE_INFO, "Confirming Router Algorithm: BREADTH_FIRST.\n");
@@ -287,8 +408,8 @@ boolean try_route(int width_fac, struct s_router_opts router_opts,
 	} else { /* TIMING_DRIVEN route */
 		vpr_printf(TIO_MESSAGE_INFO, "Confirming Router Algorithm: TIMING_DRIVEN.\n");
 		assert(router_opts.route_type != GLOBAL);
-		success = try_parallel_timing_driven_route(router_opts, net_delay, slacks,
-			clb_opins_used_locally,timing_inf.timing_analysis_enabled);
+		/*success = try_parallel_timing_driven_route(router_opts, net_delay, slacks,*/
+			/*clb_opins_used_locally,timing_inf.timing_analysis_enabled);*/
 	}
 
 	free_rr_node_route_structs();
@@ -842,7 +963,7 @@ void free_rr_node_route_structs(void) {
 }
 
 /* RESEARCH TODO: Bounding box heuristic needs to be redone for heterogeneous blocks */
-static void load_route_bb(int bb_factor) {
+void load_route_bb(int bb_factor) {
 
 	/* This routine loads the bounding box arrays used to limit the space  *
 	 * searched by the maze router when routing each net.  The search is   *

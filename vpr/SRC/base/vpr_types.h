@@ -493,6 +493,13 @@ struct s_net_power {
 	float density;
 };
 
+typedef struct s_sink {
+	s_sink(int x, int y, int inode) : x(x), y(y), inode(inode) {}
+	int x;
+	int y;
+	int inode;
+} t_sink;
+
 /* name:  ASCII net name for informative annotations in the output.          *
  * num_sinks:  Number of sinks on this net.                                  *
  * node_block: [0..num_sinks]. Contains the blocks to which the nodes of this 
@@ -514,6 +521,9 @@ typedef struct s_net {
 	boolean is_const_gen;
 	t_net_power * net_power;
 	pthread_mutex_t lock;
+
+	std::vector<int> sorted_sink_index;
+	std::vector<t_sink> sorted_sinks;
 } t_net;
 
 /* s_grid_tile is the minimum tile of the fpga                         
@@ -897,6 +907,7 @@ typedef struct s_rr_node {
 		switches = NULL;
 		num_edges = 0;
 		fan_in = 0;
+		num_reservation = 0;
 		//num_wire_drivers = 0;
 		//num_opin_drivers = 0;
 	}
@@ -910,7 +921,8 @@ typedef struct s_rr_node {
 	short cost_index;
 	short capacity;
 	short occ;
-	std::vector<int> occupant_net_id;
+	std::set<int> occupant_net_id;
+	int num_reservation;
 	float pres_cost;
 	float acc_cost;
 	pthread_mutex_t lock; /* protects occ pres_cost and acc_cost */
@@ -1067,6 +1079,28 @@ typedef struct s_vpr_setup {
 	int GraphPause; /* user interactiveness graphics option */
 	t_power_opts PowerOpts;
 } t_vpr_setup;
+
+typedef struct s_net_timings {
+	float **delays;
+	t_slack slacks;
+} t_net_timings;
+
+typedef struct s_net_timing {
+	float *delay;
+	float *slack;
+	float *timing_criticality;
+#ifdef PATH_COUNTING
+	float *path_criticality;
+#endif
+} t_net_timing;
+
+typedef struct s_route_parameters {
+	float pres_fac;
+	float max_criticality;
+	float criticality_exp;
+	float astar_fac;
+	float bend_cost;
+} t_route_parameters;
 
 #endif
 

@@ -23,6 +23,7 @@ set(srcs
 	SRC/base/stats.c
 	SRC/base/verilog_writer.c
 	SRC/base/vpr_api.c
+	SRC/base/barrier.c
 	SRC/pack/cluster.c
 	SRC/pack/cluster_feasibility_filter.c
 	SRC/pack/cluster_legality.c

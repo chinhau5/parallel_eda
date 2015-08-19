@@ -86,6 +86,12 @@ static void load_one_net_delay(float **net_delay, int inet, struct s_net *nets,
 static void load_one_constant_net_delay(float **net_delay, int inet,
 		struct s_net *nets, float delay_value);
 
+static void load_one_net_delay_new(t_net_timing *net_timing, int inet, struct s_net *nets,
+		t_linked_rc_ptr * rr_node_to_rc_node);
+
+static void load_one_constant_net_delay_new(t_net_timing *net_timing, int inet,
+		struct s_net *nets, float delay_value);
+
 static void free_rc_tree(t_rc_node * rc_root,
 		t_rc_node ** rc_node_free_list_ptr,
 		t_linked_rc_edge ** rc_edge_free_list_ptr);
@@ -133,6 +139,45 @@ void free_net_delay(float **net_delay,
 	free_chunk_memory(chunk_list_ptr);
 }
 
+void load_net_delay_from_routing_new(t_net_timing *net_timing, struct s_net *nets,
+		int n_nets) {
+
+	/* This routine loads net_delay[0..num_nets-1][1..num_pins-1].  Each entry   *
+	 * is the Elmore delay from the net source to the appropriate sink.  Both    *
+	 * the rr_graph and the routing traceback must be completely constructed     *
+	 * before this routine is called, and the net_delay array must have been     *
+	 * allocated.                                                                */
+
+	t_rc_node *rc_node_free_list, *rc_root;
+	t_linked_rc_edge *rc_edge_free_list;
+	int inet;
+	t_linked_rc_ptr *rr_node_to_rc_node; /* [0..num_rr_nodes-1]  */
+
+	rr_node_to_rc_node = (t_linked_rc_ptr *) my_calloc(num_rr_nodes,
+			sizeof(t_linked_rc_ptr));
+
+	rc_node_free_list = NULL;
+	rc_edge_free_list = NULL;
+
+	for (inet = 0; inet < n_nets; inet++) {
+		if (nets[inet].is_global) {
+			load_one_constant_net_delay_new(net_timing, inet, nets, 0.);
+		} else {
+			rc_root = alloc_and_load_rc_tree(inet, &rc_node_free_list,
+					&rc_edge_free_list, rr_node_to_rc_node);
+			load_rc_tree_C(rc_root);
+			load_rc_tree_T(rc_root, 0.);
+			load_one_net_delay_new(net_timing, inet, nets, rr_node_to_rc_node);
+			free_rc_tree(rc_root, &rc_node_free_list, &rc_edge_free_list);
+			reset_rr_node_to_rc_node(rr_node_to_rc_node, inet);
+		}
+	}
+
+	free_rc_node_free_list(rc_node_free_list);
+	free_rc_edge_free_list(rc_edge_free_list);
+	free(rr_node_to_rc_node);
+}
+
 void load_net_delay_from_routing(float **net_delay, struct s_net *nets,
 		int n_nets) {
 
@@ -170,6 +215,25 @@ void load_net_delay_from_routing(float **net_delay, struct s_net *nets,
 	free_rc_node_free_list(rc_node_free_list);
 	free_rc_edge_free_list(rc_edge_free_list);
 	free(rr_node_to_rc_node);
+}
+
+void load_constant_net_delay_new(t_net_timing *net_timing, float delay_value,
+		struct s_net *nets, int n_nets) {
+
+	/* Loads the net_delay array with delay_value for every source - sink        *
+	 * connection that is not on a global resource, and with 0. for every source *
+	 * - sink connection on a global net.  (This can be used to allow timing     *
+	 * analysis before routing is done with a constant net delay model).         */
+
+	int inet;
+
+	for (inet = 0; inet < n_nets; inet++) {
+		if (nets[inet].is_global) {
+			load_one_constant_net_delay_new(net_timing, inet, nets, 0.);
+		} else {
+			load_one_constant_net_delay_new(net_timing, inet, nets, delay_value);
+		}
+	}
 }
 
 void load_constant_net_delay(float **net_delay, float delay_value,
@@ -434,6 +498,58 @@ static void load_rc_tree_T(t_rc_node * rc_node, float T_arrival) {
 	}
 }
 
+static void load_one_net_delay_new(t_net_timing *net_timing, int inet, struct s_net* nets,
+		t_linked_rc_ptr * rr_node_to_rc_node) {
+
+	/* Loads the net delay array for net inet.  The rc tree for that net must  *
+	 * have already been completely built and loaded.                          */
+
+	int ipin, inode;
+	float Tmax;
+	t_rc_node *rc_node;
+	t_linked_rc_ptr *linked_rc_ptr, *next_ptr;
+
+	for (ipin = 1; ipin < (nets[inet].num_sinks + 1); ipin++) {
+
+		inode = net_rr_terminals[inet][ipin];
+
+		linked_rc_ptr = rr_node_to_rc_node[inode].next;
+		rc_node = rr_node_to_rc_node[inode].rc_node;
+		Tmax = rc_node->Tdel;
+
+		/* If below only executes when one net connects several times to the      *
+		 * same SINK.  In this case, I can't tell which net pin each connection   *
+		 * to this SINK corresponds to (I can just choose arbitrarily).  To make  *
+		 * sure the timing behaviour converges, I pessimistically set the delay   *
+		 * for all of the connections to this SINK by this net to be the max. of  *
+		 * the delays from this net to this SINK.  NB:  This code only occurs     *
+		 * when a net connect more than once to the same pin class on the same    *
+		 * logic block.  Only a weird architecture would allow this.              */
+
+		if (linked_rc_ptr != NULL) {
+
+			/* The first time I hit a multiply-used SINK, I choose the largest delay  *
+			 * from this net to this SINK and use it for every connection to this     *
+			 * SINK by this net.                                                      */
+
+			do {
+				rc_node = linked_rc_ptr->rc_node;
+				if (rc_node->Tdel > Tmax) {
+					Tmax = rc_node->Tdel;
+					rr_node_to_rc_node[inode].rc_node = rc_node;
+				}
+				next_ptr = linked_rc_ptr->next;
+				free(linked_rc_ptr);
+				linked_rc_ptr = next_ptr;
+			} while (linked_rc_ptr != NULL); /* End do while */
+
+			rr_node_to_rc_node[inode].next = NULL;
+		}
+		/* End of if multiply-used SINK */
+		net_timing[inet].delay[ipin] = Tmax;
+	}
+}
+
 static void load_one_net_delay(float **net_delay, int inet, struct s_net* nets,
 		t_linked_rc_ptr * rr_node_to_rc_node) {
 
@@ -484,6 +600,17 @@ static void load_one_net_delay(float **net_delay, int inet, struct s_net* nets,
 		/* End of if multiply-used SINK */
 		net_delay[inet][ipin] = Tmax;
 	}
+}
+
+static void load_one_constant_net_delay_new(t_net_timing *net_timing, int inet,
+		struct s_net *nets, float delay_value) {
+
+	/* Sets each entry of the net_delay array for net inet to delay_value.     */
+
+	int ipin;
+
+	for (ipin = 1; ipin < (nets[inet].num_sinks + 1); ipin++)
+		net_timing[inet].delay[ipin] = delay_value;
 }
 
 static void load_one_constant_net_delay(float **net_delay, int inet,

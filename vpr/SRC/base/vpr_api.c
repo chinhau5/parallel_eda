@@ -11,6 +11,7 @@
 #include <string.h>
 #include <assert.h>
 #include <time.h>
+#include <zlog.h>
 
 #include "util.h"
 #include "vpr_types.h"

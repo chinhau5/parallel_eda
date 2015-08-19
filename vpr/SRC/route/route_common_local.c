@@ -207,6 +207,18 @@ void thread_safe_pathfinder_update_one_cost(int inet, struct s_trace *route_segm
 
 		assert(!pthread_mutex_lock(&rr_node[inode].lock));
 
+		if (add_or_sub > 0) {
+			if (rr_node[inode].occupant_net_id.find(inet) != rr_node[inode].occupant_net_id.end()) {
+				printf("Trying to insert existing net %d into node %d\n", inet, inode);
+			}
+			rr_node[inode].occupant_net_id.insert(inet);
+		} else {
+			assert(add_or_sub < 0);
+			if (rr_node[inode].occupant_net_id.find(inet) == rr_node[inode].occupant_net_id.end()) {
+				printf("Trying to erase non-existing net %d from node %d\n", inet, inode);
+			}
+			rr_node[inode].occupant_net_id.erase(inet);
+		}
 		occ = rr_node[inode].occ + add_or_sub;
 		if (occ < 0) {
 			printf("occ is less than 0\n");
@@ -319,6 +331,12 @@ thread_safe_update_traceback(const struct s_heap *hptr, t_rr_node_route_inf *l_r
 	inode = hptr->u.prev_node;
 	iedge = hptr->prev_edge;
 
+	/* the asserts below are not true because l_rr_node_route_inf is not updated when target_node is reached in the while (inode != target_node) loop */
+	/*assert(inode == l_rr_node_route_inf[hptr->index].prev_node);*/
+	/*assert(iedge == l_rr_node_route_inf[hptr->index].prev_edge);*/
+
+	int prev_inode = tptr->index;
+
 	while (inode != NO_PREVIOUS) {
 		prevptr = (struct s_trace *)malloc(sizeof(struct s_trace));//alloc_trace_data();
 		prevptr->index = inode;
@@ -326,9 +344,13 @@ thread_safe_update_traceback(const struct s_heap *hptr, t_rr_node_route_inf *l_r
 		prevptr->next = tptr;
 		tptr = prevptr;
 
+		prev_inode = inode;
+
 		iedge = l_rr_node_route_inf[inode].prev_edge;
 		inode = l_rr_node_route_inf[inode].prev_node;
 	}
+
+	/*assert(rr_node[prev_inode].type == SOURCE);*/
 
 	if (trace_tail[inet] != NULL) {
 		trace_tail[inet]->next = tptr; /* Traceback ends with tptr */
@@ -385,7 +407,8 @@ void node_to_heap(int inode, float cost, int prev_node, int prev_edge,
 	item.backward_path_cost = backward_path_cost;
 	item.R_upstream = R_upstream;
 
-	dzlog_debug("Adding node: %d cost: %g backward_path_cost: %g prev_node: %d to heap\n", inode, cost, backward_path_cost, prev_node);
+	extern zlog_category_t *route_inner_log;
+	zlog_debug(route_inner_log, "Adding node: %d cost: %g backward_path_cost: %g prev_node: %d to heap\n", inode, cost, backward_path_cost, prev_node);
 
 	heap.push(item);
 }
@@ -429,7 +452,7 @@ void thread_safe_mark_ends(int inet, t_rr_node_route_inf *l_rr_node_route_inf) {
 	}
 }
 
-static void adjust_one_rr_occ_and_pcost(int inode, int add_or_sub,
+static void adjust_one_rr_occ_and_pcost(int inet, int inode, int add_or_sub,
 		float pres_fac) {
 
 	/* Increments or decrements (depending on add_or_sub) the occupancy of    *
@@ -440,6 +463,7 @@ static void adjust_one_rr_occ_and_pcost(int inode, int add_or_sub,
 	occ = rr_node[inode].occ + add_or_sub;
 	capacity = rr_node[inode].capacity;
 	rr_node[inode].occ = occ;
+	rr_node[inode].num_reservation += add_or_sub;
 
 	if (occ < capacity) {
 		rr_node[inode].pres_cost = 1.;
@@ -473,7 +497,7 @@ void thread_safe_reserve_locally_used_opins(float pres_fac, boolean rip_up_local
 				/* Always 0 for pads and for RECEIVER (IPIN) classes */
 				for (ipin = 0; ipin < num_local_opin; ipin++) {
 					inode = clb_opins_used_locally[iblk][iclass].list[ipin];
-					adjust_one_rr_occ_and_pcost(inode, -1, pres_fac);
+					adjust_one_rr_occ_and_pcost(inet, inode, -1, pres_fac);
 				}
 			}
 		}
@@ -510,7 +534,7 @@ void thread_safe_reserve_locally_used_opins(float pres_fac, boolean rip_up_local
 					heap_head_ptr = &heap.top();
 					inode = heap_head_ptr->index;
 					heap.pop();
-					adjust_one_rr_occ_and_pcost(inode, 1, pres_fac);
+					adjust_one_rr_occ_and_pcost(inet, inode, 1, pres_fac);
 					clb_opins_used_locally[iblk][iclass].list[ipin] = inode;
 				}
 

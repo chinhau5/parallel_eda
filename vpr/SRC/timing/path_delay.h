@@ -42,7 +42,10 @@
 
 /*************************** Function declarations ********************************/
 
+t_net_timing *alloc_net_timing(t_net *nets, int num_nets);
+
 t_slack * alloc_and_load_timing_graph(t_timing_inf timing_inf);
+void alloc_and_load_timing_graph_new(t_timing_inf timing_inf);
 
 t_slack * alloc_and_load_pre_packing_timing_graph(float block_delay,
 		float inter_cluster_net_delay, t_model *models, t_timing_inf timing_inf);
@@ -50,8 +53,10 @@ t_slack * alloc_and_load_pre_packing_timing_graph(float block_delay,
 t_linked_int *allocate_and_load_critical_path(void);
 
 void load_timing_graph_net_delays(float **net_delay);
+void load_timing_graph_net_delays_new(t_net_timing *net_timing);
 
 void do_timing_analysis(t_slack * slacks, boolean is_prepacked, boolean do_lut_input_balancing, boolean is_final_analysis);
+void do_timing_analysis_new(t_net_timing *net_timing, boolean is_prepacked, boolean do_lut_input_balancing, boolean is_final_analysis);
 
 void free_timing_graph(t_slack * slack);
 
@@ -62,10 +67,13 @@ void print_timing_graph(const char *fname);
 void print_lut_remapping(const char *fname);
 
 void print_slack(float ** slack, boolean slack_is_normalized, const char *fname);
+void print_slack_new(t_net_timing *net_timing, boolean slack_is_normalized, const char *fname);
 
 void print_criticality(t_slack * slacks, boolean criticality_is_normalized, const char *fname);
+void print_criticality_new(t_net_timing *net_timing, boolean criticality_is_normalized, const char *fname);
 
 void print_net_delay(float **net_delay, const char *fname);
+void print_net_delay_new(t_net_timing *net_timing, const char *fname);
 
 #ifdef PATH_COUNTING
 void print_path_criticality(float ** path_criticality, const char *fname);

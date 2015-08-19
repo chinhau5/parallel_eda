@@ -1,6 +1,8 @@
 #ifndef RR_GRAPH_H
 #define RR_GRAPH_H
 
+#include <zlog.h>
+
 enum e_graph_type {
 	GRAPH_GLOBAL, /* One node per channel with wire capacity > 1 and full connectivity */
 	GRAPH_BIDIR, /* Detailed bidirectional graph */
@@ -48,7 +50,8 @@ void print_rr_indexed_data(FILE * fp, int index); /* For debugging only */
 void load_net_rr_terminals(t_ivec *** L_rr_node_indices);
 
 void print_rr_node(FILE *fp, t_rr_node *L_rr_node, int inode);
-void print_rr_node(int inode);
+
+void sprintf_rr_node(int inode, char *buffer);
 
 #endif
 

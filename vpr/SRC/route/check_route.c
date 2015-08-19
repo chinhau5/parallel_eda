@@ -592,8 +592,7 @@ static void recompute_occupancy_from_scratch(t_ivec ** clb_opins_used_locally) {
 	}
 
 	for (int i = 0; i < num_rr_nodes; ++i) {
-		if (rr_node[i].occ != old_occ[i]) {
-		}
+		assert(rr_node[i].occ == old_occ[i]);
 	}
 }
 

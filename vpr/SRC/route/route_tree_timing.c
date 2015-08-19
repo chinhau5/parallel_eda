@@ -476,6 +476,21 @@ void free_route_tree(t_rt_node * rt_node) {
 	free_rt_node(rt_node);
 }
 
+void update_net_delays_from_route_tree_new(t_net_timing *net_timing,
+		t_rt_node ** rt_node_of_sink, int inet) {
+
+	/* Goes through all the sinks of this net and copies their delay values from *
+	 * the route_tree to the net_delay array.                                    */
+
+	int isink;
+	t_rt_node *sink_rt_node;
+
+	for (isink = 1; isink <= clb_net[inet].num_sinks; isink++) {
+		sink_rt_node = rt_node_of_sink[isink];
+		net_timing[inet].delay[isink] = sink_rt_node->Tdel;
+	}
+}
+
 void update_net_delays_from_route_tree(float *net_delay,
 		t_rt_node ** rt_node_of_sink, int inet) {
 

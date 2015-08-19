@@ -33,6 +33,7 @@
  */
 
 void test_dfs();
+void init_parallel_route_logging();
 
 int main(int argc, char **argv) {
 	t_options Options;
@@ -46,6 +47,8 @@ int main(int argc, char **argv) {
 		printf("failed to init zlog\n");
 		return -1;
 	}
+
+	init_parallel_route_logging();
 
 	/*test_dfs();*/
 	/*return 0;*/
