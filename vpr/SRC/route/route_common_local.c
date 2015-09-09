@@ -7,7 +7,7 @@
 #include "util.h"
 #include "vpr_types.h"
 #include "vpr_utils.h"
-#include "globals.h"
+/*#include "globals.h"*/
 #include "route_export.h"
 #include "route_common.h"
 #include "route_tree_timing.h"
@@ -21,9 +21,22 @@
 #include "ReadOptions.h"
 #include "parallel_route_timing.h"
 
+extern int nx, ny;
+extern int num_rr_nodes;
+extern t_rr_node *rr_node; /* [0..num_rr_nodes-1]          */
+extern t_rr_indexed_data *rr_indexed_data; /* [0 .. num_rr_indexed_data-1] */
+extern int num_nets;
+extern struct s_net *clb_net;
+extern int **net_rr_terminals; /* [0..num_nets-1][0..num_pins-1] */
+extern int num_blocks;
+extern struct s_block *block;
+extern t_type_ptr IO_TYPE;
+extern struct s_grid_tile **grid; /* FPGA complex blocks grid [0..nx+1][0..ny+1] */
+extern int **rr_blk_source; /* [0..num_blocks-1][0..num_class-1] */
+
 static boolean is_parallel_route;
 
-void print_route(char *route_file, int **sink_order) {
+void print_route(char *route_file, t_net_route *net_route, int **sink_order) {
 
 	/* Prints out the routing to file route_file.  */
 
@@ -45,12 +58,12 @@ void print_route(char *route_file, int **sink_order) {
 				fprintf(fp, "\n\nUsed in local cluster only, reserved one CLB pin\n\n");
 			} else {
 				fprintf(fp, "\n\nNet %d (%s)\n\n", inet, clb_net[inet].name);
-				tptr = trace_head[inet];
+				tptr = net_route[inet].l_trace_head;
 
 				int source_node = tptr->index;
 				assert(rr_node[source_node].type == SOURCE);
 
-				int sink = 0;
+				int sink = 1;
 				while (tptr != NULL) {
 					inode = tptr->index;
 					rr_type = rr_node[inode].type;
@@ -84,6 +97,8 @@ void print_route(char *route_file, int **sink_order) {
 
 					if (rr_type == OPIN) {
 						current_pos = neighbor_pos;
+					} else if (rr_type == SINK) {
+						neighbor_pos = current_pos;
 					}
 
 					/*Interval<int> hor(source_pos.first, sink_pos.first);*/
@@ -126,6 +141,10 @@ void print_route(char *route_file, int **sink_order) {
 					}
 
 					fprintf(fp, "%d  ", rr_node[inode].ptc_num);
+
+					if (rr_node[inode].occ > rr_node[inode].capacity) {
+						fprintf(fp, "congested ");
+					}
 
 					int current_to_sink_manhattan_distance = abs(current_pos.first - sink_pos.first) + abs(current_pos.second - sink_pos.second);
 					int neighbor_to_sink_manhattan_distance = abs(neighbor_pos.first - sink_pos.first) + abs(neighbor_pos.second - sink_pos.second);
@@ -183,7 +202,7 @@ void set_parallel_route(boolean _is_parallel_route)
 }
 
 void thread_safe_pathfinder_update_one_cost(int inet, struct s_trace *route_segment_start,
-		int add_or_sub, float pres_fac) {
+		int add_or_sub, float pres_fac, int thread_id, int sub_iter, bool set_occ_by_thread) {
 
 	/* This routine updates the occupancy and pres_cost of the rr_nodes that are *
 	 * affected by the portion of the routing of one net that starts at          *
@@ -205,6 +224,10 @@ void thread_safe_pathfinder_update_one_cost(int inet, struct s_trace *route_segm
 	for (;;) {
 		inode = tptr->index;
 
+		if (set_occ_by_thread) {
+			rr_node[inode].occ_by_thread[sub_iter][thread_id] = add_or_sub;
+		}
+
 		assert(!pthread_mutex_lock(&rr_node[inode].lock));
 
 		if (add_or_sub > 0) {
@@ -222,6 +245,7 @@ void thread_safe_pathfinder_update_one_cost(int inet, struct s_trace *route_segm
 		occ = rr_node[inode].occ + add_or_sub;
 		if (occ < 0) {
 			printf("occ is less than 0\n");
+			assert(false);
 		}
 		capacity = rr_node[inode].capacity;
 
@@ -285,11 +309,11 @@ void thread_safe_pathfinder_update_cost(float pres_fac, float acc_fac) {
 }
 
 struct s_trace *
-thread_safe_update_traceback(const struct s_heap *hptr, t_rr_node_route_inf *l_rr_node_route_inf, int inet) {
+thread_safe_update_traceback(t_trace **l_trace_head, t_trace **l_trace_tail, const struct s_heap *hptr, t_rr_node_route_inf *l_rr_node_route_inf) {
 
 	/* This routine adds the most recently finished wire segment to the         *
 	 * traceback linked list.  The first connection starts with the net SOURCE  *
-	 * and begins at the structure pointed to by trace_head[inet]. Each         *
+	 * and begins at the structure pointed to by l_trace_head[inet]. Each         *
 	 * connection ends with a SINK.  After each SINK, the next connection       *
 	 * begins (if the net has more than 2 pins).  The first element after the   *
 	 * SINK gives the routing node on a previous piece of the routing, which is *
@@ -314,12 +338,12 @@ thread_safe_update_traceback(const struct s_heap *hptr, t_rr_node_route_inf *l_r
 	rr_type = rr_node[inode].type;
 	if (rr_type != SINK) {
 		vpr_printf(TIO_MESSAGE_ERROR, "in update_traceback. Expected type = SINK (%d).\n", SINK);
-		vpr_printf(TIO_MESSAGE_ERROR, "\tGot type = %d while tracing back net %d.\n", rr_type, inet);
+		vpr_printf(TIO_MESSAGE_ERROR, "\tGot type = %d while tracing back net %d.\n", rr_type, -1);
 		exit(1);
 	}
 #endif
 
-	tptr = (struct s_trace *)malloc(sizeof(struct s_trace)); //alloc_trace_data(); /* SINK on the end of the connection */
+	tptr = new t_trace; //alloc_trace_data(); /* SINK on the end of the connection */
 	tptr->index = inode;
 	tptr->iswitch = OPEN;
 	tptr->next = NULL;
@@ -338,10 +362,11 @@ thread_safe_update_traceback(const struct s_heap *hptr, t_rr_node_route_inf *l_r
 	int prev_inode = tptr->index;
 
 	while (inode != NO_PREVIOUS) {
-		prevptr = (struct s_trace *)malloc(sizeof(struct s_trace));//alloc_trace_data();
+		prevptr = new t_trace;//alloc_trace_data();
 		prevptr->index = inode;
 		prevptr->iswitch = rr_node[inode].switches[iedge];
 		prevptr->next = tptr;
+
 		tptr = prevptr;
 
 		prev_inode = inode;
@@ -352,15 +377,15 @@ thread_safe_update_traceback(const struct s_heap *hptr, t_rr_node_route_inf *l_r
 
 	/*assert(rr_node[prev_inode].type == SOURCE);*/
 
-	if (trace_tail[inet] != NULL) {
-		trace_tail[inet]->next = tptr; /* Traceback ends with tptr */
+	if (*l_trace_tail != NULL) {
+		(*l_trace_tail)->next = tptr; /* Traceback ends with tptr */
 		ret_ptr = tptr->next; /* First new segment.       */
 	} else { /* This was the first "chunk" of the net's routing */
-		trace_head[inet] = tptr;
+		*l_trace_head = tptr;
 		ret_ptr = tptr; /* Whole traceback is new. */
 	}
 
-	trace_tail[inet] = temptail;
+	*l_trace_tail = temptail;
 	return (ret_ptr);
 }
 
@@ -381,10 +406,11 @@ float get_rr_cong_cost(int inode, int num_sinks) {
 	return (cost);
 }
 
-void node_to_heap(int inode, float cost, int prev_node, int prev_edge,
-		float backward_path_cost, float R_upstream,
-		t_rr_node_route_inf *l_rr_node_route_inf,
-		std::priority_queue<struct s_heap> &heap) {
+void node_to_heap(std::priority_queue<struct s_heap> &heap,
+		int inode, int prev_node, int prev_edge,
+		float cost, float backward_path_cost, float R_upstream,
+		t_rr_node_route_inf *l_rr_node_route_inf)
+{
 
 	/* Puts an rr_node on the heap, if the new cost given is lower than the     *
 	 * current path_cost to this channel segment.  The index of its predecessor *
@@ -401,9 +427,9 @@ void node_to_heap(int inode, float cost, int prev_node, int prev_edge,
 	}
 
 	item.index = inode;
-	item.cost = cost;
 	item.u.prev_node = prev_node;
 	item.prev_edge = prev_edge;
+	item.cost = cost;
 	item.backward_path_cost = backward_path_cost;
 	item.R_upstream = R_upstream;
 
@@ -413,27 +439,23 @@ void node_to_heap(int inode, float cost, int prev_node, int prev_edge,
 	heap.push(item);
 }
 
-void thread_safe_free_traceback(int inet) {
+void thread_safe_free_traceback(t_trace **l_trace_head, t_trace **l_trace_tail) {
 
 	/* Puts the entire traceback (old routing) for this net on the free list *
 	 * and sets the trace_head pointers etc. for the net to NULL.            */
 
 	struct s_trace *tptr, *tempptr;
 
-	if(trace_head == NULL) {
-		return;
-	}
-
-	tptr = trace_head[inet];
+	tptr = *l_trace_head;
 
 	while (tptr != NULL) {
 		tempptr = tptr->next;
-		free(tptr);
+		delete tptr;
 		tptr = tempptr;
 	}
 
-	trace_head[inet] = NULL;
-	trace_tail[inet] = NULL;
+	*l_trace_head = NULL;
+	*l_trace_tail = NULL;
 }
 
 void thread_safe_mark_ends(int inet, t_rr_node_route_inf *l_rr_node_route_inf) {

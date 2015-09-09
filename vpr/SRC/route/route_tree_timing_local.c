@@ -7,12 +7,11 @@
 
 extern t_rr_node *rr_node; /* [0..num_rr_nodes-1]          */
 extern struct s_switch_inf *switch_inf; /* [0..det_routing_arch.num_switch-1] */
-extern int **net_rr_terminals;
 
 static t_rt_node *
-add_path_to_route_tree(const struct s_heap *hptr, t_rt_node ** sink_rt_node_ptr, const t_rr_node_route_inf *l_rr_node_route_inf, t_rt_node **l_rr_node_to_rt_node) {
+add_path_to_route_tree(const struct s_heap *sink, t_rt_node ** sink_rt_node_ptr, const t_rr_node_route_inf *l_rr_node_route_inf, t_rt_node **l_rr_node_to_rt_node) {
 
-	/* Adds the most recent wire segment, ending at the SINK indicated by hptr, *
+	/* Adds the most recent wire segment, ending at the SINK indicated by sink, *
 	 * to the routing tree.  It returns the first (most upstream) new rt_node,  *
 	 * and (via a pointer) the rt_node of the new SINK.                         */
 
@@ -22,7 +21,7 @@ add_path_to_route_tree(const struct s_heap *hptr, t_rt_node ** sink_rt_node_ptr,
 	t_rt_node *rt_node, *downstream_rt_node, *sink_rt_node;
 	t_linked_rt_edge *linked_rt_edge;
 
-	inode = hptr->index;
+	inode = sink->index;
 
 #ifdef DEBUG
 	if (rr_node[inode].type != SINK) {
@@ -33,7 +32,7 @@ add_path_to_route_tree(const struct s_heap *hptr, t_rt_node ** sink_rt_node_ptr,
 #endif
 
 	remaining_connections_to_sink = l_rr_node_route_inf[inode].target_flag;
-	sink_rt_node = (t_rt_node *)malloc(sizeof(t_rt_node)); //alloc_rt_node();
+	sink_rt_node = new t_rt_node; //alloc_rt_node();
 	sink_rt_node->u.child_list = NULL;
 	sink_rt_node->inode = inode;
 	C_downstream = rr_node[inode].C;
@@ -66,19 +65,19 @@ add_path_to_route_tree(const struct s_heap *hptr, t_rt_node ** sink_rt_node_ptr,
 	/* Now do it's predecessor. */
 
 	downstream_rt_node = sink_rt_node;
-	inode = hptr->u.prev_node;
-	iedge = hptr->prev_edge;
+	inode = sink->u.prev_node;
+	iedge = sink->prev_edge;
 	iswitch = rr_node[inode].switches[iedge];
 
 	/* For all "new" nodes in the path */
 
 	while (l_rr_node_route_inf[inode].prev_node != NO_PREVIOUS) {
-		linked_rt_edge = (t_linked_rt_edge *)malloc(sizeof(t_linked_rt_edge)); //alloc_linked_rt_edge();
+		linked_rt_edge = new t_linked_rt_edge; //alloc_linked_rt_edge();
 		linked_rt_edge->child = downstream_rt_node;
 		linked_rt_edge->iswitch = iswitch;
 		linked_rt_edge->next = NULL;
 
-		rt_node = (t_rt_node *)malloc(sizeof(t_rt_node)); //alloc_rt_node();
+		rt_node = new t_rt_node; //alloc_rt_node();
 		downstream_rt_node->parent_node = rt_node;
 		downstream_rt_node->parent_switch = iswitch;
 
@@ -121,7 +120,7 @@ add_path_to_route_tree(const struct s_heap *hptr, t_rt_node ** sink_rt_node_ptr,
 
 	rt_node = l_rr_node_to_rt_node[inode];
 
-	linked_rt_edge = (t_linked_rt_edge *)malloc(sizeof(t_linked_rt_edge)); //alloc_linked_rt_edge();
+	linked_rt_edge = new t_linked_rt_edge; //alloc_linked_rt_edge();
 	linked_rt_edge->child = downstream_rt_node;
 	linked_rt_edge->iswitch = iswitch;
 	linked_rt_edge->next = rt_node->u.child_list;
@@ -253,10 +252,10 @@ update_unbuffered_ancestors_C_downstream(t_rt_node * start_of_new_path_rt_node) 
 }
 
 t_rt_node *
-thread_safe_update_route_tree(const struct s_heap * hptr, const t_rr_node_route_inf *l_rr_node_route_inf, t_rt_node **l_rr_node_to_rt_node)
+thread_safe_update_route_tree(const struct s_heap * sink, const t_rr_node_route_inf *l_rr_node_route_inf, t_rt_node **l_rr_node_to_rt_node)
 {
 	/* Adds the most recently finished wire segment to the routing tree, and    *
-	 * updates the Tdel, etc. numbers for the rest of the routing tree.  hptr   *
+	 * updates the Tdel, etc. numbers for the rest of the routing tree.  sink   *
 	 * is the heap pointer of the SINK that was reached.  This routine returns  *
 	 * a pointer to the rt_node of the SINK that it adds to the routing.        */
 
@@ -265,7 +264,7 @@ thread_safe_update_route_tree(const struct s_heap * hptr, const t_rr_node_route_
 	float Tdel_start;
 	short iswitch;
 
-	start_of_new_path_rt_node = add_path_to_route_tree(hptr, &sink_rt_node, l_rr_node_route_inf, l_rr_node_to_rt_node);
+	start_of_new_path_rt_node = add_path_to_route_tree(sink, &sink_rt_node, l_rr_node_route_inf, l_rr_node_to_rt_node);
 	load_new_path_R_upstream(start_of_new_path_rt_node);
 	unbuffered_subtree_rt_root = update_unbuffered_ancestors_C_downstream(
 			start_of_new_path_rt_node);
@@ -288,28 +287,24 @@ thread_safe_update_route_tree(const struct s_heap * hptr, const t_rr_node_route_
 }
 
 t_rt_node *
-init_route_tree_to_source(t_rt_node **l_rr_node_to_rt_node, int inet) {
+init_route_tree_to_source(t_rt_node **l_rr_node_to_rt_node, int source_inode) {
 
 	/* Initializes the routing tree to just the net source, and returns the root *
 	 * node of the rt_tree (which is just the net source).                       */
 
 	t_rt_node *rt_root;
-	int inode;
 
-	rt_root = (t_rt_node *)malloc(sizeof(t_rt_node));
+	rt_root = new t_rt_node;
 	rt_root->u.child_list = NULL;
 	rt_root->parent_node = NULL;
 	rt_root->parent_switch = OPEN;
 	rt_root->re_expand = TRUE;
+	rt_root->inode = source_inode;
+	rt_root->C_downstream = rr_node[source_inode].C;
+	rt_root->R_upstream = rr_node[source_inode].R;
+	rt_root->Tdel = 0.5 * rr_node[source_inode].R * rr_node[source_inode].C;
 
-	inode = net_rr_terminals[inet][0]; /* Net source */
-
-	rt_root->inode = inode;
-	rt_root->C_downstream = rr_node[inode].C;
-	rt_root->R_upstream = rr_node[inode].R;
-	rt_root->Tdel = 0.5 * rr_node[inode].R * rr_node[inode].C;
-
-	l_rr_node_to_rt_node[inode] = rt_root;
+	l_rr_node_to_rt_node[source_inode] = rt_root;
 
 	return (rt_root);
 }

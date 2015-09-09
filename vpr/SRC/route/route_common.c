@@ -17,6 +17,7 @@
 #include "read_xml_arch_file.h"
 #include "ReadOptions.h"
 #include "parallel_route_timing.h"
+#include "advanced_parallel_route_timing.h"
 
 /***************** Variables shared only by route modules *******************/
 
@@ -245,6 +246,15 @@ void run_hmetis(int num_partitions, const char *graph_filename);
 void write_hmetis_graph_file(const char *filename);
 void test_intervals();
 
+/*void net_track_requirements()*/
+/*{*/
+	/*opi*/
+	/*for (int i = 0; i < num_nets; ++i) {*/
+		
+		/*net_rr_terminals[i][*/
+	/*}*/
+/*}*/
+
 boolean try_route_new(int width_fac, struct s_router_opts router_opts,
 		struct s_det_routing_arch det_routing_arch, t_segment_inf * segment_inf,
 		t_timing_inf timing_inf, t_net_timing *net_timing, 
@@ -322,7 +332,7 @@ boolean try_route_new(int width_fac, struct s_router_opts router_opts,
 	} else { /* TIMING_DRIVEN route */
 		vpr_printf(TIO_MESSAGE_INFO, "Confirming Router Algorithm: TIMING_DRIVEN.\n");
 		assert(router_opts.route_type != GLOBAL);
-		success = try_parallel_timing_driven_route(router_opts, net_timing,
+		success = try_parallel_timing_driven_route_top(router_opts, net_timing,
 			clb_opins_used_locally,timing_inf.timing_analysis_enabled);
 	}
 
@@ -408,8 +418,8 @@ boolean try_route(int width_fac, struct s_router_opts router_opts,
 	} else { /* TIMING_DRIVEN route */
 		vpr_printf(TIO_MESSAGE_INFO, "Confirming Router Algorithm: TIMING_DRIVEN.\n");
 		assert(router_opts.route_type != GLOBAL);
-		/*success = try_parallel_timing_driven_route(router_opts, net_delay, slacks,*/
-			/*clb_opins_used_locally,timing_inf.timing_analysis_enabled);*/
+		success = try_timing_driven_route(router_opts, net_delay, slacks,
+			clb_opins_used_locally,timing_inf.timing_analysis_enabled);
 	}
 
 	free_rr_node_route_structs();
@@ -435,7 +445,7 @@ boolean feasible_routing(void) {
 		}
 	}
 
-	printf("Overused: %d/%d (%g)\n", num_overused, num_rr_nodes, (float)num_overused/num_rr_nodes*100);
+	printf("Overused nodes: %d/%d (%.2f)\n", num_overused, num_rr_nodes, (float)num_overused/num_rr_nodes*100);
 
 	return feasible ? TRUE : FALSE;
 }

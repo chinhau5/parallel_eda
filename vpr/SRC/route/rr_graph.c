@@ -2017,19 +2017,19 @@ void sprintf_rr_node(int inode, char *buffer)
 {
 	if (rr_node[inode].direction == INC_DIRECTION) {
 		if (rr_node[inode].type == CHANX) {
-			sprintf(buffer, "%d %s (%d->%d,%d) ", inode, rr_types[rr_node[inode].type], rr_node[inode].xlow, rr_node[inode].xhigh, rr_node[inode].ylow);
+			sprintf(buffer, "%d %s (%d->%d,%d) %d", inode, rr_types[rr_node[inode].type], rr_node[inode].xlow, rr_node[inode].xhigh, rr_node[inode].ylow, rr_node[inode].ptc_num);
 		} else if (rr_node[inode].type == CHANY) {
-			sprintf(buffer, "%d %s (%d,%d->%d) ", inode, rr_types[rr_node[inode].type], rr_node[inode].xlow, rr_node[inode].ylow, rr_node[inode].yhigh);
+			sprintf(buffer, "%d %s (%d,%d->%d) %d", inode, rr_types[rr_node[inode].type], rr_node[inode].xlow, rr_node[inode].ylow, rr_node[inode].yhigh, rr_node[inode].ptc_num);
 		} else {
-			sprintf(buffer, "%d %s (%d,%d)(%d,%d) ", inode, rr_types[rr_node[inode].type], rr_node[inode].xlow, rr_node[inode].ylow, rr_node[inode].xhigh, rr_node[inode].yhigh);
+			sprintf(buffer, "%d %s (%d,%d)(%d,%d) %d", inode, rr_types[rr_node[inode].type], rr_node[inode].xlow, rr_node[inode].ylow, rr_node[inode].xhigh, rr_node[inode].yhigh, rr_node[inode].ptc_num);
 		}
 	} else {
 		if (rr_node[inode].type == CHANX) {
-			sprintf(buffer, "%d %s (%d->%d,%d) ", inode, rr_types[rr_node[inode].type], rr_node[inode].xhigh, rr_node[inode].xlow, rr_node[inode].ylow);
+			sprintf(buffer, "%d %s (%d->%d,%d) %d", inode, rr_types[rr_node[inode].type], rr_node[inode].xhigh, rr_node[inode].xlow, rr_node[inode].ylow, rr_node[inode].ptc_num);
 		} else if (rr_node[inode].type == CHANY) {
-			sprintf(buffer, "%d %s (%d,%d->%d) ", inode, rr_types[rr_node[inode].type], rr_node[inode].xlow, rr_node[inode].yhigh, rr_node[inode].ylow);
+			sprintf(buffer, "%d %s (%d,%d->%d) %d", inode, rr_types[rr_node[inode].type], rr_node[inode].xlow, rr_node[inode].yhigh, rr_node[inode].ylow, rr_node[inode].ptc_num);
 		} else {
-			sprintf(buffer, "%d %s (%d,%d)(%d,%d) ", inode, rr_types[rr_node[inode].type], rr_node[inode].xhigh, rr_node[inode].yhigh, rr_node[inode].xlow, rr_node[inode].ylow);
+			sprintf(buffer, "%d %s (%d,%d)(%d,%d) %d", inode, rr_types[rr_node[inode].type], rr_node[inode].xhigh, rr_node[inode].yhigh, rr_node[inode].xlow, rr_node[inode].ylow, rr_node[inode].ptc_num);
 		}
 	}
 }
@@ -2070,9 +2070,12 @@ void print_rr_node(FILE * fp, t_rr_node * L_rr_node, int inode) {
 	fprintf(fp, "Drivers: %s ", drivers_name[L_rr_node[inode].drivers + 1]);
 	fprintf(fp, "\n");
 
-	fprintf(fp, "%d edge(s):", L_rr_node[inode].num_edges);
-	for (iconn = 0; iconn < L_rr_node[inode].num_edges; iconn++)
-		fprintf(fp, " %d", L_rr_node[inode].edges[iconn]);
+	char buffer[256];
+	fprintf(fp, "%d edge(s): ", L_rr_node[inode].num_edges);
+	for (iconn = 0; iconn < L_rr_node[inode].num_edges; iconn++) {
+		sprintf_rr_node(L_rr_node[inode].edges[iconn], buffer);
+		fprintf(fp, "%s ", buffer);
+	}
 	fprintf(fp, "\n");
 
 	fprintf(fp, "Switch types:");

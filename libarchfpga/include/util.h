@@ -7,13 +7,18 @@
 
 #include "TIO_PrintHandlerExtern.h"
 
-#ifndef TRUE                    /* Some compilers predefine TRUE, FALSE */
-typedef enum {
-	FALSE, TRUE
-} boolean;
-#else
+//#ifndef TRUE                    [> Some compilers predefine TRUE, FALSE <]
+//typedef enum {
+	//FALSE, TRUE
+//} boolean;
+//#else
+//typedef int boolean;
+//typedef int boolean;
+//#endif
+
+#define TRUE 1
+#define FALSE 0
 typedef int boolean;
-#endif
 
 /* Parameter tags for preprocessor to strip */
 #define INP

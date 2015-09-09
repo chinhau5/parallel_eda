@@ -455,6 +455,27 @@ static void load_rt_subtree_Tdel(t_rt_node * subtree_rt_root, float Tarrival) {
 	}
 }
 
+void free_route_tree_new(t_rt_node *rt_node) {
+
+	/* Puts the rt_nodes and edges in the tree rooted at rt_node back on the    *
+	 * free lists.  Recursive, depth-first post-order traversal.                */
+
+	t_rt_node *child_node;
+	t_linked_rt_edge *rt_edge, *next_edge;
+
+	rt_edge = rt_node->u.child_list;
+
+	while (rt_edge != NULL) { /* For all children */
+		child_node = rt_edge->child;
+		free_route_tree_new(child_node);
+		next_edge = rt_edge->next;
+		delete rt_edge;
+		rt_edge = next_edge;
+	}
+
+	delete rt_node;
+}
+
 void free_route_tree(t_rt_node * rt_node) {
 
 	/* Puts the rt_nodes and edges in the tree rooted at rt_node back on the    *
@@ -477,7 +498,7 @@ void free_route_tree(t_rt_node * rt_node) {
 }
 
 void update_net_delays_from_route_tree_new(t_net_timing *net_timing,
-		t_rt_node ** rt_node_of_sink, int inet) {
+		t_rt_node **l_rr_node_to_rt_node, int inet) {
 
 	/* Goes through all the sinks of this net and copies their delay values from *
 	 * the route_tree to the net_delay array.                                    */
@@ -486,8 +507,8 @@ void update_net_delays_from_route_tree_new(t_net_timing *net_timing,
 	t_rt_node *sink_rt_node;
 
 	for (isink = 1; isink <= clb_net[inet].num_sinks; isink++) {
-		sink_rt_node = rt_node_of_sink[isink];
-		net_timing[inet].delay[isink] = sink_rt_node->Tdel;
+		sink_rt_node = l_rr_node_to_rt_node[net_rr_terminals[inet][isink]];
+		net_timing->delay[isink] = sink_rt_node->Tdel;
 	}
 }
 

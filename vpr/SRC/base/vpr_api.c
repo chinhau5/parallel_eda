@@ -438,7 +438,7 @@ void vpr_place_and_route(INP t_vpr_setup vpr_setup, INP t_arch arch) {
 	}
 
 	/* Do placement and routing */
-	place_and_route(vpr_setup.Operation, vpr_setup.PlacerOpts,
+	place_and_route_new(vpr_setup.Operation, vpr_setup.PlacerOpts,
 			vpr_setup.FileNameOpts.PlaceFile, vpr_setup.FileNameOpts.NetFile,
 			vpr_setup.FileNameOpts.ArchFile, vpr_setup.FileNameOpts.RouteFile,
 			vpr_setup.AnnealSched, vpr_setup.RouterOpts, vpr_setup.RoutingArch,

@@ -40,6 +40,8 @@ target_link_libraries(Router
 	dl 
 	m
 	zlog
+	boost_timer-mt-d
+	boost_system-mt-d
 	)
 
 if (CMAKE_SYSTEM_NAME STREQUAL "Linux" AND SANITIZE EQUAL 1)

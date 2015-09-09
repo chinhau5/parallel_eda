@@ -44,7 +44,7 @@ void free_pb_data(t_pb *pb);
 
 /************************* Subroutine Definitions ****************************/
 
-void place_and_route(enum e_operation operation,
+void place_and_route_new(enum e_operation operation,
 		struct s_placer_opts placer_opts, char *place_file, char *net_file,
 		char *arch_file, char *route_file,
 		struct s_annealing_sched annealing_sched,
@@ -191,6 +191,188 @@ void place_and_route(enum e_operation operation,
 
 			/*assert(net_delay);*/
 			/*free_net_delay(net_delay, &net_delay_ch);*/
+		}
+
+		fflush(stdout);
+	}
+
+	if (clb_opins_used_locally != NULL) {
+		for (i = 0; i < num_blocks; i++) {
+			free_ivec_vector(clb_opins_used_locally[i], 0,
+					block[i].type->num_class - 1);
+		}
+		free(clb_opins_used_locally);
+		clb_opins_used_locally = NULL;
+	}
+
+	/* Frees up all the data structure used in vpr_utils. */
+	free_port_pin_from_blk_pin();
+	free_blk_pin_from_port_pin();
+
+	end = clock();
+#ifdef CLOCKS_PER_SEC
+	vpr_printf(TIO_MESSAGE_INFO, "Routing took %g seconds.\n", (float) (end - begin) / CLOCKS_PER_SEC);
+#else
+	vpr_printf(TIO_MESSAGE_INFO, "Routing took %g seconds.\n", (float)(end - begin) / CLK_PER_SEC);
+#endif
+
+	/*WMF: cleaning up memory usage */
+
+	/*	if (g_heap_free_head)
+		free(g_heap_free_head);
+	if (g_trace_free_head)
+		free(g_trace_free_head);
+	if (g_linked_f_pointer_free_head)
+		free(g_linked_f_pointer_free_head);*/
+}
+
+void place_and_route(enum e_operation operation,
+		struct s_placer_opts placer_opts, char *place_file, char *net_file,
+		char *arch_file, char *route_file,
+		struct s_annealing_sched annealing_sched,
+		struct s_router_opts router_opts,
+		struct s_det_routing_arch det_routing_arch, t_segment_inf * segment_inf,
+		t_timing_inf timing_inf, t_chan_width_dist chan_width_dist,
+		struct s_model *models,
+		t_direct_inf *directs, int num_directs) {
+
+	/* This routine controls the overall placement and routing of a circuit. */
+	char msg[BUFSIZE];
+	int width_fac, i;
+	boolean success, Fc_clipped;
+	float **net_delay = NULL;
+	t_slack * slacks = NULL;
+	t_chunk net_delay_ch = {NULL, 0, NULL};
+
+	/*struct s_linked_vptr *net_delay_chunk_list_head;*/
+	t_ivec **clb_opins_used_locally = NULL; /* [0..num_blocks-1][0..num_class-1] */
+	int max_pins_per_clb;
+	clock_t begin, end;
+
+	Fc_clipped = FALSE;
+
+	max_pins_per_clb = 0;
+	for (i = 0; i < num_types; i++) {
+		if (type_descriptors[i].num_pins > max_pins_per_clb) {
+			max_pins_per_clb = type_descriptors[i].num_pins;
+		}
+	}
+
+	if (placer_opts.place_freq == PLACE_NEVER) {
+		/* Read the placement from a file */
+		read_place(place_file, net_file, arch_file, nx, ny, num_blocks, block);
+		sync_grid_to_blocks(num_blocks, block, nx, ny, grid);
+	} else {
+		assert(
+				(PLACE_ONCE == placer_opts.place_freq) || (PLACE_ALWAYS == placer_opts.place_freq));
+		begin = clock();
+		try_place(placer_opts, annealing_sched, chan_width_dist, router_opts,
+				det_routing_arch, segment_inf, timing_inf, directs, num_directs);
+		print_place(place_file, net_file, arch_file);
+		end = clock();
+#ifdef CLOCKS_PER_SEC
+		vpr_printf(TIO_MESSAGE_INFO, "Placement took %g seconds.\n", (float)(end - begin) / CLOCKS_PER_SEC);
+#else
+		vpr_printf(TIO_MESSAGE_INFO, "Placement took %g seconds.\n", (float)(end - begin) / CLK_PER_SEC);
+#endif
+	}
+	begin = clock();
+	post_place_sync(num_blocks, block);
+
+	fflush(stdout);
+
+	if (!router_opts.doRouting)
+		return;
+
+	width_fac = router_opts.fixed_channel_width;
+
+	/* If channel width not fixed, use binary search to find min W */
+	if (NO_FIXED_CHANNEL_WIDTH == width_fac) {
+		g_solution_inf.channel_width = binary_search_place_and_route(placer_opts, place_file, net_file,
+				arch_file, route_file, router_opts.full_stats,
+				router_opts.verify_binary_search, annealing_sched, router_opts,
+				det_routing_arch, segment_inf, timing_inf, chan_width_dist,
+				models, directs, num_directs);
+	} else {
+		g_solution_inf.channel_width = width_fac;
+		if (det_routing_arch.directionality == UNI_DIRECTIONAL) {
+			if (width_fac % 2 != 0) {
+				vpr_printf(TIO_MESSAGE_ERROR, "in pack_place_and_route.c: Given odd chan width (%d) for udsd architecture.\n",
+						width_fac);
+				exit(1);
+			}
+		}
+		/* Other constraints can be left to rr_graph to check since this is one pass routing */
+
+		/* Allocate the major routing structures. */
+
+		clb_opins_used_locally = alloc_route_structs();
+
+		slacks = alloc_and_load_timing_graph(timing_inf);
+		net_delay = alloc_net_delay(&net_delay_ch, clb_net,
+					num_nets);
+
+		success = try_route(width_fac, router_opts, det_routing_arch,
+				segment_inf, timing_inf, net_delay, slacks, chan_width_dist,
+				clb_opins_used_locally, &Fc_clipped, directs, num_directs);
+
+		if (Fc_clipped) {
+			vpr_printf(TIO_MESSAGE_WARNING, "Fc_output was too high and was clipped to full (maximum) connectivity.\n");
+		}
+
+		if (success == FALSE) {
+			vpr_printf(TIO_MESSAGE_INFO, "Circuit is unrouteable with a channel width factor of %d.\n", width_fac);
+			vpr_printf(TIO_MESSAGE_INFO, "\n");
+			sprintf(msg, "Routing failed with a channel width factor of %d. ILLEGAL routing shown.", width_fac);
+		}
+
+		else {
+			check_route(router_opts.route_type, det_routing_arch.num_switch, clb_opins_used_locally);
+			get_serial_num();
+
+			vpr_printf(TIO_MESSAGE_INFO, "Circuit successfully routed with a channel width factor of %d.\n", width_fac);
+			vpr_printf(TIO_MESSAGE_INFO, "\n");
+
+			routing_stats(router_opts.full_stats, router_opts.route_type,
+					det_routing_arch.num_switch, segment_inf,
+					det_routing_arch.num_segment, det_routing_arch.R_minW_nmos,
+					det_routing_arch.R_minW_pmos,
+					det_routing_arch.directionality,
+					timing_inf.timing_analysis_enabled, net_delay, slacks);
+
+			print_route(route_file);
+
+			if (getEchoEnabled() && isEchoFileEnabled(E_ECHO_ROUTING_SINK_DELAYS)) {
+				print_sink_delays(getEchoFileName(E_ECHO_ROUTING_SINK_DELAYS));
+			}
+
+			sprintf(msg, "Routing succeeded with a channel width factor of %d.\n\n",
+					width_fac);
+
+
+		}
+
+		init_draw_coords(max_pins_per_clb);
+		update_screen(MAJOR, msg, ROUTING, timing_inf.timing_analysis_enabled);
+		
+
+		if (timing_inf.timing_analysis_enabled) {
+			assert(slacks->slack);
+
+			if (getEchoEnabled() && isEchoFileEnabled(E_ECHO_POST_FLOW_TIMING_GRAPH)) {
+				print_timing_graph_as_blif (getEchoFileName(E_ECHO_POST_FLOW_TIMING_GRAPH),
+						models);
+			}
+
+			if(GetPostSynthesisOption())
+			  {
+			    verilog_writer();
+			  }
+
+			free_timing_graph(slacks);
+
+			assert(net_delay);
+			free_net_delay(net_delay, &net_delay_ch);
 		}
 
 		fflush(stdout);

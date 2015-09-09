@@ -4,7 +4,7 @@
 #include <math.h>
 #include "util.h"
 #include "vpr_types.h"
-#include "globals.h"
+//#include "globals.h"
 #include "path_delay.h"
 #include "path_delay2.h"
 #include "net_delay.h"
@@ -14,6 +14,28 @@
 #include "ReadOptions.h"
 #include "read_sdc.h"
 #include "stats.h"
+
+extern struct s_logical_block *logical_block;
+extern int num_logical_blocks;
+
+extern struct s_block *block;
+extern int num_blocks;
+
+extern struct s_net *vpack_net;
+extern int num_logical_nets;
+
+extern t_net *clb_net;
+extern int num_nets;
+
+extern float pb_max_internal_delay; /* biggest internal delay of block */
+extern const t_pb_type *pbtype_max_internal_delay; /* block type with highest internal delay */
+
+/* used by get_tnode_block_and_output_net and alloc_and_load_tnode */
+extern int *vpack_to_clb_net_mapping; /* [0..num_vpack_nets - 1] */
+
+/* used only by print_timing_graph_as_blif */
+extern char *blif_circuit_name;
+extern struct s_linked_vptr *circuit_p_io_removed;
 
 /**************************** Top-level summary ******************************
 

@@ -500,6 +500,11 @@ typedef struct s_sink {
 	int inode;
 } t_sink;
 
+typedef struct s_net_overlap {
+	int other_net;
+	int bounding_box_overlap_area;
+} t_net_overlap;
+
 /* name:  ASCII net name for informative annotations in the output.          *
  * num_sinks:  Number of sinks on this net.                                  *
  * node_block: [0..num_sinks]. Contains the blocks to which the nodes of this 
@@ -522,8 +527,10 @@ typedef struct s_net {
 	t_net_power * net_power;
 	pthread_mutex_t lock;
 
-	std::vector<int> sorted_sink_index;
+	//std::vector<int> sorted_sink_index;
 	std::vector<t_sink> sorted_sinks;
+	int current_sink_index;
+	std::vector<t_net_overlap> bounding_box_overlap_cache;
 } t_net;
 
 /* s_grid_tile is the minimum tile of the fpga                         
@@ -908,6 +915,7 @@ typedef struct s_rr_node {
 		num_edges = 0;
 		fan_in = 0;
 		num_reservation = 0;
+		occ_by_thread = NULL;
 		//num_wire_drivers = 0;
 		//num_opin_drivers = 0;
 	}
@@ -922,6 +930,8 @@ typedef struct s_rr_node {
 	short capacity;
 	short occ;
 	std::set<int> occupant_net_id;
+	std::set<std::pair<int, int>> driver_nets;
+	int **occ_by_thread;
 	int num_reservation;
 	float pres_cost;
 	float acc_cost;
@@ -1093,6 +1103,14 @@ typedef struct s_net_timing {
 	float *path_criticality;
 #endif
 } t_net_timing;
+
+#include "route_common_types.h"
+
+typedef struct s_net_route {
+	t_trace *l_trace_head;
+	t_trace *l_trace_tail;
+	int num_heap_pushes;
+} t_net_route;
 
 typedef struct s_route_parameters {
 	float pres_fac;

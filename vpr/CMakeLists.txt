@@ -24,6 +24,7 @@ set(srcs
 	SRC/base/verilog_writer.c
 	SRC/base/vpr_api.c
 	SRC/base/barrier.c
+	SRC/base/bounding_box.c
 	SRC/pack/cluster.c
 	SRC/pack/cluster_feasibility_filter.c
 	SRC/pack/cluster_legality.c
@@ -55,6 +56,7 @@ set(srcs
 	SRC/route/route_common_local.c
 	SRC/route/route_timing.c
 	SRC/route/parallel_route_timing.c
+	SRC/route/advanced_parallel_route_timing.c
 	SRC/route/route_tree_timing.c
 	SRC/route/route_tree_timing_local.c
 	SRC/route/rr_graph2.c
@@ -68,6 +70,7 @@ set(srcs
 	SRC/timing/net_delay.c
 	SRC/timing/path_delay2.c
 	SRC/timing/path_delay.c
+	#SRC/timing/path_delay_new.c
 	SRC/timing/read_sdc.c
 	SRC/timing/slre.c
 	SRC/util/hash.c
