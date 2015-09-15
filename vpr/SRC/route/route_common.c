@@ -3,6 +3,7 @@
 #include <assert.h>
 #include <time.h>
 #include <zlog.h>
+#include <algorithm>
 #include "util.h"
 #include "vpr_types.h"
 #include "vpr_utils.h"
@@ -325,15 +326,27 @@ boolean try_route_new(int width_fac, struct s_router_opts router_opts,
 
 	alloc_and_load_rr_node_route_structs();
 
-	if (router_opts.router_algorithm == BREADTH_FIRST) {
-		vpr_printf(TIO_MESSAGE_INFO, "Confirming Router Algorithm: BREADTH_FIRST.\n");
-		success = try_breadth_first_route(router_opts, clb_opins_used_locally,
-				width_fac);
-	} else { /* TIMING_DRIVEN route */
-		vpr_printf(TIO_MESSAGE_INFO, "Confirming Router Algorithm: TIMING_DRIVEN.\n");
-		assert(router_opts.route_type != GLOBAL);
-		success = try_parallel_timing_driven_route_top(router_opts, net_timing,
-			clb_opins_used_locally,timing_inf.timing_analysis_enabled);
+	switch (router_opts.router_algorithm) {
+		case BREADTH_FIRST:
+			vpr_printf(TIO_MESSAGE_INFO, "Confirming Router Algorithm: BREADTH_FIRST.\n");
+			success = try_breadth_first_route(router_opts, clb_opins_used_locally,
+					width_fac);
+			break;
+		case FINE_GRAINED:
+			vpr_printf(TIO_MESSAGE_INFO, "Confirming Router Algorithm: FINE_GRAINED.\n");
+			assert(router_opts.route_type != GLOBAL);
+			success = try_fine_grained_parallel_timing_driven_route_top_2(router_opts, net_timing,
+					clb_opins_used_locally,timing_inf.timing_analysis_enabled);
+			break;
+		case BARRIER:
+			vpr_printf(TIO_MESSAGE_INFO, "Confirming Router Algorithm: BARRIER.\n");
+			assert(router_opts.route_type != GLOBAL);
+			success = try_parallel_timing_driven_route_top(router_opts, net_timing,
+					clb_opins_used_locally,timing_inf.timing_analysis_enabled);
+			break;
+		default:
+			success = FALSE;
+			break;
 	}
 
 	free_rr_node_route_structs();
@@ -445,7 +458,8 @@ boolean feasible_routing(void) {
 		}
 	}
 
-	printf("Overused nodes: %d/%d (%.2f)\n", num_overused, num_rr_nodes, (float)num_overused/num_rr_nodes*100);
+	extern zlog_category_t *route_outer_log;
+	zlog_info(route_outer_log, "Overused nodes: %d/%d (%.2f)\n", num_overused, num_rr_nodes, (float)num_overused/num_rr_nodes*100);
 
 	return feasible ? TRUE : FALSE;
 }

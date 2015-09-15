@@ -1,4 +1,5 @@
 #include <stdio.h>
+#include <zlog.h>
 #include "util.h"
 #include "vpr_types.h"
 #include "route_common.h"
@@ -7,6 +8,8 @@
 
 extern t_rr_node *rr_node; /* [0..num_rr_nodes-1]          */
 extern struct s_switch_inf *switch_inf; /* [0..det_routing_arch.num_switch-1] */
+
+void sprintf_rr_node(int inode, char *buffer);
 
 static t_rt_node *
 add_path_to_route_tree(const struct s_heap *sink, t_rt_node ** sink_rt_node_ptr, const t_rr_node_route_inf *l_rr_node_route_inf, t_rt_node **l_rr_node_to_rt_node) {
@@ -38,6 +41,11 @@ add_path_to_route_tree(const struct s_heap *sink, t_rt_node ** sink_rt_node_ptr,
 	C_downstream = rr_node[inode].C;
 	sink_rt_node->C_downstream = C_downstream;
 	l_rr_node_to_rt_node[inode] = sink_rt_node;
+
+	char buffer[256];
+	extern zlog_category_t *route_inner_log;
+	sprintf_rr_node(inode, buffer);
+	zlog_debug(route_inner_log, "Adding %s to route tree\n", buffer);
 
 	/* In the code below I'm marking SINKs and IPINs as not to be re-expanded.  *
 	 * Undefine NO_ROUTE_THROUGHS if you want route-throughs or ipin doglegs.   *
@@ -91,6 +99,9 @@ add_path_to_route_tree(const struct s_heap *sink, t_rt_node ** sink_rt_node_ptr,
 
 		rt_node->C_downstream = C_downstream;
 		l_rr_node_to_rt_node[inode] = rt_node;
+
+		sprintf_rr_node(inode, buffer);
+		zlog_debug(route_inner_log, "Adding %s to route tree\n", buffer);
 
 		if (no_route_throughs == 1)
 			if (rr_node[inode].type == IPIN)

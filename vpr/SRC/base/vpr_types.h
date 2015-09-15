@@ -704,7 +704,7 @@ enum e_route_type {
 	GLOBAL, DETAILED
 };
 enum e_router_algorithm {
-	BREADTH_FIRST, TIMING_DRIVEN, NO_TIMING
+	BREADTH_FIRST, TIMING_DRIVEN, BARRIER, FINE_GRAINED, NO_TIMING
 };
 enum e_base_cost_type {
 	INTRINSIC_DELAY, DELAY_NORMALIZED, DEMAND_ONLY
@@ -933,6 +933,7 @@ typedef struct s_rr_node {
 	std::set<std::pair<int, int>> driver_nets;
 	int **occ_by_thread;
 	int num_reservation;
+	float weighted_pres_cost;
 	float pres_cost;
 	float acc_cost;
 	pthread_mutex_t lock; /* protects occ pres_cost and acc_cost */
@@ -1110,6 +1111,7 @@ typedef struct s_net_route {
 	t_trace *l_trace_head;
 	t_trace *l_trace_tail;
 	int num_heap_pushes;
+	int num_heap_pops;
 } t_net_route;
 
 typedef struct s_route_parameters {

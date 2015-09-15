@@ -82,3 +82,11 @@ int get_num_threads();
 boolean try_parallel_timing_driven_route_top(struct s_router_opts router_opts,
 		t_net_timing *net_timing, t_ivec ** clb_opins_used_locally, boolean timing_analysis_enabled);
 
+boolean try_new_cost_parallel_timing_driven_route_top(struct s_router_opts router_opts,
+		t_net_timing *net_timing, t_ivec ** clb_opins_used_locally, boolean timing_analysis_enabled);
+
+boolean try_fine_grained_parallel_timing_driven_route_top(struct s_router_opts router_opts,
+		t_net_timing *net_timing, t_ivec ** clb_opins_used_locally, boolean timing_analysis_enabled);
+
+boolean try_fine_grained_parallel_timing_driven_route_top_2(struct s_router_opts router_opts,
+		t_net_timing *net_timing, t_ivec ** clb_opins_used_locally, boolean timing_analysis_enabled);

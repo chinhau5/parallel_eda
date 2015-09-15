@@ -4,6 +4,7 @@
 #include <assert.h>
 #include <pthread.h>
 #include <zlog.h> 
+#include <algorithm>
 #include "util.h"
 #include "vpr_types.h"
 #include "globals.h"

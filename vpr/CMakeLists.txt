@@ -56,6 +56,9 @@ set(srcs
 	SRC/route/route_common_local.c
 	SRC/route/route_timing.c
 	SRC/route/parallel_route_timing.c
+	SRC/route/new_cost_parallel_route_timing.c
+	SRC/route/fine_grained_parallel_route_timing.c
+	SRC/route/fine_grained_parallel_route_timing_2.c
 	SRC/route/advanced_parallel_route_timing.c
 	SRC/route/route_tree_timing.c
 	SRC/route/route_tree_timing_local.c
@@ -91,6 +94,7 @@ target_include_directories(Vpr PUBLIC
 	#libarchfpga/include 
 	/usr/local/include
 	/opt/local/include
+	~/Downloads/tbb44_20150728oss/include
 	SRC/util
 	SRC/timing 
 	SRC/pack 

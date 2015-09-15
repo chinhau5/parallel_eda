@@ -72,5 +72,6 @@ struct s_TokenPair OptionArgTokenList[] = { { "on", OT_ON }, { "off", OT_OFF },
 				"global", OT_GLOBAL }, { "detailed", OT_DETAILED }, { "timing",
 				OT_TIMING }, { "max_inputs", OT_MAX_INPUTS }, { "greedy",
 				OT_GREEDY }, { "lp", OT_LP }, { "brute_force", OT_BRUTE_FORCE },
+	{ "barrier", OT_BARRIER }, { "fine_grained", OT_FINE_GRAINED },
 		{ NULL, OT_BASE_UNKNOWN } /* End of list marker */
 };

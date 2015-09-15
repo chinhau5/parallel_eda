@@ -5,6 +5,7 @@
 
 struct s_heap {
 	int index;
+	int level;
 	float cost;
 	union {
 		int prev_node;

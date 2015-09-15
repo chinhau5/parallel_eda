@@ -1,12 +1,10 @@
-#ifdef __APPLE__
-
 #ifndef PTHREAD_BARRIER_H_
 #define PTHREAD_BARRIER_H_
 
 #include <pthread.h>
 #include <errno.h>
 
-typedef int pthread_barrierattr_t;
+typedef int my_pthread_barrierattr_t;
 typedef struct
 {
     pthread_mutex_t mutex;
@@ -14,13 +12,12 @@ typedef struct
 	pthread_t first_waiting_thread;
     int count;
     int tripCount;
-} pthread_barrier_t;
+} my_pthread_barrier_t;
 
-int pthread_barrier_init(pthread_barrier_t *barrier, const pthread_barrierattr_t *attr, unsigned int count);
+int my_pthread_barrier_init(my_pthread_barrier_t *barrier, const my_pthread_barrierattr_t *attr, unsigned int count);
 
-int pthread_barrier_destroy(pthread_barrier_t *barrier);
+int my_pthread_barrier_destroy(my_pthread_barrier_t *barrier);
 
-int pthread_barrier_wait(pthread_barrier_t *barrier, int tid);
+int my_pthread_barrier_wait(my_pthread_barrier_t *barrier, int tid);
 
 #endif // PTHREAD_BARRIER_H_
-#endif // __APPLE__

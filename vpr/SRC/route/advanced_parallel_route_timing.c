@@ -209,7 +209,7 @@ typedef struct thread_info {
 
 	sem_t *start_route_sem;
 	sem_t *complete_route_sem;
-	pthread_barrier_t *barrier;
+	my_pthread_barrier_t *barrier;
 
 	int *net_index;
 	t_router_opts *router_opts;
@@ -232,7 +232,7 @@ struct compare_to_source {
 	{
 	}
 
-	bool operator()(struct s_inode_with_pos &sink_a, struct s_inode_with_pos &sink_b) const
+	bool operator()(const struct s_inode_with_pos &sink_a, const struct s_inode_with_pos &sink_b) const
 	{
 		return abs(source.x - sink_a.x) + abs(source.y - sink_a.y)
 			< abs(source.x - sink_b.x) + abs(source.y - sink_b.y);
@@ -778,7 +778,7 @@ static void *worker_thread(void *arg)
 }
 
 static void init_thread_info(thread_info *tinfo, int num_threads,
-		pthread_barrier_t *barrier,
+		my_pthread_barrier_t *barrier,
 		int *net_index,
 		t_router_opts *router_opts,
 		float *pres_fac,
@@ -1041,8 +1041,8 @@ static void simple_expand_neighbours(const struct s_heap *current,
 						* get_timing_driven_expected_cost(to_node, target_node,
 								criticality_fac, new_R_upstream, 1);
 
-		node_to_heap(heap, to_node, inode, iconn, new_tot_cost, new_back_pcost,
-				new_R_upstream, l_rr_node_route_inf);
+		node_to_heap(to_node, inode, iconn, new_tot_cost, new_back_pcost,
+				new_R_upstream, l_rr_node_route_inf, heap);
 		++(*num_heap_pushes);
 
 	} /* End for all neighbours */
@@ -1112,7 +1112,7 @@ boolean simple_route_net(t_simple_net *net,
 		* get_timing_driven_expected_cost(rt_root->inode, target_node,
 				target_criticality, rt_root->R_upstream, 1);
 
-	node_to_heap(heap, rt_root->inode, NO_PREVIOUS, NO_PREVIOUS, tot_cost, backward_path_cost, rt_root->R_upstream, l_rr_node_route_inf);
+	node_to_heap(rt_root->inode, NO_PREVIOUS, NO_PREVIOUS, tot_cost, backward_path_cost, rt_root->R_upstream, l_rr_node_route_inf, heap);
 
 	current = heap.top();
 	heap.pop();
@@ -1421,8 +1421,8 @@ static void add_route_tree_to_heap(t_rt_node * rt_node, int target_node,
 				+ astar_fac
 						* get_timing_driven_expected_cost(inode, target_node,
 								target_criticality, R_upstream, 1);
-		node_to_heap(heap, inode, NO_PREVIOUS, NO_PREVIOUS,
-				tot_cost, backward_path_cost, R_upstream, l_rr_node_route_inf);
+		node_to_heap(inode, NO_PREVIOUS, NO_PREVIOUS,
+				tot_cost, backward_path_cost, R_upstream, l_rr_node_route_inf, heap);
 	}
 
 	linked_rt_edge = rt_node->u.child_list;
@@ -1595,7 +1595,7 @@ static void timing_driven_expand_neighbours(const struct s_heap *current, int in
 						* get_timing_driven_expected_cost(to_node, target_node,
 								criticality_fac, new_R_upstream, 1);
 
-		node_to_heap(heap, to_node, inode, iconn, new_tot_cost, new_back_pcost, new_R_upstream, l_rr_node_route_inf);
+		node_to_heap(to_node, inode, iconn, new_tot_cost, new_back_pcost, new_R_upstream, l_rr_node_route_inf, heap);
 		++(*num_heap_pushes);
 
 	} /* End for all neighbours */
@@ -1942,8 +1942,8 @@ boolean try_advanced_parallel_timing_driven_route(struct s_router_opts router_op
 
     int num_threads = router_opts.num_threads;
 
-	pthread_barrier_t barrier;
-	assert(!pthread_barrier_init(&barrier, NULL, num_threads));
+	my_pthread_barrier_t barrier;
+	assert(!my_pthread_barrier_init(&barrier, NULL, num_threads));
 
 	thread_info *tinfo = (thread_info *)malloc(sizeof(thread_info) * num_threads);
 	int *ordered_index = new int[num_nets];

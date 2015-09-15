@@ -5,6 +5,7 @@ project(Router)
 link_directories(
 	/usr/local/lib
 	/opt/local/lib
+	~/Downloads/tbb44_20150728oss/lib
 	)
 
 set(CMAKE_SKIP_RPATH true)
@@ -13,9 +14,10 @@ set(CMAKE_SKIP_RPATH true)
 
 #generic compile options go here
 add_compile_options(
+	-DTBB_USE_THREADING_TOOLS=1
 	-std=c++11
 	-g -O0
-	-fno-omit-frame-pointer
+	-Bdynamic
 	-Wall)
 
 if (CMAKE_SYSTEM_NAME STREQUAL "Linux" AND SANITIZE EQUAL 1)
@@ -34,14 +36,32 @@ set_source_files_properties(vpr/SRC/main.c PROPERTIES LANGUAGE CXX)
 
 add_executable(Router vpr/SRC/main.c)
 
+if (CMAKE_SYSTEM_NAME STREQUAL "Linux")
+	set(link_libs
+		Vpr
+		pthread
+		dl 
+		m
+		zlog
+		boost_timer
+		boost_system
+		tbb_debug
+		)
+else()
+	set(link_libs
+		Vpr
+		pthread
+		dl 
+		m
+		zlog
+		boost_timer-mt-d
+		boost_system-mt-d
+		tbb_debug
+		)
+endif()
+
 target_link_libraries(Router 
-	Vpr
-	pthread
-	dl 
-	m
-	zlog
-	boost_timer-mt-d
-	boost_system-mt-d
+	${link_libs}
 	)
 
 if (CMAKE_SYSTEM_NAME STREQUAL "Linux" AND SANITIZE EQUAL 1)

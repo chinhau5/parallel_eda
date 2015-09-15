@@ -1,14 +1,20 @@
 #include <queue>
 #include "route_common_types.h"
+#include "route_tree_timing_types.h"
 
 void print_route(char *route_file, t_net_route *net_route, int **sink_order);
 
+void print_one_route(char *route_file, int inet, t_net_route *net_route, t_rt_node **l_rr_node_route_inf);
+
 float get_rr_cong_cost(int inode, int num_sinks);
 
-void node_to_heap(std::priority_queue<struct s_heap> &heap,
+float get_weighted_rr_cong_cost(int inode, int num_sinks);
+
+void node_to_heap(
 		int inode, int prev_node, int prev_edge,
 		float cost, float backward_path_cost, float R_upstream,
-		t_rr_node_route_inf *l_rr_node_route_inf);
+		const t_rr_node_route_inf *l_rr_node_route_inf,
+		std::priority_queue<struct s_heap> &heap);
 
 void thread_safe_free_traceback(t_trace **l_trace_head, t_trace **l_trace_tail);
 

@@ -1,10 +1,8 @@
-#ifdef __APPLE__
-
 #include <stdio.h>
 #include <zlog.h>
 #include "barrier.h"
 
-int pthread_barrier_init(pthread_barrier_t *barrier, const pthread_barrierattr_t *attr, unsigned int count)
+int my_pthread_barrier_init(my_pthread_barrier_t *barrier, const my_pthread_barrierattr_t *attr, unsigned int count)
 {
     if(count == 0)
     {
@@ -26,14 +24,14 @@ int pthread_barrier_init(pthread_barrier_t *barrier, const pthread_barrierattr_t
     return 0;
 }
 
-int pthread_barrier_destroy(pthread_barrier_t *barrier)
+int my_pthread_barrier_destroy(my_pthread_barrier_t *barrier)
 {
     pthread_cond_destroy(&barrier->cond);
     pthread_mutex_destroy(&barrier->mutex);
     return 0;
 }
 
-int pthread_barrier_wait(pthread_barrier_t *barrier, int tid)
+int my_pthread_barrier_wait(my_pthread_barrier_t *barrier, int tid)
 {
     pthread_mutex_lock(&barrier->mutex);
 	if (barrier->count == 0) {
@@ -64,5 +62,3 @@ int pthread_barrier_wait(pthread_barrier_t *barrier, int tid)
     }
 	return ret;
 }
-
-#endif // __APPLE__

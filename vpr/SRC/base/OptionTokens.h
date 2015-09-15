@@ -98,6 +98,8 @@ enum e_OptionArgToken {
 	OT_GREEDY,
 	OT_LP,
 	OT_BRUTE_FORCE,
+	OT_BARRIER,
+	OT_FINE_GRAINED,
 	OT_ARG_UNKNOWN /* Must be last since used for counting enum items */
 };
 

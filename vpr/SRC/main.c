@@ -17,6 +17,7 @@
 #include <time.h>
 /*#include <glog/logging.h>*/
 #include <zlog.h>
+#include "tbb/task_scheduler_init.h"
 #include "vpr_api.h"
 
 /**

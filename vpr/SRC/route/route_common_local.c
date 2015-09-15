@@ -36,6 +36,106 @@ extern int **rr_blk_source; /* [0..num_blocks-1][0..num_class-1] */
 
 static boolean is_parallel_route;
 
+void print_one_route(char *route_file, int inet, t_net_route *net_route, t_rt_node **l_rr_node_to_rt_node)
+{
+	/* Prints out the routing to file route_file.  */
+
+	int inode, ipin, bnum, ilow, jlow, node_block_pin, iclass;
+	t_rr_type rr_type;
+	struct s_trace *tptr;
+	const char *name_type[] = { "SOURCE", "SINK", "IPIN", "OPIN", "CHANX", "CHANY",
+			"INTRA_CLUSTER_EDGE" };
+	FILE *fp;
+
+	fp = fopen(route_file, "w");
+
+	fprintf(fp, "Array size: %d x %d logic blocks.\n", nx, ny);
+	fprintf(fp, "\nRouting:");
+	fprintf(fp, "\n\nNet %d (%s)\n\n", inet, clb_net[inet].name);
+	tptr = net_route->l_trace_head;
+
+	int source_node = tptr->index;
+	assert(rr_node[source_node].type == SOURCE);
+
+	int sink = 1;
+	while (tptr != NULL) {
+		inode = tptr->index;
+		rr_type = rr_node[inode].type;
+
+		if (rr_type == CHANX || rr_type == CHANY) {
+			if (rr_node[inode].direction == INC_DIRECTION) {
+				fprintf(fp, "Node:\t%d\t%6s (%d,%d) ", inode, name_type[rr_type], rr_node[inode].xlow, rr_node[inode].ylow);
+				fprintf(fp, "to (%d,%d) ", rr_node[inode].xhigh, rr_node[inode].yhigh);
+			} else {
+				fprintf(fp, "Node:\t%d\t%6s (%d,%d) ", inode, name_type[rr_type], rr_node[inode].xhigh, rr_node[inode].yhigh);
+				fprintf(fp, "to (%d,%d) ", rr_node[inode].xlow, rr_node[inode].ylow);
+			}
+		} else {
+			ilow = rr_node[inode].xlow;
+			jlow = rr_node[inode].ylow;
+
+			fprintf(fp, "Node:\t%d\t%6s (%d,%d) ", inode, name_type[rr_type], ilow, jlow);
+
+			if ((ilow != rr_node[inode].xhigh)
+					|| (jlow != rr_node[inode].yhigh))
+				fprintf(fp, "to (%d,%d) ", rr_node[inode].xhigh,
+						rr_node[inode].yhigh);
+		}
+
+		switch (rr_type) {
+
+			case IPIN:
+			case OPIN:
+				if (grid[ilow][jlow].type == IO_TYPE) {
+					fprintf(fp, " Pad: ");
+				} else { /* IO Pad. */
+					fprintf(fp, " Pin: ");
+				}
+				break;
+
+			case CHANX:
+			case CHANY:
+				fprintf(fp, " Track: ");
+				break;
+
+			case SOURCE:
+			case SINK:
+				if (grid[ilow][jlow].type == IO_TYPE) {
+					fprintf(fp, " Pad: ");
+				} else { /* IO Pad. */
+					fprintf(fp, " Class: ");
+				}
+				if (rr_type == SINK) {
+					fprintf(fp, " Delay: %g ", l_rr_node_to_rt_node[inode]->Tdel);
+					++sink;
+				}
+				break;
+
+			default:
+				vpr_printf(TIO_MESSAGE_ERROR, "in print_route: Unexpected traceback element type: %d (%s).\n", 
+						rr_type, name_type[rr_type]);
+				exit(1);
+				break;
+		}
+
+		fprintf(fp, "%d  ", rr_node[inode].ptc_num);
+
+		/* Uncomment line below if you're debugging and want to see the switch types *
+		 * used in the routing.                                                      */
+		/*          fprintf (fp, "Switch: %d", tptr->iswitch);    */
+
+		fprintf(fp, "\n");
+
+		if (rr_type == SINK) {
+			fprintf(fp, "\n");
+		}
+
+		tptr = tptr->next;
+	}
+
+	fclose(fp);
+}
+
 void print_route(char *route_file, t_net_route *net_route, int **sink_order) {
 
 	/* Prints out the routing to file route_file.  */
@@ -214,6 +314,7 @@ void thread_safe_pathfinder_update_one_cost(int inet, struct s_trace *route_segm
 
 	struct s_trace *tptr;
 	int inode, occ, capacity;
+	extern zlog_category_t *route_inner_log;
 
 	tptr = route_segment_start;
 	if (tptr == NULL) /* No routing yet. */
@@ -232,19 +333,19 @@ void thread_safe_pathfinder_update_one_cost(int inet, struct s_trace *route_segm
 
 		if (add_or_sub > 0) {
 			if (rr_node[inode].occupant_net_id.find(inet) != rr_node[inode].occupant_net_id.end()) {
-				printf("Trying to insert existing net %d into node %d\n", inet, inode);
+				zlog_warn(route_inner_log, "Trying to insert existing net %d into node %d\n", inet, inode);
 			}
 			rr_node[inode].occupant_net_id.insert(inet);
 		} else {
 			assert(add_or_sub < 0);
 			if (rr_node[inode].occupant_net_id.find(inet) == rr_node[inode].occupant_net_id.end()) {
-				printf("Trying to erase non-existing net %d from node %d\n", inet, inode);
+				zlog_warn(route_inner_log, "Trying to erase non-existing net %d from node %d\n", inet, inode);
 			}
 			rr_node[inode].occupant_net_id.erase(inet);
 		}
 		occ = rr_node[inode].occ + add_or_sub;
 		if (occ < 0) {
-			printf("occ is less than 0\n");
+			zlog_fatal(route_inner_log, "occ is less than 0\n");
 			assert(false);
 		}
 		capacity = rr_node[inode].capacity;
@@ -261,6 +362,8 @@ void thread_safe_pathfinder_update_one_cost(int inet, struct s_trace *route_segm
 			rr_node[inode].pres_cost = 1.
 					+ (occ + 1 - capacity) * pres_fac;
 		}
+
+		zlog_debug(route_inner_log, "Update cost for %d\n", inode);
     
 		assert(!pthread_mutex_unlock(&rr_node[inode].lock));
 
@@ -350,6 +453,11 @@ thread_safe_update_traceback(t_trace **l_trace_head, t_trace **l_trace_tail, con
 	temptail = tptr; /* This will become the new tail at the end */
 	/* of the routine.                          */
 
+	extern zlog_category_t *route_inner_log;
+	char buffer[256];
+	sprintf_rr_node(inode, buffer);
+	zlog_debug(route_inner_log, "Traceback: %s\n", buffer);
+
 	/* Now do it's predecessor. */
 
 	inode = hptr->u.prev_node;
@@ -362,6 +470,9 @@ thread_safe_update_traceback(t_trace **l_trace_head, t_trace **l_trace_tail, con
 	int prev_inode = tptr->index;
 
 	while (inode != NO_PREVIOUS) {
+		sprintf_rr_node(inode, buffer);
+		zlog_debug(route_inner_log, "Traceback: %s\n", buffer);
+
 		prevptr = new t_trace;//alloc_trace_data();
 		prevptr->index = inode;
 		prevptr->iswitch = rr_node[inode].switches[iedge];
@@ -389,6 +500,23 @@ thread_safe_update_traceback(t_trace **l_trace_head, t_trace **l_trace_tail, con
 	return (ret_ptr);
 }
 
+float get_weighted_rr_cong_cost(int inode, int num_sinks) {
+
+	/* Returns the *congestion* cost of using this rr_node. */
+
+	short cost_index;
+	float cost;
+
+	cost_index = rr_node[inode].cost_index;
+/*	cost = rr_indexed_data[cost_index].saved_base_cost * sqrt((float)num_sinks)*/
+	assert(!pthread_mutex_lock(&rr_node[inode].lock));
+	cost = rr_indexed_data[cost_index].saved_base_cost
+			* rr_node[inode].acc_cost
+			* rr_node[inode].weighted_pres_cost;
+	assert(!pthread_mutex_unlock(&rr_node[inode].lock));
+	return (cost);
+}
+
 float get_rr_cong_cost(int inode, int num_sinks) {
 
 	/* Returns the *congestion* cost of using this rr_node. */
@@ -406,10 +534,11 @@ float get_rr_cong_cost(int inode, int num_sinks) {
 	return (cost);
 }
 
-void node_to_heap(std::priority_queue<struct s_heap> &heap,
+void node_to_heap(
 		int inode, int prev_node, int prev_edge,
 		float cost, float backward_path_cost, float R_upstream,
-		t_rr_node_route_inf *l_rr_node_route_inf)
+		const t_rr_node_route_inf *l_rr_node_route_inf,
+		std::priority_queue<struct s_heap> &heap)
 {
 
 	/* Puts an rr_node on the heap, if the new cost given is lower than the     *
@@ -421,10 +550,11 @@ void node_to_heap(std::priority_queue<struct s_heap> &heap,
 
 	struct s_heap item;
 
-	if (cost >= l_rr_node_route_inf[inode].path_cost) {
-		dzlog_debug("Not adding to heap\n");
-		return;
-	}
+	/*if (cost >= l_rr_node_route_inf[inode].path_cost) {*/
+		/*extern zlog_category_t *route_inner_log;*/
+		/*zlog_debug(route_inner_log, "Not adding %d to heap because cost %g is >= %g\n", inode, cost, l_rr_node_route_inf[inode].path_cost);*/
+		/*return;*/
+	/*}*/
 
 	item.index = inode;
 	item.u.prev_node = prev_node;
@@ -434,7 +564,9 @@ void node_to_heap(std::priority_queue<struct s_heap> &heap,
 	item.R_upstream = R_upstream;
 
 	extern zlog_category_t *route_inner_log;
-	zlog_debug(route_inner_log, "Adding node: %d cost: %g backward_path_cost: %g prev_node: %d to heap\n", inode, cost, backward_path_cost, prev_node);
+	char buffer[256];
+	sprintf_rr_node(inode, buffer);
+	zlog_debug(route_inner_log, "Adding node: %s cost: %g backward_path_cost: %g prev_node: %d to heap\n", buffer, cost, backward_path_cost, prev_node);
 
 	heap.push(item);
 }
