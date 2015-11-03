@@ -445,7 +445,7 @@ static int timing_driven_expand_neighbours(
 		to_node = rr_node[inode].edges[iconn];
 
 		sprintf_rr_node(to_node, buffer);
-		zlog_debug(route_inner_log, "\t[%d] Neighbor: %s ", thread_id, buffer);
+		zlog_debug(route_inner_log, "\t[%d] Neighbor: %s \n", thread_id, buffer);
 
 		std::pair<int, int> current_pos = get_node_start(inode); 
 		std::pair<int, int> sink_pos = get_node_end(target_node); 
@@ -479,7 +479,7 @@ static int timing_driven_expand_neighbours(
 				|| rr_node[to_node].xlow > route_bb[inet].xmax
 				|| rr_node[to_node].yhigh < route_bb[inet].ymin
 				|| rr_node[to_node].ylow > route_bb[inet].ymax) {
-			zlog_debug(route_inner_log, "Outside of bounding box\n");
+			zlog_debug(route_inner_log, "\t\t[%d] Outside of bounding box\n", thread_id);
 			continue; /* Node is outside (expanded) bounding box. */
 		}
 
@@ -488,7 +488,7 @@ static int timing_driven_expand_neighbours(
 					|| rr_node[to_node].xlow > target_x + highfanout_rlim
 					|| rr_node[to_node].yhigh < target_y - highfanout_rlim
 					|| rr_node[to_node].ylow > target_y + highfanout_rlim) {
-				zlog_debug(route_inner_log, "Outside of high fanout bin\n");
+				zlog_debug(route_inner_log, "\t\t[%d] Outside of high fanout bin\n", thread_id);
 				continue; /* Node is outside high fanout bin. */
 			}
 		}
@@ -504,7 +504,7 @@ static int timing_driven_expand_neighbours(
 		if (to_type == IPIN
 				&& (rr_node[to_node].xhigh != target_x
 						|| rr_node[to_node].yhigh != target_y)) {
-			zlog_debug(route_inner_log, "Not the target IPIN\n");
+			zlog_debug(route_inner_log, "\t\t[%d] Not the target IPIN\n", thread_id);
 			continue;
 		}
 
@@ -537,7 +537,7 @@ static int timing_driven_expand_neighbours(
 				new_back_pcost += bend_cost;
 		}
 
-		zlog_debug(route_inner_log, "old_b: %g crit: %g cong: %g Tdel: %g bend: %g ",
+		zlog_debug(route_inner_log, "\t\t[%d] old_b: %g crit: %g cong: %g Tdel: %g bend: %g\n", thread_id,
 				old_back_pcost, criticality_fac, cong_cost, Tdel, bend_cost);
 
 		new_tot_cost = new_back_pcost
@@ -545,7 +545,7 @@ static int timing_driven_expand_neighbours(
 						* get_timing_driven_expected_cost(to_node, target_node,
 								criticality_fac, new_R_upstream, 1);
 
-		node_to_heap(to_node, inode, iconn, new_tot_cost, new_back_pcost, new_R_upstream, l_rr_node_route_inf, heap);
+		node_to_heap(thread_id, to_node, inode, iconn, new_tot_cost, new_back_pcost, new_R_upstream, l_rr_node_route_inf, heap);
 		++num_pushes;
 
 	} /* End for all neighbours */
@@ -990,15 +990,15 @@ class RouteWorker2 {
 
 		std::mutex &l_rr_node_route_inf_lock;
 
-		tbb::atomic<bool> &found_sink;
-		tbb::atomic<int> &num_found_sink;
-		struct s_heap &sink_node;
+		std::mutex &found_sinks_lock;
+		vector<struct s_heap> &found_sinks;
 
 		std::mutex &spawn_lock;
 		int &heap_index; /* access must be protected by mutex */
 		int &num_spawned_workers;
+		int &worker_id;
 
-		std::mutex &sink_lock;
+		tbb::atomic<int> **visit_count;
 
 		std::vector<int> &modified_inodes;
 		std::mutex &modified_inodes_lock;
@@ -1019,14 +1019,14 @@ class RouteWorker2 {
 		typedef RouteWorkerFeederItem argument_type;
 
 		RouteWorker2(std::mutex &l_rr_node_route_inf_lock,
-				tbb::atomic<bool> &found_sink, struct s_heap &sink_node, tbb::atomic<int> &num_found_sink,  std::mutex &sink_lock,
-				std::mutex &spawn_lock, int &heap_index, int &num_spawned_workers,
+				std::mutex &found_sinks_lock, vector<struct s_heap> &found_sinks,
+				std::mutex &spawn_lock, int &heap_index, int &num_spawned_workers, int &worker_id,
 				std::vector<int> &modified_inodes, std::mutex &modified_inodes_lock,
 				std::mutex &push_lock, int &num_heap_pushes
 				)
 			: l_rr_node_route_inf_lock(l_rr_node_route_inf_lock),
-			found_sink(found_sink), sink_node(sink_node), num_found_sink(num_found_sink), sink_lock(sink_lock),
-			spawn_lock(spawn_lock), heap_index(heap_index), num_spawned_workers(num_spawned_workers),
+			found_sinks_lock(found_sinks_lock), found_sinks(found_sinks),
+			spawn_lock(spawn_lock), heap_index(heap_index), num_spawned_workers(num_spawned_workers), worker_id(worker_id),
 			modified_inodes(modified_inodes), modified_inodes_lock(modified_inodes_lock),
 			push_lock(push_lock), num_heap_pushes(num_heap_pushes)
 		{
@@ -1042,6 +1042,8 @@ class RouteWorker2 {
 			struct s_heap current_heap_item = local_heap.top();
 			local_heap.pop();
 			int inode = current_heap_item.index;
+			auto start = get_node_start(inode);
+			++visit_count[start.first][start.second];
 
 			sprintf_rr_node(inode, buffer);
 			zlog_debug(route_inner_log, "[%d] Start item %s\n", item.worker_id, buffer);
@@ -1052,7 +1054,7 @@ class RouteWorker2 {
 				float old_tcost = l_rr_node_route_inf[inode].path_cost;
 				float old_back_cost;
 
-				if (old_tcost > 0.99 * HUGE_POSITIVE_FLOAT) /* First time touched. */
+				if (!l_rr_node_route_inf[inode].modified) /* First time touched. */
 					old_back_cost = HUGE_POSITIVE_FLOAT;
 				else
 					old_back_cost = l_rr_node_route_inf[inode].backward_path_cost;
@@ -1079,25 +1081,43 @@ class RouteWorker2 {
 					/*l_rr_node_route_inf[inode].backward_path_cost = current_heap_item.backward_path_cost; [> when after adding to heap, the backward path cost does not include the congestion cost <]*/
 					/*zlog_debug(route_inner_log, "\tForcing expansion of existing route tree node\n");*/
 					/*expand_neighbours = true;*/
-				/*} else*/ if (old_tcost > new_tcost && old_back_cost > new_back_cost) {
+				/*} else*/
+				bool written = false;
+
+				if (old_back_cost > new_back_cost && old_tcost > new_tcost) {
 					if (in_route_tree && !added_from_route_tree && current_heap_item.u.prev_node != l_rr_node_route_inf[inode].prev_node) {
-						zlog_warn(route_inner_log, "Trying to drive an existing route tree node %s with a new driver\n", buffer);
+						/*zlog_warn(route_inner_log, "\t[%d] Trying to drive an existing route tree node %s with a new driver\n", item.worker_id, buffer);*/
 					} else {
 						l_rr_node_route_inf[inode].prev_node = current_heap_item.u.prev_node;
 						l_rr_node_route_inf[inode].prev_edge = current_heap_item.prev_edge;
 						l_rr_node_route_inf[inode].path_cost = new_tcost;
 						l_rr_node_route_inf[inode].backward_path_cost = new_back_cost;
 
-						if (old_tcost > 0.99 * HUGE_POSITIVE_FLOAT) /* First time touched. */ {
+						written = true;
+
+						if (!l_rr_node_route_inf[inode].modified) /* First time touched. */ {
 							modified_inodes_lock.lock();
 							modified_inodes.push_back(inode);
 							modified_inodes_lock.unlock();
+							l_rr_node_route_inf[inode].modified = true;
 						}
 
 						zlog_debug(route_inner_log, "\t[%d] Normal expansion\n", item.worker_id);
 						expand_neighbours = true;
 					}
 				}
+
+				transaction_t trans;
+				trans.target_node = target_node;
+				trans.old_tcost = old_tcost;
+				trans.old_bcost = old_back_cost;
+				trans.new_bcost = new_back_cost;
+				trans.new_tcost = new_tcost;
+				trans.prev_node = current_heap_item.u.prev_node;
+				trans.prev_edge = current_heap_item.prev_edge;
+				trans.written = written;
+
+				l_rr_node_route_inf[inode].transactions.push_back(trans);
 
 				l_rr_node_route_inf_lock.unlock();
 
@@ -1129,7 +1149,10 @@ class RouteWorker2 {
 					local_heap.pop();
 
 					inode = current_heap_item.index;
+					start = get_node_start(inode);
+					++visit_count[start.first][start.second];
 				} else {
+					zlog_debug(route_inner_log, "[%d] Breaking because of empty heap\n", item.worker_id);
 					spawn_lock.lock();
 					--num_spawned_workers;
 					spawn_lock.unlock();
@@ -1142,7 +1165,7 @@ class RouteWorker2 {
 					new_heap.push(local_heap.top());
 					local_heap.pop();
 
-					feeder.add({ new_heap, num_spawned_workers });
+					feeder.add({ new_heap, worker_id++ });
 
 					sprintf_rr_node(new_heap.top().index, buffer);
 					zlog_debug(route_inner_log, "[%d] Adding to feeder inode %s\n", item.worker_id, buffer);
@@ -1155,29 +1178,38 @@ class RouteWorker2 {
 			if (inode == target_node) {
 				assert(current_heap_item.index == inode);
 
-				l_rr_node_route_inf_lock.lock();
-				int sink_inode = current_heap_item.index;
-				if (current_heap_item.backward_path_cost < l_rr_node_route_inf[sink_inode].backward_path_cost
-						&& current_heap_item.cost < l_rr_node_route_inf[sink_inode].path_cost) {
-					l_rr_node_route_inf[sink_inode].backward_path_cost = current_heap_item.backward_path_cost;
-					l_rr_node_route_inf[sink_inode].path_cost = current_heap_item.cost;
-					l_rr_node_route_inf[sink_inode].prev_node = current_heap_item.u.prev_node;
-					l_rr_node_route_inf[sink_inode].prev_edge = current_heap_item.prev_edge;
+				sprintf_rr_node(inode, buffer);
+				zlog_debug(route_inner_log, "[%d] Found %s\n", item.worker_id, buffer);
 
-					modified_inodes_lock.lock();
-					modified_inodes.push_back(sink_inode);
-					modified_inodes_lock.unlock();
+				found_sinks_lock.lock();
+				found_sinks.push_back(current_heap_item);
+				found_sinks_lock.unlock();
 
-					sprintf_rr_node(inode, buffer);
-					zlog_info(route_inner_log, "[%d] Found %s\n", item.worker_id, buffer);
+				/*l_rr_node_route_inf_lock.lock();*/
+				/*int sink_inode = current_heap_item.index;*/
+				/*if (current_heap_item.backward_path_cost < l_rr_node_route_inf[sink_inode].backward_path_cost*/
+						/*&& current_heap_item.cost < l_rr_node_route_inf[sink_inode].path_cost) {*/
+					/*l_rr_node_route_inf[sink_inode].backward_path_cost = current_heap_item.backward_path_cost;*/
+					/*l_rr_node_route_inf[sink_inode].path_cost = current_heap_item.cost;*/
+					/*l_rr_node_route_inf[sink_inode].prev_node = current_heap_item.u.prev_node;*/
+					/*l_rr_node_route_inf[sink_inode].prev_edge = current_heap_item.prev_edge;*/
 
-					sink_lock.lock();
-					found_sink = true;
-					++num_found_sink;
-					sink_node = current_heap_item;
-					sink_lock.unlock();
-				}
-				l_rr_node_route_inf_lock.unlock();
+					/*modified_inodes_lock.lock();*/
+					/*modified_inodes.push_back(sink_inode);*/
+					/*modified_inodes_lock.unlock();*/
+
+					/*sprintf_rr_node(inode, buffer);*/
+					/*zlog_info(route_inner_log, "[%d] Found %s\n", item.worker_id, buffer);*/
+
+					/*sink_lock.lock();*/
+					/*found_sink = true;*/
+					/*++num_found_sink;*/
+					/*sink_node = current_heap_item;*/
+					/*sink_lock.unlock();*/
+				/*} else {*/
+					/*zlog_debug(route_inner_log, "[%d] Not setting found sink because old_b %g new_b %g old_t %g new_t %g prev_node: %d prev_edge: %d\n", item.worker_id, l_rr_node_route_inf[sink_inode].backward_path_cost, current_heap_item.backward_path_cost, l_rr_node_route_inf[sink_inode].path_cost, current_heap_item.cost, l_rr_node_route_inf[sink_inode].prev_node, l_rr_node_route_inf[sink_inode].prev_edge);*/
+				/*}*/
+				/*l_rr_node_route_inf_lock.unlock();*/
 
 			}
 			zlog_debug(route_inner_log, "[%d] Worker done\n", item.worker_id);
@@ -1211,6 +1243,7 @@ static boolean tbb_parallel_timing_driven_route_net(
 		int inet,
 
 		/* route parameters */
+		int iter,
 		const t_router_opts *opts,
 		float pres_fac,
 
@@ -1292,7 +1325,9 @@ static boolean tbb_parallel_timing_driven_route_net(
 
 	thread_safe_mark_ends(inet, l_rr_node_route_inf); /* Only needed to check for multiply-connected SINKs */
 
-	rt_root = init_route_tree_to_source(l_rr_node_to_rt_node, net_rr_terminals[inet][0]);
+	vector<int> modified_route_tree;
+
+	rt_root = init_route_tree_to_source(net_rr_terminals[inet][0], l_rr_node_to_rt_node, modified_route_tree);
 
 	std::vector<int> modified_inodes;
 	std::mutex modified_inodes_lock;
@@ -1303,6 +1338,18 @@ static boolean tbb_parallel_timing_driven_route_net(
 
 	timeval t1, t2;
 	assert(!gettimeofday(&t1, NULL));
+
+	for (int i = 0; i < num_rr_nodes; ++i) {
+		assert(l_rr_node_route_inf[i].transactions.size() == 0);
+	}
+
+	tbb::atomic<int> **visit_count = new tbb::atomic<int>*[nx+2];
+	for (int x = 0; x < nx+2; ++x) {
+		visit_count[x] = new tbb::atomic<int>[ny+2];
+	}
+
+	sprintf_rr_node(net_rr_terminals[inet][0], buffer);
+	zlog_debug(route_inner_log, "Source: %s\n", buffer);
 
 	for (itarget = 1; itarget <= num_sinks; itarget++) {
 		for (int i = 0; i < num_rr_nodes; ++i) {
@@ -1317,13 +1364,14 @@ static boolean tbb_parallel_timing_driven_route_net(
 				zlog_fatal(route_inner_log, "%s doesn't have HUGE_POSITIVE_FLOAT\n", buffer);
 			}
 			assert(l_rr_node_route_inf[i].path_cost > 0.99*HUGE_POSITIVE_FLOAT);
+			assert(l_rr_node_route_inf[i].modified == false);
 		}
 
 		target_pin = sink_order[itarget];
 		target_node = net_rr_terminals[inet][target_pin];
 
 		sprintf_rr_node(target_node, buffer);
-		zlog_info(route_inner_log, "Sink: %s\n", buffer);
+		zlog_debug(route_inner_log, "Sink %d: %s\n", itarget, buffer);
 
 		target_criticality = pin_criticality[target_pin];
 
@@ -1351,12 +1399,18 @@ static boolean tbb_parallel_timing_driven_route_net(
 			return (FALSE);
 		}
 
-		tbb::atomic<bool> found_sink = false;
-		tbb::atomic<int> num_found_sink = 0;
 		std::mutex spawn_lock;
 		std::mutex push_lock;
-		std::mutex sink_lock;
+		vector<struct s_heap> found_sinks;
+		std::mutex found_sinks_lock;
 		std::mutex l_rr_node_route_inf_lock;
+		int worker_id = 0;
+
+		for (int x = 0; x < nx+2; ++x) {
+			for (int y = 0; y < ny+2; ++y) {
+				visit_count[x][y] = 0;
+			}
+		}
 
 		vector<RouteWorker2::argument_type> items;
 		/*int num_spawned_workers = 0;*/
@@ -1366,17 +1420,18 @@ static boolean tbb_parallel_timing_driven_route_net(
 		/*temp_heap.pop();*/
 		/*++num_spawned_workers;*/
 		/*}*/
-		items.push_back({ temp_heap, 0 });
+		items.push_back({ temp_heap, worker_id++ });
 		int num_spawned_workers = items.size();
 
 		RouteWorker2 worker(
 				l_rr_node_route_inf_lock,
-				found_sink, current, num_found_sink, sink_lock,
-				spawn_lock, heap_index, num_spawned_workers,
+				found_sinks_lock, found_sinks, 
+				spawn_lock, heap_index, num_spawned_workers, worker_id,
 				modified_inodes, modified_inodes_lock,
 				push_lock, net_route->num_heap_pushes
 				);
 		/*worker.heaps = heaps;*/
+		worker.visit_count = visit_count;
 		worker.l_rr_node_route_inf = l_rr_node_route_inf;
 		worker.l_rr_node_to_rt_node = l_rr_node_to_rt_node;
 		worker.target_node = target_node;
@@ -1389,9 +1444,6 @@ static boolean tbb_parallel_timing_driven_route_net(
 
 		tbb::parallel_do(items.begin(), items.end(), worker);
 
-		assert(found_sink);
-		/*assert(num_found_sink == 1);*/
-
 		/* NB:  In the code below I keep two records of the partial routing:  the   *
 		 * traceback and the route_tree.  The route_tree enables fast recomputation *
 		 * of the Elmore delay to each node in the partial routing.  The traceback  *
@@ -1399,6 +1451,28 @@ static boolean tbb_parallel_timing_driven_route_net(
 		 * all take a traceback structure as input.  Before this routine exits the  *
 		 * route_tree structure is destroyed; only the traceback is needed at that  *
 		 * point.                                                                   */
+
+		sprintf(buffer,"heatmap_net_%d_sink_%d.txt", inet, itarget);
+		FILE *heat_map = fopen(buffer, "w");
+		for (int x = 0; x < nx+2; ++x) {
+			for (int y = 0; y < ny+2; ++y) {
+				for (int i = 0; i < visit_count[x][y]; ++i) {
+					fprintf(heat_map, "%d %d\n", x, y);
+				}
+			}
+		}
+		fclose(heat_map);
+
+		assert(found_sinks.size() > 0);
+		/*assert(num_found_sink == 1);*/
+
+		float min_b_cost = HUGE_POSITIVE_FLOAT;
+		for (const auto &sink : found_sinks) {
+			if (sink.backward_path_cost < min_b_cost) {
+				min_b_cost = sink.backward_path_cost;
+				current = sink;
+			}
+		}
 
 		inode = current.index;
 		if (inode != target_node) {
@@ -1412,7 +1486,7 @@ static boolean tbb_parallel_timing_driven_route_net(
 
 		new_route_start_tptr = thread_safe_update_traceback(&net_route->l_trace_head, &net_route->l_trace_tail, &current, l_rr_node_route_inf);
 		/*rt_node_of_sink[target_pin] = thread_safe_update_route_tree(&current, l_rr_node_route_inf, l_rr_node_to_rt_node);*/
-		t_rt_node *sink_rt_node = thread_safe_update_route_tree(&current, l_rr_node_route_inf, l_rr_node_to_rt_node);
+		t_rt_node *sink_rt_node = NULL;//thread_safe_update_route_tree(&current, l_rr_node_route_inf, l_rr_node_to_rt_node);
 		assert(sink_rt_node == l_rr_node_to_rt_node[current.index]);
 /*		free_heap_data(current);*/
 		thread_safe_pathfinder_update_one_cost(inet, new_route_start_tptr, 1, pres_fac, 0, 0, false);
@@ -1425,6 +1499,7 @@ static boolean tbb_parallel_timing_driven_route_net(
 		for (const auto &modified : modified_inodes) {
 			/*if (!l_rr_node_to_rt_node[modified]) {*/
 				l_rr_node_route_inf[modified].path_cost = HUGE_POSITIVE_FLOAT;
+				l_rr_node_route_inf[modified].modified = false;
 			/*}*/
 			/*l_rr_node_route_inf[modified].prev_node = NO_PREVIOUS;*/
 		}
@@ -1434,6 +1509,42 @@ static boolean tbb_parallel_timing_driven_route_net(
 	assert(!gettimeofday(&t2, NULL));
 	time->tv_sec = t2.tv_sec - t1.tv_sec;
 	time->tv_usec = t2.tv_usec - t1.tv_usec;
+
+	/*sprintf(buffer, "transactions/trans_iter_%d_net_%d.txt", iter, inet);*/
+	/*FILE *file = fopen(buffer, "w");*/
+	/*assert(file);*/
+	for (int i = 0; i < num_rr_nodes; ++i) {
+		if (l_rr_node_route_inf[i].transactions.size() > 0) {
+			/*fprintf(file, "Transactions for node %d:\n", i);*/
+			/*for (const auto &trans : l_rr_node_route_inf[i].transactions) {*/
+				/*fprintf(file, "sink: %6d old_b: %10.4g new_b: %10.4g old_t: %10.4g new_t: %10.4g prev_node: %6d prev_edge: %2d written: %d\n", trans.target_node, trans.old_bcost, trans.new_bcost, trans.old_tcost, trans.new_tcost, trans.prev_node, trans.prev_edge, trans.written ? 1 : 0);*/
+			/*}*/
+			/*fprintf(file, "\n");*/
+
+			l_rr_node_route_inf[i].transactions.clear();
+		}
+	}
+	/*fclose(file);*/
+
+	/*FILE *prev_index_file = fopen("prev_index.txt", "r");*/
+	/*assert(prev_index_file);*/
+	/*int prev_index;*/
+	/*fscanf(prev_index_file, "%d", &prev_index);*/
+	/*fclose(prev_index_file);*/
+
+	/*prev_index_file = fopen("prev_index.txt", "w");*/
+	/*fprintf(prev_index_file, "%d", prev_index+1);*/
+	
+	/*sprintf(buffer, "lol.%d.txt", prev_index+1);*/
+	/*print_one_route(buffer, inet, net_route, l_rr_node_to_rt_node);*/
+	print_one_route("lol.txt", inet, net_route, l_rr_node_to_rt_node);
+
+	for (int x = 0; x < nx+2; ++x) {
+		delete [] visit_count[x];
+	}
+	delete [] visit_count;
+
+	/*exit(0);*/
 
 	/* For later timing analysis. */
 
@@ -1602,6 +1713,7 @@ static boolean try_fine_grained_parallel_timing_driven_route(struct s_router_opt
 		l_rr_node_route_inf[inode].path_cost = HUGE_POSITIVE_FLOAT;
 		l_rr_node_route_inf[inode].backward_path_cost = HUGE_POSITIVE_FLOAT;
 		l_rr_node_route_inf[inode].target_flag = 0;
+		l_rr_node_route_inf[inode].modified = false;
 	}
 
 	t_rt_node **l_rr_node_to_rt_node = new t_rt_node*[num_rr_nodes];
@@ -1632,8 +1744,8 @@ static boolean try_fine_grained_parallel_timing_driven_route(struct s_router_opt
 		/*mach_timebase_info(&tbi);*/
 		
 		/*sprintf(buffer, "route_inner_%d_%d_test.txt", info->thread_index, *info->iter);*/
-		FILE *file = fopen(buffer, "w");
-		assert(file);
+		/*FILE *file = fopen(buffer, "w");*/
+		/*assert(file);*/
 
 		assert(!gettimeofday(&t1, NULL));
 
@@ -1649,6 +1761,7 @@ static boolean try_fine_grained_parallel_timing_driven_route(struct s_router_opt
 				is_routable = tbb_parallel_timing_driven_route_net(
 						inet,
 
+						itry,
 						&router_opts,
 						pres_fac,
 

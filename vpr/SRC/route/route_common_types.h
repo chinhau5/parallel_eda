@@ -20,6 +20,18 @@ struct s_heap {
 	}
 };
 
+
+typedef struct {
+	float old_tcost;
+	float old_bcost;
+	float new_tcost;
+	float new_bcost;
+	int prev_node;
+	int prev_edge;
+	int target_node;
+	bool written;
+} transaction_t;
+
 /* Used by the heap as its fundamental data structure.                      * 
  * index:   Index (ID) of this routing resource node.                       * 
  * cost:    Cost up to and including this node.                             * 
@@ -49,6 +61,8 @@ typedef struct {
 	 * that protects rr_node.occ */
 	float pres_cost;
 	float acc_cost;
+	bool modified;
+	std::vector<transaction_t> transactions;
 } t_rr_node_route_inf;
 
 /* Extra information about each rr_node needed only during routing (i.e.    *

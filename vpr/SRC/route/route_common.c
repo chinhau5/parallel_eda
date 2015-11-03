@@ -19,6 +19,7 @@
 #include "ReadOptions.h"
 #include "parallel_route_timing.h"
 #include "advanced_parallel_route_timing.h"
+#include "hybrid_route.h"
 
 /***************** Variables shared only by route modules *******************/
 
@@ -343,6 +344,11 @@ boolean try_route_new(int width_fac, struct s_router_opts router_opts,
 			assert(router_opts.route_type != GLOBAL);
 			success = try_parallel_timing_driven_route_top(router_opts, net_timing,
 					clb_opins_used_locally,timing_inf.timing_analysis_enabled);
+			break;
+		case HYBRID:
+			vpr_printf(TIO_MESSAGE_INFO, "Confirming Router Algorithm: HYBRID.\n");
+			assert(router_opts.route_type != GLOBAL);
+			success = hybrid_route(&router_opts);
 			break;
 		default:
 			success = FALSE;

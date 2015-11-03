@@ -33,4 +33,4 @@ target_include_directories(PrintHandler PUBLIC
 target_compile_options(PrintHandler PRIVATE
 	-ansi -pedantic
 	-Wpointer-arith -Wcast-qual -Wshadow -Wcast-align -Wno-write-strings
-	-D__USE_FIXED_PROTOTYPES__ -D_POSIX_SOURCE -DLINUX24_64 -DLINUX_X86_64 -D EZXML_NOMMAP -D_POSIX_C_SOURCE)
+	-D__USE_FIXED_PROTOTYPES__ -D_POSIX_SOURCE -DLINUX24_64 -DLINUX_X86_64 -DEZXML_NOMMAP -D_POSIX_C_SOURCE)

@@ -8,13 +8,13 @@ link_directories(
 	~/Downloads/tbb44_20150728oss/lib
 	)
 
-set(CMAKE_SKIP_RPATH true)
+#set(CMAKE_SKIP_RPATH true)
 #-fprofile-arcs -ftest-coverage -fsanitize=address 
 #set(CMAKE_CXX_FLAGS "-std=c++11 -g -O0 -pthread -fno-omit-frame-pointer -Wall -Wno-write-strings -Wno-unused-variable -Wno-unused-private-field -DNO_GRAPHICS") 
 
 #generic compile options go here
 add_compile_options(
-	-DTBB_USE_THREADING_TOOLS=1
+	-D TBB_USE_THREADING_TOOLS=1
 	-std=c++11
 	-g -O0
 	-Bdynamic

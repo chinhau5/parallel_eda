@@ -704,7 +704,7 @@ enum e_route_type {
 	GLOBAL, DETAILED
 };
 enum e_router_algorithm {
-	BREADTH_FIRST, TIMING_DRIVEN, BARRIER, FINE_GRAINED, NO_TIMING
+	BREADTH_FIRST, TIMING_DRIVEN, BARRIER, FINE_GRAINED, HYBRID, NO_TIMING
 };
 enum e_base_cost_type {
 	INTRINSIC_DELAY, DELAY_NORMALIZED, DEMAND_ONLY
@@ -1112,6 +1112,9 @@ typedef struct s_net_route {
 	t_trace *l_trace_tail;
 	int num_heap_pushes;
 	int num_heap_pops;
+	std::set<int> explored_inodes;
+	int *sink_order;
+	int ***visit_count;
 } t_net_route;
 
 typedef struct s_route_parameters {

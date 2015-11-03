@@ -49,9 +49,9 @@ void print_one_route(char *route_file, int inet, t_net_route *net_route, t_rt_no
 
 	fp = fopen(route_file, "w");
 
-	fprintf(fp, "Array size: %d x %d logic blocks.\n", nx, ny);
-	fprintf(fp, "\nRouting:");
-	fprintf(fp, "\n\nNet %d (%s)\n\n", inet, clb_net[inet].name);
+	//fprintf(fp, "Array size: %d x %d logic blocks.\n", nx, ny);
+	//fprintf(fp, "\nRouting:");
+	//fprintf(fp, "\n\nNet %d (%s)\n\n", inet, clb_net[inet].name);
 	tptr = net_route->l_trace_head;
 
 	int source_node = tptr->index;
@@ -64,22 +64,22 @@ void print_one_route(char *route_file, int inet, t_net_route *net_route, t_rt_no
 
 		if (rr_type == CHANX || rr_type == CHANY) {
 			if (rr_node[inode].direction == INC_DIRECTION) {
-				fprintf(fp, "Node:\t%d\t%6s (%d,%d) ", inode, name_type[rr_type], rr_node[inode].xlow, rr_node[inode].ylow);
-				fprintf(fp, "to (%d,%d) ", rr_node[inode].xhigh, rr_node[inode].yhigh);
+				//fprintf(fp, "Node:\t%d\t%6s (%d,%d) ", inode, name_type[rr_type], rr_node[inode].xlow, rr_node[inode].ylow);
+				//fprintf(fp, "to (%d,%d) ", rr_node[inode].xhigh, rr_node[inode].yhigh);
 			} else {
-				fprintf(fp, "Node:\t%d\t%6s (%d,%d) ", inode, name_type[rr_type], rr_node[inode].xhigh, rr_node[inode].yhigh);
-				fprintf(fp, "to (%d,%d) ", rr_node[inode].xlow, rr_node[inode].ylow);
+				//fprintf(fp, "Node:\t%d\t%6s (%d,%d) ", inode, name_type[rr_type], rr_node[inode].xhigh, rr_node[inode].yhigh);
+				//fprintf(fp, "to (%d,%d) ", rr_node[inode].xlow, rr_node[inode].ylow);
 			}
 		} else {
 			ilow = rr_node[inode].xlow;
 			jlow = rr_node[inode].ylow;
 
-			fprintf(fp, "Node:\t%d\t%6s (%d,%d) ", inode, name_type[rr_type], ilow, jlow);
+			//fprintf(fp, "Node:\t%d\t%6s (%d,%d) ", inode, name_type[rr_type], ilow, jlow);
 
 			if ((ilow != rr_node[inode].xhigh)
-					|| (jlow != rr_node[inode].yhigh))
-				fprintf(fp, "to (%d,%d) ", rr_node[inode].xhigh,
-						rr_node[inode].yhigh);
+					|| (jlow != rr_node[inode].yhigh)) {
+				//fprintf(fp, "to (%d,%d) ", rr_node[inode].xhigh, rr_node[inode].yhigh);
+			}
 		}
 
 		switch (rr_type) {
@@ -87,23 +87,23 @@ void print_one_route(char *route_file, int inet, t_net_route *net_route, t_rt_no
 			case IPIN:
 			case OPIN:
 				if (grid[ilow][jlow].type == IO_TYPE) {
-					fprintf(fp, " Pad: ");
+					//fprintf(fp, " Pad: ");
 				} else { /* IO Pad. */
-					fprintf(fp, " Pin: ");
+					//fprintf(fp, " Pin: ");
 				}
 				break;
 
 			case CHANX:
 			case CHANY:
-				fprintf(fp, " Track: ");
+				//fprintf(fp, " Track: ");
 				break;
 
 			case SOURCE:
 			case SINK:
 				if (grid[ilow][jlow].type == IO_TYPE) {
-					fprintf(fp, " Pad: ");
+					//fprintf(fp, " Pad: ");
 				} else { /* IO Pad. */
-					fprintf(fp, " Class: ");
+					//fprintf(fp, " Class: ");
 				}
 				if (rr_type == SINK) {
 					fprintf(fp, " Delay: %g ", l_rr_node_to_rt_node[inode]->Tdel);
@@ -118,13 +118,13 @@ void print_one_route(char *route_file, int inet, t_net_route *net_route, t_rt_no
 				break;
 		}
 
-		fprintf(fp, "%d  ", rr_node[inode].ptc_num);
+		//fprintf(fp, "%d  ", rr_node[inode].ptc_num);
 
 		/* Uncomment line below if you're debugging and want to see the switch types *
 		 * used in the routing.                                                      */
 		/*          fprintf (fp, "Switch: %d", tptr->iswitch);    */
 
-		fprintf(fp, "\n");
+		//fprintf(fp, "\n");
 
 		if (rr_type == SINK) {
 			fprintf(fp, "\n");
@@ -136,7 +136,7 @@ void print_one_route(char *route_file, int inet, t_net_route *net_route, t_rt_no
 	fclose(fp);
 }
 
-void print_route(char *route_file, t_net_route *net_route, int **sink_order) {
+void print_route(char *route_file, t_net_route *net_route) {
 
 	/* Prints out the routing to file route_file.  */
 
@@ -188,7 +188,7 @@ void print_route(char *route_file, t_net_route *net_route, int **sink_order) {
 									rr_node[inode].yhigh);
 					}
 
-					int current_sink_node = net_rr_terminals[inet][sink_order[inet][sink]];
+					int current_sink_node = net_rr_terminals[inet][net_route[inet].sink_order[sink]];
 
 					std::pair<int, int> source_pos = get_node_start(source_node); 
 					std::pair<int, int> sink_pos = get_node_start(current_sink_node); 
@@ -534,6 +534,44 @@ float get_rr_cong_cost(int inode, int num_sinks) {
 	return (cost);
 }
 
+void node_to_heap(int thread_id,
+		int inode, int prev_node, int prev_edge,
+		float cost, float backward_path_cost, float R_upstream,
+		const t_rr_node_route_inf *l_rr_node_route_inf,
+		std::priority_queue<struct s_heap> &heap)
+{
+
+	/* Puts an rr_node on the heap, if the new cost given is lower than the     *
+	 * current path_cost to this channel segment.  The index of its predecessor *
+	 * is stored to make traceback easy.  The index of the edge used to get     *
+	 * from its predecessor to it is also stored to make timing analysis, etc.  *
+	 * easy.  The backward_path_cost and R_upstream values are used only by the *
+	 * timing-driven router -- the breadth-first router ignores them.           */
+
+	struct s_heap item;
+
+	char buffer[256];
+	sprintf_rr_node(inode, buffer);
+
+	/*if (cost >= l_rr_node_route_inf[inode].path_cost) {*/
+		/*extern zlog_category_t *route_inner_log;*/
+		/*zlog_debug(route_inner_log, "\t\t[%d] Not adding %s to heap because cost %g is >= %g\n", thread_id, buffer, cost, l_rr_node_route_inf[inode].path_cost);*/
+		/*return;*/
+	/*}*/
+
+	item.index = inode;
+	item.u.prev_node = prev_node;
+	item.prev_edge = prev_edge;
+	item.cost = cost;
+	item.backward_path_cost = backward_path_cost;
+	item.R_upstream = R_upstream;
+
+	extern zlog_category_t *route_inner_log;
+	zlog_debug(route_inner_log, "\t\t[%d] Adding node: %s cost: %g backward_path_cost: %g prev_node: %d to heap\n", thread_id, buffer, cost, backward_path_cost, prev_node);
+
+	heap.push(item);
+}
+
 void node_to_heap(
 		int inode, int prev_node, int prev_edge,
 		float cost, float backward_path_cost, float R_upstream,
@@ -550,11 +588,11 @@ void node_to_heap(
 
 	struct s_heap item;
 
-	/*if (cost >= l_rr_node_route_inf[inode].path_cost) {*/
-		/*extern zlog_category_t *route_inner_log;*/
-		/*zlog_debug(route_inner_log, "Not adding %d to heap because cost %g is >= %g\n", inode, cost, l_rr_node_route_inf[inode].path_cost);*/
-		/*return;*/
-	/*}*/
+	if (cost >= l_rr_node_route_inf[inode].path_cost) {
+		extern zlog_category_t *route_inner_log;
+		zlog_debug(route_inner_log, "Not adding %d to heap because cost %g is >= %g\n", inode, cost, l_rr_node_route_inf[inode].path_cost);
+		return;
+	}
 
 	item.index = inode;
 	item.u.prev_node = prev_node;

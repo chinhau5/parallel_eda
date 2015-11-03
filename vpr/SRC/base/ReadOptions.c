@@ -816,12 +816,15 @@ ReadRouterAlgorithm(INP char **Args, OUTP enum e_router_algorithm *Algo) {
 	case OT_TIMING_DRIVEN:
 		*Algo = TIMING_DRIVEN;
 		break;
-		case OT_FINE_GRAINED:
-			*Algo = FINE_GRAINED;
-			break;
-		case OT_BARRIER:
-			*Algo = BARRIER;
-			break;
+	case OT_FINE_GRAINED:
+		*Algo = FINE_GRAINED;
+		break;
+	case OT_BARRIER:
+		*Algo = BARRIER;
+		break;
+	case OT_HYBRID:
+		*Algo = HYBRID;
+		break;
 	default:
 		Error(*PrevArgs);
 	}

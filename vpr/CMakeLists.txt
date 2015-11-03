@@ -59,6 +59,7 @@ set(srcs
 	SRC/route/new_cost_parallel_route_timing.c
 	SRC/route/fine_grained_parallel_route_timing.c
 	SRC/route/fine_grained_parallel_route_timing_2.c
+	SRC/route/hybrid_route.c
 	SRC/route/advanced_parallel_route_timing.c
 	SRC/route/route_tree_timing.c
 	SRC/route/route_tree_timing_local.c
@@ -109,7 +110,7 @@ target_compile_options(Vpr PRIVATE
 	-DNO_GRAPHICS) 
 
 target_link_libraries(Vpr
-	ArchFpga	
+	ArchFpga
 	PrintHandler
 	Pcre
 	)

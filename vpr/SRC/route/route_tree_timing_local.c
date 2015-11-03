@@ -1,5 +1,6 @@
 #include <stdio.h>
 #include <zlog.h>
+#include <vector>
 #include "util.h"
 #include "vpr_types.h"
 #include "route_common.h"
@@ -12,7 +13,7 @@ extern struct s_switch_inf *switch_inf; /* [0..det_routing_arch.num_switch-1] */
 void sprintf_rr_node(int inode, char *buffer);
 
 static t_rt_node *
-add_path_to_route_tree(const struct s_heap *sink, t_rt_node ** sink_rt_node_ptr, const t_rr_node_route_inf *l_rr_node_route_inf, t_rt_node **l_rr_node_to_rt_node) {
+add_path_to_route_tree(const struct s_heap *sink, t_rt_node ** sink_rt_node_ptr, const t_rr_node_route_inf *l_rr_node_route_inf, t_rt_node **l_rr_node_to_rt_node, std::vector<int> &modified) {
 
 	/* Adds the most recent wire segment, ending at the SINK indicated by sink, *
 	 * to the routing tree.  It returns the first (most upstream) new rt_node,  *
@@ -41,6 +42,7 @@ add_path_to_route_tree(const struct s_heap *sink, t_rt_node ** sink_rt_node_ptr,
 	C_downstream = rr_node[inode].C;
 	sink_rt_node->C_downstream = C_downstream;
 	l_rr_node_to_rt_node[inode] = sink_rt_node;
+	modified.push_back(inode);
 
 	char buffer[256];
 	extern zlog_category_t *route_inner_log;
@@ -99,6 +101,7 @@ add_path_to_route_tree(const struct s_heap *sink, t_rt_node ** sink_rt_node_ptr,
 
 		rt_node->C_downstream = C_downstream;
 		l_rr_node_to_rt_node[inode] = rt_node;
+		modified.push_back(inode);
 
 		sprintf_rr_node(inode, buffer);
 		zlog_debug(route_inner_log, "Adding %s to route tree\n", buffer);
@@ -263,7 +266,7 @@ update_unbuffered_ancestors_C_downstream(t_rt_node * start_of_new_path_rt_node) 
 }
 
 t_rt_node *
-thread_safe_update_route_tree(const struct s_heap * sink, const t_rr_node_route_inf *l_rr_node_route_inf, t_rt_node **l_rr_node_to_rt_node)
+thread_safe_update_route_tree(const struct s_heap * sink, const t_rr_node_route_inf *l_rr_node_route_inf, t_rt_node **l_rr_node_to_rt_node, std::vector<int> &modified)
 {
 	/* Adds the most recently finished wire segment to the routing tree, and    *
 	 * updates the Tdel, etc. numbers for the rest of the routing tree.  sink   *
@@ -275,7 +278,7 @@ thread_safe_update_route_tree(const struct s_heap * sink, const t_rr_node_route_
 	float Tdel_start;
 	short iswitch;
 
-	start_of_new_path_rt_node = add_path_to_route_tree(sink, &sink_rt_node, l_rr_node_route_inf, l_rr_node_to_rt_node);
+	start_of_new_path_rt_node = add_path_to_route_tree(sink, &sink_rt_node, l_rr_node_route_inf, l_rr_node_to_rt_node, modified);
 	load_new_path_R_upstream(start_of_new_path_rt_node);
 	unbuffered_subtree_rt_root = update_unbuffered_ancestors_C_downstream(
 			start_of_new_path_rt_node);
@@ -298,7 +301,7 @@ thread_safe_update_route_tree(const struct s_heap * sink, const t_rr_node_route_
 }
 
 t_rt_node *
-init_route_tree_to_source(t_rt_node **l_rr_node_to_rt_node, int source_inode) {
+init_route_tree_to_source(int source_inode, t_rt_node **l_rr_node_to_rt_node, std::vector<int> &modified) {
 
 	/* Initializes the routing tree to just the net source, and returns the root *
 	 * node of the rt_tree (which is just the net source).                       */
@@ -316,6 +319,7 @@ init_route_tree_to_source(t_rt_node **l_rr_node_to_rt_node, int source_inode) {
 	rt_root->Tdel = 0.5 * rr_node[source_inode].R * rr_node[source_inode].C;
 
 	l_rr_node_to_rt_node[source_inode] = rt_root;
+	modified.push_back(source_inode);
 
 	return (rt_root);
 }

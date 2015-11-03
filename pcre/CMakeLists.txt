@@ -16,4 +16,4 @@ add_library(Pcre STATIC
 target_compile_options(Pcre PRIVATE
 	-ansi -pedantic
 	-Wno-write-strings -Wno-unused-variable -Wno-unused-private-field
-	-D EZXML_NOMMAP -D_POSIX_C_SOURCE)
+	-DEZXML_NOMMAP -D_POSIX_C_SOURCE)

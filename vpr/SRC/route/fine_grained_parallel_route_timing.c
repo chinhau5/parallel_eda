@@ -1110,7 +1110,7 @@ static boolean tbb_parallel_timing_driven_route_net_2(
 
 	thread_safe_mark_ends(inet, l_rr_node_route_inf); /* Only needed to check for multiply-connected SINKs */
 
-	rt_root = init_route_tree_to_source(l_rr_node_to_rt_node, net_rr_terminals[inet][0]);
+	/*rt_root = init_route_tree_to_source(l_rr_node_to_rt_node, net_rr_terminals[inet][0]);*/
 
 	std::vector<int> modified_inodes;
 	std::mutex modified_inodes_lock;
@@ -1203,7 +1203,7 @@ static boolean tbb_parallel_timing_driven_route_net_2(
 
 		new_route_start_tptr = thread_safe_update_traceback(&net_route->l_trace_head, &net_route->l_trace_tail, &current, l_rr_node_route_inf);
 		/*rt_node_of_sink[target_pin] = thread_safe_update_route_tree(&current, l_rr_node_route_inf, l_rr_node_to_rt_node);*/
-		t_rt_node *sink_rt_node = thread_safe_update_route_tree(&current, l_rr_node_route_inf, l_rr_node_to_rt_node);
+		t_rt_node *sink_rt_node = NULL;//thread_safe_update_route_tree(&current, l_rr_node_route_inf, l_rr_node_to_rt_node);
 		assert(sink_rt_node == l_rr_node_to_rt_node[current.index]);
 /*		free_heap_data(current);*/
 		thread_safe_pathfinder_update_one_cost(inet, new_route_start_tptr, 1, pres_fac, thread_index, sub_iter, false);
@@ -1438,7 +1438,7 @@ static boolean tbb_parallel_timing_driven_route_net(
 
 	thread_safe_mark_ends(inet, l_rr_node_route_inf); /* Only needed to check for multiply-connected SINKs */
 
-	rt_root = init_route_tree_to_source(l_rr_node_to_rt_node, net_rr_terminals[inet][0]);
+	/*rt_root = init_route_tree_to_source(l_rr_node_to_rt_node, net_rr_terminals[inet][0]);*/
 
 	std::vector<int> modified_inodes;
 	char buffer[256];
@@ -1524,7 +1524,7 @@ static boolean tbb_parallel_timing_driven_route_net(
 
 		new_route_start_tptr = thread_safe_update_traceback(&net_route->l_trace_head, &net_route->l_trace_tail, &current, l_rr_node_route_inf);
 		/*rt_node_of_sink[target_pin] = thread_safe_update_route_tree(&current, l_rr_node_route_inf, l_rr_node_to_rt_node);*/
-		t_rt_node *sink_rt_node = thread_safe_update_route_tree(&current, l_rr_node_route_inf, l_rr_node_to_rt_node);
+		t_rt_node *sink_rt_node = NULL;//thread_safe_update_route_tree(&current, l_rr_node_route_inf, l_rr_node_to_rt_node);
 		assert(sink_rt_node == l_rr_node_to_rt_node[current.index]);
 /*		free_heap_data(current);*/
 		thread_safe_pathfinder_update_one_cost(inet, new_route_start_tptr, 1, pres_fac, thread_index, sub_iter, false);
@@ -1648,7 +1648,7 @@ static boolean parallel_timing_driven_route_net(
 
 	thread_safe_mark_ends(inet, l_rr_node_route_inf); /* Only needed to check for multiply-connected SINKs */
 
-	rt_root = init_route_tree_to_source(l_rr_node_to_rt_node, net_rr_terminals[inet][0]);
+	/*rt_root = init_route_tree_to_source(l_rr_node_to_rt_node, net_rr_terminals[inet][0]);*/
 
 	std::vector<int> modified_inodes;
 	char buffer[256];
@@ -1778,7 +1778,7 @@ static boolean parallel_timing_driven_route_net(
 
 		new_route_start_tptr = thread_safe_update_traceback(&net_route->l_trace_head, &net_route->l_trace_tail, &current, l_rr_node_route_inf);
 		/*rt_node_of_sink[target_pin] = thread_safe_update_route_tree(&current, l_rr_node_route_inf, l_rr_node_to_rt_node);*/
-		t_rt_node *sink_rt_node = thread_safe_update_route_tree(&current, l_rr_node_route_inf, l_rr_node_to_rt_node);
+		t_rt_node *sink_rt_node = NULL;//thread_safe_update_route_tree(&current, l_rr_node_route_inf, l_rr_node_to_rt_node);
 		assert(sink_rt_node == l_rr_node_to_rt_node[current.index]);
 /*		free_heap_data(current);*/
 		thread_safe_pathfinder_update_one_cost(inet, new_route_start_tptr, 1, pres_fac, thread_index, sub_iter, false);
@@ -2918,7 +2918,7 @@ static boolean try_fine_grained_parallel_timing_driven_route_old(struct s_router
 		// ------------------------ //
 
 		sprintf(buffer, "routes_%d_%d.txt", round, itry);
-		print_route(buffer, tinfo[0].net_route, tinfo[0].sink_order);
+		/*print_route(buffer, tinfo[0].net_route, tinfo[0].sink_order);*/
 
 		int num_congested_nodes_by_type[NUM_RR_TYPES] = { 0 };
 
