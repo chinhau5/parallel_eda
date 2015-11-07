@@ -39,6 +39,12 @@ int num_vertices(const graph_t<VertexProperties, EdgeProperties> &g)
 }
 
 template<typename VertexProperties, typename EdgeProperties>
+int num_edges(const graph_t<VertexProperties, EdgeProperties> &g)
+{
+	return g.edges.size();
+}
+
+template<typename VertexProperties, typename EdgeProperties>
 vertex_t<VertexProperties, EdgeProperties> &get_vertex(graph_t<VertexProperties, EdgeProperties> &g, int v)
 {
 	assert(v < g.vertices.size());
@@ -74,7 +80,7 @@ edge_t<EdgeProperties> &add_edge(graph_t<VertexProperties, EdgeProperties> &g, i
 	e.a = a;
 	e.b = b;
 
-	assert(find_if(v_a.edges.begin(), v_a.edges.end(), [&g, &b] (int e) -> bool { return g.edges[e].b == b; }) == v_a.edges.end());
+	//assert(find_if(v_a.edges.begin(), v_a.edges.end(), [&g, &b] (int e) -> bool { return g.edges[e].b == b; }) == v_a.edges.end());
 
 	auto e_i = g.edges.size();
 
@@ -113,6 +119,16 @@ const vertex_t<VertexProperties, EdgeProperties> &get_target(const graph_t<Verte
 }
 
 template<typename VertexProperties, typename EdgeProperties, typename Func>
+void for_all_vertices_breakable(graph_t<VertexProperties, EdgeProperties> &g, const Func &f)
+{
+	for (auto &v : g.vertices) {
+		if (!f(v)) {
+			break;
+		}
+	}
+}
+
+template<typename VertexProperties, typename EdgeProperties, typename Func>
 void for_all_vertices_breakable(const graph_t<VertexProperties, EdgeProperties> &g, const Func &f)
 {
 	for (const auto &v : g.vertices) {
@@ -131,12 +147,10 @@ void for_all_vertices(graph_t<VertexProperties, EdgeProperties> &g, const Func &
 }
 
 template<typename VertexProperties, typename EdgeProperties, typename Func>
-void for_all_vertices_breakable(graph_t<VertexProperties, EdgeProperties> &g, const Func &f)
+void for_all_vertices(const graph_t<VertexProperties, EdgeProperties> &g, const Func &f)
 {
 	for (auto &v : g.vertices) {
-		if (!f(v)) {
-			break;
-		}
+		f(v);
 	}
 }
 

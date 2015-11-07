@@ -17,8 +17,9 @@
 #include "rr_graph.h"
 #include "parallel_route_timing.h"
 #include "barrier.h"
-#include "bounding_box.h"
+/*#include "bounding_box.h"*/
 #include "graph.h"
+#include <boost/numeric/interval.hpp>
 
 void sprintf_rr_node(int inode, char *buffer);
 
@@ -44,12 +45,35 @@ typedef struct bounding_box_t {
 	int ymax;
 } bounding_box_t;
 
+typedef struct source_t {
+	int rr_node;
+	int x;
+	int y;
+} source_t;
+
+typedef struct sink_t {
+	int id;
+	float criticality_fac;
+	int rr_node;
+	int x;
+	int y;
+} sink_t;
+
+bool operator<(const sink_t &a, const sink_t &b) {
+	return a.criticality_fac > b.criticality_fac;
+}
+
 typedef struct net_t {
 	int id;
 	bool global;
-	int source;
-	vector<int> sinks;
+	source_t source;
+	vector<sink_t> sinks;
+	bounding_box_t current_bounding_box;
 	bounding_box_t box;
+	int pid;
+	vector<bool> overlapping_nets;
+	vector<bool> non_overlapping_nets;
+	int schedule;
 } net_t;
 
 typedef struct rr_node_property_t {
@@ -58,11 +82,14 @@ typedef struct rr_node_property_t {
 	int ylow;
 	int xhigh;
 	int yhigh;
+	int real_xlow;
+	int real_ylow;
+	int real_xhigh;
+	int real_yhigh;
 	float R;
 	float C;
 	int cost_index;
 	int capacity;
-	float base_cost;
 	int occ;
 	float pres_cost;
 	float acc_cost;
@@ -113,10 +140,16 @@ typedef struct route_tree_t {
 } route_tree_t;
 
 zlog_category_t *delta_log;
+zlog_category_t *rr_log;
+zlog_category_t *net_log;
+zlog_category_t *schedule_log;
 
 static void init_logging()
 {
 	delta_log = zlog_get_category("delta");
+	rr_log = zlog_get_category("rr");
+	net_log = zlog_get_category("net");
+	schedule_log = zlog_get_category("schedule");
 }
 
 /*int get_num_nets()*/
@@ -157,7 +190,8 @@ float get_delay(const edge_t<rr_edge_property_t> &e, const RRNode &v, float unbu
 
 float get_congestion_cost(const RRNode &v)
 {
-	return v.properties.base_cost * v.properties.acc_cost * v.properties.pres_cost;
+	extern t_rr_indexed_data *rr_indexed_data;
+	return rr_indexed_data[v.properties.cost_index].base_cost * v.properties.acc_cost * v.properties.pres_cost;
 }
 
 float get_known_cost(const RRGraph &g, const edge_t<rr_edge_property_t> &e, float criticality_fac, float unbuffered_upstream_R)
@@ -546,24 +580,14 @@ void update_R()
 {
 }
 
-void route_tree_update_timing(route_tree_t &rt, const RouteTreeNode &node)
-{
-	for_all_out_edges(rt.graph, node, [] (const RouteTreeEdge &e) -> void {
-			e.properties.rr_edge;
-	});
-}
+/*void route_tree_update_timing(route_tree_t &rt, const RouteTreeNode &node)*/
+/*{*/
+	/*for_all_out_edges(rt.graph, node, [] (const RouteTreeEdge &e) -> void {*/
+			/*e.properties.rr_edge;*/
+	/*});*/
+/*}*/
 
-typedef struct sink_t {
-	int id;
-	float criticality_fac;
-	int rr_node;
-} sink_t;
-
-bool operator<(const sink_t &a, const sink_t &b) {
-	return a.criticality_fac > b.criticality_fac;
-}
-
-void sort_sinks(const net_t &net, const t_net_timing *net_timing, const route_parameters_t &params, vector<sink_t> &sorted_sinks)
+void sort_sinks(net_t &net, const t_net_timing *net_timing, const route_parameters_t &params, vector<sink_t> &sorted_sinks)
 {
 	for (int ipin = 1; ipin <= net.sinks.size(); ipin++) { 
 		float pin_criticality;
@@ -596,8 +620,11 @@ void sort_sinks(const net_t &net, const t_net_timing *net_timing, const route_pa
 			/* Cut off pin criticality at max_criticality. */
 			pin_criticality = std::min(pin_criticality, params.max_criticality);
 		}
-		sorted_sinks.push_back({ ipin, pin_criticality, net.sinks[ipin-1] });
+
+		net.sinks[ipin-1].criticality_fac = pin_criticality;
 	}
+
+	sorted_sinks = net.sinks;
 
 	std::sort(sorted_sinks.begin(), sorted_sinks.end());
 }
@@ -625,8 +652,11 @@ void check_route_tree_internal(const route_tree_t &rt, const RouteTreeNode &node
 
 void check_route_tree(const route_tree_t &rt, const net_t &net, const RRGraph &g)
 {
-	const auto &rt_root = route_tree_get_rt_node(rt, net.source);
-	vector<int> sinks = net.sinks;
+	const auto &rt_root = route_tree_get_rt_node(rt, net.source.rr_node);
+	vector<int> sinks;
+	for (const auto &s : net.sinks) {
+		sinks.push_back(s.rr_node);
+	}
 	vector<int> visited_sinks;
 
 	check_route_tree_internal(rt, rt_root, g, visited_sinks);
@@ -637,7 +667,7 @@ void check_route_tree(const route_tree_t &rt, const net_t &net, const RRGraph &g
 	assert(visited_sinks == sinks);
 }
 
-void route_net(RRGraph &g, const net_t &net, const route_parameters_t &params, route_tree_t &rt, t_net_timing *net_timing)
+void route_net(RRGraph &g, net_t &net, const route_parameters_t &params, route_tree_t &rt, t_net_timing *net_timing)
 
 {
 	std::priority_queue<route_state_t> heap;
@@ -656,12 +686,12 @@ void route_net(RRGraph &g, const net_t &net, const route_parameters_t &params, r
 
 	/* rip up previous routing */
 	if (route_tree_initiated(rt)) {
-		update_one_cost(g, rt, route_tree_get_rt_node(rt, net.source), -1, params.pres_fac);
+		update_one_cost(g, rt, route_tree_get_rt_node(rt, net.source.rr_node), -1, params.pres_fac);
 	} 
 
 	route_tree_clear(rt);
-	route_tree_init(rt, get_vertex(g, net.source));
-	update_one_cost(g, rt, route_tree_get_rt_node(rt, net.source), 1, params.pres_fac);
+	route_tree_init(rt, get_vertex(g, net.source.rr_node));
+	update_one_cost(g, rt, route_tree_get_rt_node(rt, net.source.rr_node), 1, params.pres_fac);
 
 	vector<sink_t> sorted_sinks;
 	sort_sinks(net, net_timing, params, sorted_sinks);
@@ -670,7 +700,7 @@ void route_net(RRGraph &g, const net_t &net, const route_parameters_t &params, r
 
 	char buffer[256];
 
-	sprintf_rr_node(net.source, buffer);
+	sprintf_rr_node(net.source.rr_node, buffer);
 	zlog_debug(delta_log, "Source: %s\n", buffer);
 
 	int isink = 0;
@@ -777,10 +807,10 @@ void init_net_timing(const vector<net_t> &nets, t_net_timing *net_timing)
 	}
 }
 
-void fine_grained_route_nets(RRGraph &g, const vector<net_t> &nets, const route_parameters_t &params, route_tree_t *route_trees, t_net_timing *net_timing)
+void fine_grained_route_nets(RRGraph &g, vector<net_t> &nets, const route_parameters_t &params, route_tree_t *route_trees, t_net_timing *net_timing)
 {
 	int inet = 0;
-	for (const auto &net : nets) {
+	for (auto &net : nets) {
 		route_net(g, net, params, route_trees[net.id], &net_timing[net.id]);
 		++inet;
 	}
@@ -806,13 +836,22 @@ void init_graph(RRGraph &g)
 		v.properties.ylow = rr_node[i].ylow;
 		v.properties.xhigh = rr_node[i].xhigh;
 		v.properties.yhigh = rr_node[i].yhigh;
+
+		extern struct s_grid_tile **grid;
+		auto type = &grid[v.properties.xlow][v.properties.ylow];
+
+		v.properties.real_xlow = rr_node[i].xlow;
+		v.properties.real_ylow = rr_node[i].ylow;
+		v.properties.real_xhigh = rr_node[i].xhigh;
+		v.properties.real_yhigh = rr_node[i].ylow + type->offset;
 		v.properties.R = rr_node[i].R;
 		v.properties.C = rr_node[i].C;
 		v.properties.cost_index = rr_node[i].cost_index;
 		v.properties.capacity = rr_node[i].capacity;
 
-		int ci = rr_node[i].cost_index;
-		v.properties.base_cost = rr_indexed_data[ci].saved_base_cost;
+		char buffer[256];
+		sprintf_rr_node(i, buffer);
+		zlog_debug(rr_log, "%s: real_xlow: %d real_xhigh: %d real_ylow: %d real_yhigh: %d\n", buffer, v.properties.real_xlow, v.properties.real_xhigh, v.properties.real_ylow, v.properties.real_yhigh);
 
 		for (int j = 0; j < rr_node[i].num_edges; ++j) {
 			auto &e = add_edge(g, i, rr_node[i].edges[j]);
@@ -824,6 +863,45 @@ void init_graph(RRGraph &g)
 			e.properties.R = switch_inf[si].R; 
 		}
 	}
+	zlog_info(delta_log, "RR graph num vertices: %d\n", num_vertices(g));
+	zlog_info(delta_log, "RR graph num edges: %d\n", num_edges(g));
+}
+
+template<typename PointA, typename PointB>
+bounding_box_t get_bounding_box(const PointA &a, const PointB &b)
+{
+	bounding_box_t bb;
+
+	bb.xmin = std::min(a.x, b.x);
+	bb.xmax = std::max(a.x, b.x);
+	bb.ymin = std::min(a.y, b.y);
+	bb.ymax = std::max(a.y, b.y);
+
+	bb.xmin -= 1;
+	bb.ymin -= 1;
+
+	const int bb_factor = 2;
+
+	extern int nx;
+	extern int ny;
+
+	bb.xmin = std::max(bb.xmin - bb_factor, 0);
+	bb.xmax = std::min(bb.xmax + bb_factor, nx + 1);
+	bb.ymin = std::max(bb.ymin - bb_factor, 0);
+	bb.ymax = std::min(bb.ymax + bb_factor, ny + 1);
+
+	return bb;
+}
+
+void test_interval()
+{
+	using namespace boost::numeric;
+	interval<int> i1(1,2);
+	interval<int> i2(3,3);
+
+	if (overlap(i1, i2)) {
+		printf("1 overlap\n");
+	}
 }
 
 void init_nets(vector<net_t> &nets)
@@ -831,22 +909,395 @@ void init_nets(vector<net_t> &nets)
 	extern struct s_net *clb_net;
 	extern int num_nets;
 	extern int **net_rr_terminals; /* [0..num_nets-1][0..num_pins-1] */
+	extern struct s_rr_node *rr_node;
 	extern struct s_bb *route_bb;
+	extern struct s_block *block;
 
 	nets.resize(num_nets);
 	for (int i = 0; i < num_nets; ++i) {
 		nets[i].id = i;
 		nets[i].global = clb_net[i].is_global ? true : false;
-		nets[i].source = net_rr_terminals[i][0];
+		nets[i].source.rr_node = net_rr_terminals[i][0];
+		int b = clb_net[i].node_block[0];
+		int p = clb_net[i].node_block_pin[0];
+		nets[i].source.x = block[b].x;
+		nets[i].source.y = block[b].y + block[b].type->pin_height[p];
+		 
 		for (int j = 1; j <= clb_net[i].num_sinks; j++) {
-			nets[i].sinks.push_back(net_rr_terminals[i][j]);
+			sink_t sink;
+			sink.rr_node = net_rr_terminals[i][j];
+			sink.id = j;
+			int b = clb_net[i].node_block[j];
+			int p = clb_net[i].node_block_pin[j];
+			sink.x = block[b].x;
+			sink.y = block[b].y + block[b].type->pin_height[p];
+			sink.criticality_fac = std::numeric_limits<float>::max();
+
+			nets[i].sinks.push_back(sink);
+
+			/*int inode = net_rr_terminals[i][j];*/
+			/*extern struct s_block *block;*/
+			/*assert(clb_net[i].node_block_pin[j] == rr_node[inode].ptc_num);*/
 		}
+
+		std::sort(nets[i].sinks.begin(), nets[i].sinks.end(), [&nets, &i] (const sink_t &a, const sink_t &b) -> bool {
+				int a_to_src_dist = abs(a.x - nets[i].source.x) + abs(a.y - nets[i].source.y);
+				int b_to_src_dist = abs(b.x - nets[i].source.x) + abs(b.y - nets[i].source.y);
+				return a_to_src_dist < b_to_src_dist;
+				});
+
+		char buffer[256];
+		zlog_debug(net_log, "Net %d sorted\n", i);
+		sprintf_rr_node(nets[i].source.rr_node, buffer);
+		zlog_debug(net_log, "%s x: %d y: %d\n", buffer, nets[i].source.x, nets[i].source.y);
+		zlog_debug(net_log, "Sorted sinks:\n");
+		for (const auto &s : nets[i].sinks) {
+			sprintf_rr_node(s.rr_node, buffer);
+			zlog_debug(net_log, "%s x: %d y: %d\n", buffer, s.x, s.y);
+		}
+
 		nets[i].box.xmin = route_bb[i].xmin;
 		nets[i].box.ymin = route_bb[i].ymin;
 		nets[i].box.xmax = route_bb[i].xmax;
 		nets[i].box.ymax = route_bb[i].ymax;
 	}
 }
+
+template<typename BoundingBox>
+bool box_overlap(const BoundingBox &box_a, const BoundingBox &box_b)
+{
+	using namespace boost::numeric;
+	interval<int> a_hor(box_a.xmin, box_a.xmax);
+	interval<int> b_hor(box_b.xmin, box_b.xmax);
+
+	interval<int> a_vert(box_a.ymin, box_a.ymax);
+	interval<int> b_vert(box_b.ymin, box_b.ymax);
+
+	return overlap(a_hor, b_hor) && overlap(a_vert, b_vert);
+}
+
+void write_metis_file(const graph_t<int, int> &dep_g, const char *filename)
+{
+	FILE *file = fopen("metis.graph", "w");
+	assert(file);
+	assert(num_edges(dep_g) % 2 == 0);
+	fprintf(file, "%d %d\n", num_vertices(dep_g), num_edges(dep_g)/2);
+	for_all_vertices(dep_g, [&dep_g, &file] (const vertex_t<int, int> &v) -> void {
+			for_all_out_edges(dep_g, v, [&dep_g, &file] (const edge_t<int> &e) -> void {
+					fprintf(file, "%d ", id(get_target(dep_g, e))+1);
+					});
+			fprintf(file, "\n");
+			});
+	fclose(file);
+}
+
+void init_overlapping_nets(vector<net_t> &nets)
+{
+	for (auto &n : nets) {
+		n.overlapping_nets = vector<bool>(nets.size(), false);
+		n.non_overlapping_nets = vector<bool>(nets.size(), false);
+	}
+
+	for (auto &n : nets) {
+		n.current_bounding_box = get_bounding_box(n.source, n.sinks[0]);
+	}
+
+	for (int i = 0; i < nets.size(); ++i) {
+		int num_overlaps = 0;
+		for (int j = i+1; j < nets.size(); ++j) {
+			if (box_overlap(nets[i].current_bounding_box, nets[j].current_bounding_box)) {
+				++num_overlaps;
+
+				nets[i].overlapping_nets[nets[j].id] = true;
+				nets[j].overlapping_nets[nets[i].id] = true;
+			} else {
+				nets[i].non_overlapping_nets[nets[j].id] = true;
+				nets[j].non_overlapping_nets[nets[i].id] = true;
+			}
+		}
+		zlog_debug(net_log, "Net %i overlaps with %d nets\n", i, num_overlaps);
+	}
+}
+
+void init_overlapping_nets(vector<net_t> &nets, graph_t<int, int> &dep_g)
+{
+	/*add_vertex(dep_g, nets.size());*/
+	/*for (auto &n : nets) {*/
+		/*n.overlapping_nets = vector<bool>(nets.size(), false);*/
+		/*n.non_overlapping_nets = vector<bool>(nets.size(), false);*/
+	/*}*/
+
+	/*for (int i = 0; i < nets.size(); ++i) {*/
+		/*int num_overlaps = 0;*/
+		/*for (int j = i+1; j < nets.size(); ++j) {*/
+			/*if (box_overlap(bb_a, bb_b)) {*/
+				/*++num_overlaps;*/
+				/*add_edge(dep_g, i, j);*/
+				/*add_edge(dep_g, j, i);*/
+
+				/*nets[i].overlapping_nets[nets[i].id] = true;*/
+				/*nets[j].overlapping_nets[nets[i].id] = true;*/
+			/*} else {*/
+				/*nets[i].non_overlapping_nets[nets[j].id] = true;*/
+				/*nets[j].non_overlapping_nets[nets[i].id] = true;*/
+			/*}*/
+		/*}*/
+		/*zlog_debug(net_log, "Net %i overlaps with %d nets\n", i, num_overlaps);*/
+	/*}*/
+}
+
+typedef struct partition_t {
+	vector<const net_t *> nets;
+} partition_t;
+
+void init_nets_partition(vector<net_t> &nets, const char *part_file, int num_parts, vector<partition_t> &partitions)
+{
+	FILE *file = fopen(part_file, "r");
+	int i = 0;
+	printf("Partitions\n");
+	while (!feof(file)) {
+		fscanf(file, "%d\n", &nets[i].pid);
+		printf("Net %d pid %d\n", i, nets[i].pid);	
+		assert(nets[i].pid < num_parts && nets[i].pid >= 0);
+		partitions[nets[i].pid].nets.push_back(&nets[i]);
+		++i;
+	}
+	
+	assert(i == nets.size());
+}
+
+template<typename T>
+inline bool in_set(const set<T> &s, const T &item)
+{
+	return s.find(item) != s.end();
+}
+
+template<typename BoundingBox>
+int get_bounding_box_area(const BoundingBox &bb)
+{
+	int area = (bb.xmax - bb.xmin + 1) * (bb.ymax - bb.ymin + 1);
+	assert(area >= 0);
+	return area;
+}
+
+template<typename NetPtrs>
+net_t *schedule_net_greedy(const NetPtrs &nets, vector<bool> &scheduled_nets, vector<net_t *> &current_time_scheduled_nets, int time)
+{
+	int max_num_non_overlapping_nets = std::numeric_limits<int>::min();	
+	net_t *res = nullptr;
+
+	/*zlog_debug(schedule_log, "-- Start scheduling for time %d\n", time);*/
+
+	zlog_debug(schedule_log, "Scheduled nets: ");
+	for (const auto &n : nets) {
+		if (scheduled_nets[n->id]) {
+			zlog_debug(schedule_log, "%d ", n->id);
+		}
+	}
+	zlog_debug(schedule_log, "\n");
+
+	zlog_info(schedule_log, "Current time scheduled nets: ");
+	for (const auto &n : current_time_scheduled_nets) {
+		zlog_info(schedule_log, "[%d BB: %d] ", n->id, get_bounding_box_area(n->current_bounding_box));
+	}
+	zlog_info(schedule_log, "\n");
+
+	for (const auto &net : nets) {
+		/*zlog_debug(schedule_log, "Checking net %d pid %d non_overlapping_nets %d net_scheduled %d overlap_scheduled_nets %d\n", net->id, net->pid, net->non_overlapping_nets.size(), net_scheduled ? 1 : 0, overlap_scheduled_nets ? 1 : 0);*/
+
+		bool net_scheduled = scheduled_nets[net->id];
+		int num_non_overlapping_nets = net->non_overlapping_nets.size();
+
+		if (!net_scheduled && num_non_overlapping_nets > max_num_non_overlapping_nets) {
+			bool overlap_scheduled_nets = any_of(current_time_scheduled_nets.begin(), current_time_scheduled_nets.end(), [&net] (net_t *current_time_net) -> bool {
+					return net->overlapping_nets[current_time_net->id];
+					});
+
+			if (!overlap_scheduled_nets) {
+				max_num_non_overlapping_nets = net->non_overlapping_nets.size();
+				res = net;
+				zlog_debug(schedule_log, "\tRecording net %d\n", net->id);
+			}
+		}
+	}
+
+	if (res) {
+		res->schedule = time;
+		scheduled_nets[res->id] = true;
+		current_time_scheduled_nets.push_back(res);
+		zlog_debug(schedule_log, "Scheduled net %d\n", res->id);
+	}
+
+	/*zlog_debug(schedule_log, "-- End scheduling for time %d\n", time);*/
+
+	return res;
+}
+
+void schedule_nets_greedy(vector<net_t> &nets)
+{
+	for (auto &n : nets) {
+		n.schedule = -1;
+	}
+
+	vector<net_t *> bootstrap;
+	for (auto &n : nets) {
+		bootstrap.push_back(&n);
+	}
+	vector<bool> scheduled_nets(nets.size(), false);
+	vector<net_t *> current_time_scheduled_nets;
+	vector<vector<const net_t *>> net_scheduled_at_time;
+
+	int time = 0;
+
+	zlog_info(schedule_log, "-- Start scheduling nets for time %d\n", time);
+	net_t *scheduled_net = schedule_net_greedy(bootstrap, scheduled_nets, current_time_scheduled_nets, time);
+	assert(scheduled_net);
+	net_scheduled_at_time.push_back(vector<const net_t *>());
+	net_scheduled_at_time[time].push_back(scheduled_net);
+	int num_scheduled_nets = 1;
+
+	while (num_scheduled_nets < nets.size()) {
+		vector<net_t *> temp;
+		for (auto &n : nets) {
+			if (scheduled_net->non_overlapping_nets[n.id]) {
+				temp.push_back(&n);
+			}
+		}
+		scheduled_net = schedule_net_greedy(temp, scheduled_nets, current_time_scheduled_nets, time);
+		if (!scheduled_net) {
+			current_time_scheduled_nets.clear();
+			++time;
+
+			zlog_info(schedule_log, "-- Start scheduling nets for time %d\n", time);
+			scheduled_net = schedule_net_greedy(bootstrap, scheduled_nets, current_time_scheduled_nets, time);
+			assert(scheduled_net);
+			net_scheduled_at_time.push_back(vector<const net_t *>());
+			net_scheduled_at_time[time].push_back(scheduled_net);
+		} else {
+			net_scheduled_at_time[time].push_back(scheduled_net);
+		}
+		++num_scheduled_nets;
+	}
+	assert(all_of(scheduled_nets.begin(), scheduled_nets.end(), [] (const bool &item) -> bool { return item; }));
+}
+
+void verify_scheduling()
+{
+}
+
+template<typename Nets>
+net_t *schedule_net(const Nets &nets, set<int> &scheduled_net, set<int> &scheduled_partition, int time)
+{
+	int max_num_overlapping_nets = std::numeric_limits<int>::min();	
+	net_t *res = nullptr;
+
+	zlog_debug(schedule_log, "-- Start scheduling for time %d\n", time);
+
+	zlog_debug(schedule_log, "Scheduled partitions: ");
+	for (const auto &p : scheduled_partition) {
+		zlog_debug(schedule_log, "%d ", p);
+	}
+	zlog_debug(schedule_log, "\n");
+
+	zlog_debug(schedule_log, "Scheduled nets: ");
+	for (const auto &n : scheduled_net) {
+		zlog_debug(schedule_log, "%d ", n);
+	}
+	zlog_debug(schedule_log, "\n");
+
+	for (const auto &net : nets) {
+		bool net_scheduled = in_set(scheduled_net, net->id);
+		bool part_scheduled = in_set(scheduled_partition, net->pid);
+
+		zlog_debug(schedule_log, "Checking net %d pid %d non_overlapping_nets %d net_scheduled %d part_scheduled %d\n", net->id, net->pid, net->non_overlapping_nets.size(), net_scheduled ? 1 : 0, part_scheduled ? 1 : 0);
+		
+		int temp = net->non_overlapping_nets.size();
+
+		if (!net_scheduled && !part_scheduled
+				&& temp > max_num_overlapping_nets) {
+			max_num_overlapping_nets = net->non_overlapping_nets.size();
+			res = net;
+			zlog_debug(schedule_log, "\tRecording net %d\n", net->id);
+		}
+	}
+
+	if (res) {
+		res->schedule = time;
+		scheduled_net.insert(res->id);
+		scheduled_partition.insert(res->pid);
+		zlog_debug(schedule_log, "Scheduled net %d pid %d\n", res->id, res->pid);
+	}
+
+	zlog_debug(schedule_log, "-- End scheduling for time %d\n", time);
+
+	return res;
+}
+
+void schedule_nets(vector<net_t> &nets, int num_parts)
+{
+	for (auto &n : nets) {
+		n.schedule = -1;
+	}
+
+	vector<net_t *> bootstrap;
+	for (auto &n : nets) {
+		bootstrap.push_back(&n);
+	}
+	set<int> scheduled_nets;
+	set<int> scheduled_partitions;
+
+	int time = 0;
+	net_t *scheduled_net = schedule_net(bootstrap, scheduled_nets, scheduled_partitions, time);
+	while (scheduled_nets.size() < nets.size()) {
+		/*scheduled_net = schedule_net(scheduled_net->non_overlapping_nets, scheduled_nets, scheduled_partitions, time);*/
+		if (!scheduled_net) {
+
+			scheduled_partitions.clear();
+			++time;
+			scheduled_net = schedule_net(bootstrap, scheduled_nets, scheduled_partitions, time);
+			assert(scheduled_net);
+		} else if (scheduled_partitions.size() == num_parts) {
+			scheduled_partitions.clear();
+			++time;
+		}
+	}
+}
+
+/*void schedule_nets(vector<net_t> &nets, int num_parts)*/
+/*{*/
+	/*for (auto &n : nets) {*/
+		/*n.schedule = -1;*/
+	/*}*/
+
+	/*int max_time;*/
+	/*set<int> scheduled;*/
+	/*for (int time = 0; time < max_time; ++time) {*/
+		/*const net_t *cur_part_min = &nets[0];*/
+
+		/*for (int i = 1; i < nets.size(); ++i) {*/
+			/*auto iter = scheduled.find(nets[i].id);*/
+			/*if (nets[i].non_overlapping_nets.size() < cur_part_min->non_overlapping_nets.size()*/
+					/*&& iter == scheduled.end()) {*/
+				/*cur_part_min = &nets[i];*/
+			/*}*/
+		/*}*/
+		/*cur_part_min->schedule = time;*/
+		/*scheduled.insert(cur_part_min->id);*/
+
+		/*for (int i = 0; i < num_parts; ++i) { */
+			/*const net_t *other_part_min = nullptr;*/
+			/*for (int j = 0; j < cur_part_min->non_overlapping_nets.size(); ++j) {*/
+				/*if (other_part_min == nullptr) {*/
+					/*if (cur_part_min->non_overlapping_nets[j]->pid != cur_part_min->pid) {*/
+						/*other_part_min = &cur_part_min->non_overlapping_nets[j];*/
+					/*}*/
+				/*} else if (cur_part_min->non_overlapping_nets[j]->pid != cur_part_min->pid && cur_part_min->non_overlapping_nets[j].size() < other_part_min->non_overlapping_nets.size()) {*/
+					/*other_part_min = &cur_part_min->non_overlapping_nets[j];*/
+				/*}*/
+			/*}*/
+		/*}*/
+	/*}*/
+/*}*/
 
 void analyze_timing(t_net_timing *net_timing) 
 {
@@ -874,9 +1325,23 @@ bool feasible_routing(const RRGraph &g)
 	return feasible;
 }
 
+void run_metis(const char *graph_filename, int num_partitions)
+{
+	char buffer[256];
+	sprintf(buffer, "./gpmetis %s %d", graph_filename, num_partitions);
+	FILE *pipe = popen(buffer, "r");
+	while (!feof(pipe)) {
+		fgets(buffer, 256, pipe);
+		printf("%s", buffer);
+	}
+	pclose(pipe);
+}
+
 bool hybrid_route(t_router_opts *opts)
 {
 	const int max_iter = 50;
+
+	test_interval();
 
 	init_logging();
 
@@ -884,6 +1349,23 @@ bool hybrid_route(t_router_opts *opts)
 	vector<net_t> nets;
 	init_graph(g);
 	init_nets(nets);
+	
+	const int num_parts = 4;
+
+	graph_t<int, int> dep_g;
+	init_overlapping_nets(nets);
+
+	/*const char *metis_filename = "metis.graph";*/
+	/*write_metis_file(dep_g, metis_filename);*/
+
+	/*run_metis(metis_filename, num_parts);*/
+
+	/*char part_filename[256];*/
+	/*sprintf(part_filename, "%s.part.%d", metis_filename, num_parts);*/
+	/*vector<partition_t> partitions(num_parts);*/
+	/*init_nets_partition(nets, part_filename, num_parts, partitions);*/
+
+	schedule_nets_greedy(nets);
 
 	std::sort(nets.begin(), nets.end(), [] (const net_t &a, const net_t &b) -> bool {
 		return a.sinks.size() > b.sinks.size(); }
@@ -891,6 +1373,8 @@ bool hybrid_route(t_router_opts *opts)
 
 	t_net_timing *net_timing = new t_net_timing[nets.size()];
 	init_net_timing(nets, net_timing);
+
+	exit(-1);
 
 	route_tree_t *route_trees = new route_tree_t[nets.size()];
 
