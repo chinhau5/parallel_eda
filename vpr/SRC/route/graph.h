@@ -8,6 +8,7 @@ using namespace std;
 
 template<typename Properties>
 struct edge_t {
+	int id;
 	int a;
 	int b;
 	Properties properties;	
@@ -30,6 +31,12 @@ template<typename VertexProperties, typename EdgeProperties>
 int id(const vertex_t<VertexProperties, EdgeProperties> &v)
 {
 	return v.id;
+}
+
+template<typename EdgeProperties>
+int id(const edge_t<EdgeProperties> &e)
+{
+	return e.id;
 }
 
 template<typename VertexProperties, typename EdgeProperties>
@@ -79,15 +86,37 @@ edge_t<EdgeProperties> &add_edge(graph_t<VertexProperties, EdgeProperties> &g, i
 	edge_t<EdgeProperties> e;
 	e.a = a;
 	e.b = b;
+	e.id = g.edges.size();
 
 	//assert(find_if(v_a.edges.begin(), v_a.edges.end(), [&g, &b] (int e) -> bool { return g.edges[e].b == b; }) == v_a.edges.end());
 
-	auto e_i = g.edges.size();
-
 	g.edges.push_back(e);
-	v_a.edges.push_back(e_i);
+	v_a.edges.push_back(e.id);
 
-	return g.edges[e_i];
+	return g.edges[e.id];
+}
+
+template<typename VertexProperties, typename EdgeProperties>
+void remove_edge(graph_t<VertexProperties, EdgeProperties> &g, int e_i)
+{
+}
+
+template<typename VertexProperties, typename EdgeProperties>
+void remove_edge(graph_t<VertexProperties, EdgeProperties> &g, int a, int b)
+{
+	auto iter = find_if(g.vertices[a].edges.begin(), g.vertices[a].edges.end(), [&g, &b] (int e) -> bool { return g.edges[e].b == b; });
+	assert(iter != g.vertices[a].edges.end());
+
+	for (auto &v : g.vertices) {
+		for (auto &e : v.edges) {
+			if (e > *iter) {
+				--e;
+			}
+		}
+	}
+
+	g.vertices[a].edges.erase(iter);
+	g.edges.erase(*iter);
 }
 
 template<typename VertexProperties, typename EdgeProperties>
