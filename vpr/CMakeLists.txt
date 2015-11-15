@@ -71,6 +71,7 @@ set(srcs
 	SRC/route/rr_graph_timing_params.c
 	SRC/route/rr_graph_util.c
 	SRC/route/segment_stats.c
+	SRC/route/test.c
 	SRC/timing/net_delay.c
 	SRC/timing/path_delay2.c
 	SRC/timing/path_delay.c
