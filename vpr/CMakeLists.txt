@@ -59,7 +59,9 @@ set(srcs
 	SRC/route/new_cost_parallel_route_timing.c
 	SRC/route/fine_grained_parallel_route_timing.c
 	SRC/route/fine_grained_parallel_route_timing_2.c
-	SRC/route/hybrid_route.c
+	SRC/route/test.c
+	SRC/route/partitioning_route.c
+	SRC/route/scheduler.c
 	SRC/route/advanced_parallel_route_timing.c
 	SRC/route/route_tree_timing.c
 	SRC/route/route_tree_timing_local.c
@@ -71,7 +73,6 @@ set(srcs
 	SRC/route/rr_graph_timing_params.c
 	SRC/route/rr_graph_util.c
 	SRC/route/segment_stats.c
-	SRC/route/test.c
 	SRC/timing/net_delay.c
 	SRC/timing/path_delay2.c
 	SRC/timing/path_delay.c

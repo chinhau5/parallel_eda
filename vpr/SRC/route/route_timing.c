@@ -23,7 +23,7 @@
 static int get_max_pins_per_net(void);
 
 static void add_route_tree_to_heap(t_rt_node * rt_node, int target_node,
-		float target_criticality, float astar_fac);
+		float target_criticality, float astar_fac, int *num_heap_pushes);
 
 static void timing_driven_expand_neighbours(struct s_heap *current, int inet,
 		float bend_cost, float criticality_fac, int target_node,
@@ -79,7 +79,6 @@ boolean try_timing_driven_route(struct s_router_opts router_opts,
 		critical_path_delay, init_timing_criticality_val;
 	t_rt_node **rt_node_of_sink; /* [1..max_pins_per_net-1] */
 	clock_t begin,end;
-	int num_heap_pushes;
 	sinks = (float*)my_malloc(sizeof(float) * num_nets);
 	net_index = (int*)my_malloc(sizeof(int) * num_nets);
 
@@ -135,6 +134,8 @@ boolean try_timing_driven_route(struct s_router_opts router_opts,
 		begin = clock();
 		vpr_printf(TIO_MESSAGE_INFO, "\n");
 		vpr_printf(TIO_MESSAGE_INFO, "Routing iteration: %d\n", itry);
+
+		int num_heap_pushes = 0;
 
 		for (i = 0; i < num_nets; i++) {
 			inet = net_index[i];
@@ -238,7 +239,7 @@ boolean try_timing_driven_route(struct s_router_opts router_opts,
 					congested_nets.insert(n);
 				}
 			}
-			assert(rr_node[inode].occ - rr_node[inode].num_reservation == rr_node[inode].occupant_net_id.size());
+			//assert(rr_node[inode].occ - rr_node[inode].num_reservation == rr_node[inode].occupant_net_id.size());
 		}
 		zlog_info(congestion_log, "There are %d congested nets:\n", congested_nets.size());
 
@@ -306,6 +307,8 @@ boolean try_timing_driven_route(struct s_router_opts router_opts,
 		#else
 			vpr_printf(TIO_MESSAGE_INFO, "Routing iteration took %g seconds.\n", (float)(end - begin) / CLK_PER_SEC);
 		#endif
+
+		printf("Num heap pushes: %d\n", num_heap_pushes);
 		
 		fflush(stdout);
 	}
@@ -451,7 +454,7 @@ boolean timing_driven_route_net(int inet, float pres_fac, float max_criticality,
 				rt_root);
 
 		add_route_tree_to_heap(rt_root, target_node, target_criticality,
-				astar_fac);
+				astar_fac, num_heap_pushes);
 
 		current = get_heap_head();
 
@@ -539,7 +542,7 @@ boolean timing_driven_route_net(int inet, float pres_fac, float max_criticality,
 }
 
 static void add_route_tree_to_heap(t_rt_node * rt_node, int target_node,
-		float target_criticality, float astar_fac) {
+		float target_criticality, float astar_fac, int *num_heap_pushes) {
 
 	/* Puts the entire partial routing below and including rt_node onto the heap *
 	 * (except for those parts marked as not to be expanded) by calling itself   *
@@ -562,6 +565,8 @@ static void add_route_tree_to_heap(t_rt_node * rt_node, int target_node,
 								target_criticality, R_upstream);
 		node_to_heap(inode, tot_cost, NO_PREVIOUS, NO_PREVIOUS,
 				backward_path_cost, R_upstream);
+
+		++(*num_heap_pushes);
 	}
 
 	linked_rt_edge = rt_node->u.child_list;
@@ -569,7 +574,7 @@ static void add_route_tree_to_heap(t_rt_node * rt_node, int target_node,
 	while (linked_rt_edge != NULL) {
 		child_node = linked_rt_edge->child;
 		add_route_tree_to_heap(child_node, target_node, target_criticality,
-				astar_fac);
+				astar_fac, num_heap_pushes);
 		linked_rt_edge = linked_rt_edge->next;
 	}
 }
@@ -837,6 +842,8 @@ static void update_rr_base_costs(int inet, float largest_criticality) {
 	}
 }
 
+void sprintf_rr_node(int rr_node, char *buffer);
+
 /* Nets that have high fanout can take a very long time to route.  Each sink should be routed contained within a bin instead of the entire bounding box to speed things up */
 static int mark_node_expansion_by_bin(int inet, int target_node,
 		t_rt_node * rt_node) {
@@ -878,6 +885,9 @@ static int mark_node_expansion_by_bin(int inet, int target_node,
 		while (linked_rt_edge != NULL && success == FALSE) {
 			child_node = linked_rt_edge->child;
 			inode = child_node->inode;
+			//char buffer[256];
+			//sprintf_rr_node(inode, buffer);
+			//printf("Node %s\n", buffer);
 			if (!(rr_node[inode].type == IPIN || rr_node[inode].type == SINK)) {
 				if (rr_node[inode].xlow <= target_x + rlim
 						&& rr_node[inode].xhigh >= target_x - rlim
