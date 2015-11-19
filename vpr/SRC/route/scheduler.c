@@ -7,6 +7,7 @@
 #include "zlog.h"
 #include "vpr_types.h"
 #include "route.h"
+#include "scheduler.h"
 
 namespace bg = boost::geometry;
 namespace bgi = boost::geometry::index;
@@ -135,9 +136,63 @@ void load_overlapping_nets_rtree(vector<net_t *> &nets)
 	verify_rtree_overlap(nets);
 }
 
-void one_d_independent()
+void verify_ind(const vector<const net_t *> &nets)
 {
+	for (int i = 0; i < nets.size(); ++i) {
+		for (int j = i + 1;  j < nets.size(); ++j) {
+			assert(!box_overlap(nets[i]->current_bounding_box, nets[j]->current_bounding_box));
+		}
+	}
 }
+
+void schedule_nets_ind(vector<net_t *> &nets, vector<vector<const net_t *>> &net_scheduled_at_time)
+{
+	cpu_timer timer;
+	timer.start();
+
+	vector<pair<const bounding_box_t *, net_t *>> bbs(nets.size());
+
+	for (int i = 0; i < nets.size(); ++i) {
+		bbs[i].first = &nets[i]->current_bounding_box;
+		bbs[i].second = nets[i];
+	}
+
+	vector<bool> scheduled(nets.size(), false);
+	net_scheduled_at_time.reserve(nets.size()); //worst case
+	int num_scheduled_nets = 0;
+	int time = 0;
+	while (num_scheduled_nets < nets.size()) {
+		vector<pair<const bounding_box_t *, net_t *> *> bbs_ptr;
+		for (int i = 0; i < nets.size(); ++i) {
+			if (!scheduled[nets[i]->current_local_id]) {
+				bbs_ptr.push_back(&bbs[i]);
+			}
+		}
+		vector<pair<const bounding_box_t *, net_t *> *> chosen;
+		max_independent_rectangles(bbs_ptr, chosen);
+
+		net_scheduled_at_time.push_back(vector<const net_t *>());
+		for (const auto &c : chosen) {
+			scheduled[c->second->current_local_id] = true;
+			net_scheduled_at_time[time].push_back(c->second);
+		}
+		num_scheduled_nets += chosen.size();
+		++time;
+	}
+	timer.stop();
+	cpu_times elapsed = timer.elapsed();
+	extern zlog_category_t *delta_log;
+	zlog_info(delta_log, "Scheduling took %g\n", elapsed.wall / 1e9);
+	assert(all_of(scheduled.begin(), scheduled.end(), [] (const bool &item) -> bool { return item; }));
+
+	for (const auto &at_time : net_scheduled_at_time) {
+		verify_ind(at_time);
+	}
+}
+
+
+
+
 
 
 

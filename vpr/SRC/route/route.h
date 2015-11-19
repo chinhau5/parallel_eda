@@ -22,6 +22,14 @@ typedef struct bounding_box_t {
 	int ymax;
 } bounding_box_t;
 
+template<typename BoundingBox>
+int get_bounding_box_area(const BoundingBox &bb)
+{
+	int area = (bb.xmax - bb.xmin + 1) * (bb.ymax - bb.ymin + 1);
+	assert(area >= 0);
+	return area;
+}
+
 typedef struct source_t {
 	int rr_node;
 	int x;
@@ -34,6 +42,7 @@ typedef struct sink_t {
 	int rr_node;
 	int x;
 	int y;
+	bounding_box_t previous_bounding_box;
 } sink_t;
 
 bool operator<(const sink_t &a, const sink_t &b);
@@ -46,24 +55,23 @@ typedef struct net_t {
 	bool has_sink;
 	source_t source;
 	source_t current_source;
-	source_t previous_source;
+	//source_t previous_source;
 	/*bool previous_source_valid;*/
 	std::vector<sink_t> sinks;
 	int current_sink_index;
-	int previous_sink_index;
+	//int previous_sink_index;
 	/*bool previous_sink_valid;*/
 	bounding_box_t current_bounding_box;
-	bounding_box_t previous_bounding_box;
 	/*bool previous_bounding_box_valid;*/
 	/*bounding_box_t box;*/
-	int pid;
 	std::vector<bool> overlapping_nets;
-	std::vector<const net_t *> overlapping_nets_vec;
-	int num_overlapping_nets;
 	std::vector<bool> non_overlapping_nets;
-	std::vector<const net_t *> non_overlapping_nets_vec;
+	int num_overlapping_nets;
 	int num_non_overlapping_nets;
-	int num_local_nets;
+	std::vector<const net_t *> overlapping_nets_vec;
+	std::vector<const net_t *> non_overlapping_nets_vec;
+	//int num_local_nets;
+	int pid;
 	int schedule;
 } net_t;
 

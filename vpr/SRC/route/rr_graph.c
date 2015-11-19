@@ -2033,6 +2033,8 @@ void sprintf_rr_node(int inode, char *buffer)
 			sprintf(buffer, "%d %s (%d,%d)(%d,%d) %d", inode, rr_types[rr_node[inode].type], rr_node[inode].xhigh, rr_node[inode].yhigh, rr_node[inode].xlow, rr_node[inode].ylow, rr_node[inode].ptc_num);
 		}
 	}
+#else
+	buffer[0] = '\0';
 #endif
 }
 

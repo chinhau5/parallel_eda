@@ -22,6 +22,7 @@
 /*#include "bounding_box.h"*/
 #include "graph.h"
 #include "route.h"
+#include "scheduler.h"
 /*#include <boost/geometry.hpp>*/
 /*#include <boost/geometry/geometries/point.hpp>*/
 /*#include <boost/geometry/geometries/box.hpp>*/
@@ -63,6 +64,7 @@ zlog_category_t *delta_log;
 zlog_category_t *rr_log;
 zlog_category_t *net_log;
 zlog_category_t *schedule_log;
+zlog_category_t *independent_log;
 
 static void init_logging()
 {
@@ -70,6 +72,7 @@ static void init_logging()
 	rr_log = zlog_get_category("rr");
 	net_log = zlog_get_category("net");
 	schedule_log = zlog_get_category("schedule");
+	independent_log = zlog_get_category("independent");
 }
 
 /*int get_num_nets()*/
@@ -1066,7 +1069,7 @@ bounding_box_t get_bounding_box(const PointA &a, const PointB &b)
 	bb.xmin -= 1;
 	bb.ymin -= 1;
 
-	const int bb_factor = 1;
+	const int bb_factor = 2;
 
 	extern int nx;
 	extern int ny;
@@ -1087,6 +1090,39 @@ void test_interval()
 
 	if (overlap(i1, i2)) {
 		printf("1 overlap\n");
+	}
+}
+
+void test_scheduler()
+{
+	using namespace boost::numeric;
+	vector<pair<interval<int>, int>> intervals = {
+		{ { 1, 5 }, 0 },
+		{ { 6, 7 }, 1 },
+		{ { 3, 10 }, 2 },
+		{ { 8, 9 }, 3 }
+	};
+	vector<pair<interval<int>, int> *> chosen;
+	max_independent_intervals(intervals, chosen);
+	for (const auto &c : chosen) {
+		printf("chosen: [%d, %d]\n", c->first.lower(), c->first.upper());
+	}
+
+	vector<bounding_box_t> bbs = {
+		{ 1, 5, 3, 4 },
+		{ 9, 10, 3, 4 },
+		{ 1, 5, 3, 4 },
+		{ 9, 10, 3, 4 }
+	};
+	vector<pair<const bounding_box_t *, int> *> bbs_ptr;
+
+	for (const auto &b : bbs) {
+		bbs_ptr.push_back(new pair<const bounding_box_t *, int>(&b, 0));
+	}
+	vector<pair<const bounding_box_t *, int> *> chosen_bbs;
+	max_independent_rectangles(bbs_ptr, chosen_bbs);
+	for (const auto &c : chosen_bbs) {
+		printf("chosen: x %d-%d y %d-%d]\n", c->first->xmin, c->first->xmax, c->first->ymin, c->first->ymax);
 	}
 }
 
@@ -1291,14 +1327,6 @@ inline bool in_set(const set<T> &s, const T &item)
 	return s.find(item) != s.end();
 }
 
-template<typename BoundingBox>
-int get_bounding_box_area(const BoundingBox &bb)
-{
-	int area = (bb.xmax - bb.xmin + 1) * (bb.ymax - bb.ymin + 1);
-	assert(area >= 0);
-	return area;
-}
-
 net_t *schedule_net_greedy(const vector<net_t *> &nets, vector<bool> &scheduled_nets, vector<const net_t *> &current_time_scheduled_nets, int time)
 {
 	int max_num_non_overlapping_nets = std::numeric_limits<int>::min();	
@@ -1360,6 +1388,20 @@ net_t *schedule_net_greedy(const vector<net_t *> &nets, vector<bool> &scheduled_
 	/*zlog_debug(schedule_log, "-- End scheduling for time %d\n", time);*/
 
 	return res;
+}
+
+void schedule_nets_num_sinks(vector<net_t *> &nets, vector<vector<const net_t *>> &net_scheduled_at_time)
+{
+	sort(nets.begin(), nets.end(), [] (const net_t *a, const net_t *b) -> bool {
+			return a->sinks.size() > b->sinks.size();
+			});
+
+	if (nets.size() > 0) {
+		net_scheduled_at_time.push_back(vector<const net_t *>());
+		for (auto &net : nets) {
+			net_scheduled_at_time[0].push_back(net);
+		}
+	}
 }
 
 void schedule_nets_greedy(vector<net_t *> &nets, vector<vector<const net_t *>> &net_scheduled_at_time)
@@ -1583,6 +1625,10 @@ void schedule_nets_fast(vector<net_t *> &nets, vector<vector<const net_t *>> &ne
 	cpu_times elapsed = timer.elapsed();
 	zlog_info(delta_log, "Scheduling took %g\n", elapsed.wall / 1e9);
 	assert(all_of(scheduled_nets.begin(), scheduled_nets.end(), [] (const bool &item) -> bool { return item; }));
+
+	for (const auto &at_time : net_scheduled_at_time) {
+		verify_ind(at_time);
+	}
 }
 
 void analyze_timing(t_net_timing *net_timing) 
@@ -1649,17 +1695,23 @@ void set_current_source(net_t &net, route_tree_t &rt, const RRGraph &g, const si
 
 void adjust_bounding_box(net_t &net)
 {
-	net.current_bounding_box.xmin = std::min(net.current_bounding_box.xmin, net.previous_bounding_box.xmin);
-	net.current_bounding_box.ymin = std::min(net.current_bounding_box.ymin, net.previous_bounding_box.ymin);
-	net.current_bounding_box.xmax = std::max(net.current_bounding_box.xmax, net.previous_bounding_box.xmax);
-	net.current_bounding_box.ymax = std::max(net.current_bounding_box.ymax, net.previous_bounding_box.ymax);
+	assert(net.current_sink_index >= 0 && net.current_sink_index < net.sinks.size());
+	const auto &current_sink = net.sinks[net.current_sink_index];
+
+	net.current_bounding_box.xmin = std::min(net.current_bounding_box.xmin, current_sink.previous_bounding_box.xmin);
+	net.current_bounding_box.ymin = std::min(net.current_bounding_box.ymin, current_sink.previous_bounding_box.ymin);
+	net.current_bounding_box.xmax = std::max(net.current_bounding_box.xmax, current_sink.previous_bounding_box.xmax);
+	net.current_bounding_box.ymax = std::max(net.current_bounding_box.ymax, current_sink.previous_bounding_box.ymax);
 }
 
 void set_to_next_sink(net_t &net, route_tree_t &rt, const RRGraph &g, float astar_fac)
 {
-	net.previous_sink_index = net.current_sink_index;
-	net.previous_source = net.current_source;
-	net.previous_bounding_box = get_bounding_box(net.previous_source, net.sinks[net.previous_sink_index]);
+	/*net.previous_sink_index = net.current_sink_index;*/
+	/*net.previous_source = net.current_source;*/
+	/*net.previous_bounding_box = get_bounding_box(net.previous_source, net.sinks[net.previous_sink_index]);*/
+
+	assert(net.current_sink_index >= 0 && net.current_sink_index < net.sinks.size());
+	net.sinks[net.current_sink_index].previous_bounding_box = net.current_bounding_box;
 
 	net.current_sink_index++;
 	if (net.current_sink_index >= net.sinks.size()) {
@@ -1694,7 +1746,7 @@ void set_to_next_sink(net_t &net, route_tree_t &rt, const RRGraph &g, float asta
 
 	net.current_bounding_box = get_bounding_box(net.current_source, net.sinks[net.current_sink_index]);
 
-	adjust_bounding_box(net);
+	/*adjust_bounding_box(net);*/
 }
 
 void reset_current_source_sink(net_t &net)
@@ -1790,11 +1842,13 @@ bool partitioning_route(t_router_opts *opts)
 {
 	const int max_iter = 50;
 
+	init_logging();
+
+	test_scheduler();
+
 	test_rtree();
 
 	test_graph();
-
-	init_logging();
 
 	RRGraph g;
 	init_graph(g);
@@ -1886,10 +1940,17 @@ bool partitioning_route(t_router_opts *opts)
 			}
 		}
 		vector<vector<const net_t *>> scheduled_nets_at_time;
+		if (iter > 0) {
+			for (auto &net : nets_to_route) {
+				adjust_bounding_box(*net);
+			}
+		}
 		schedule_nets_fast(nets_to_route, scheduled_nets_at_time);
 
 		schedule_timer.stop();
 		nanosecond_type schedule_time = schedule_timer.elapsed().wall;
+
+		zlog_info(delta_log, "Average concurrency: %g\n", (float)nets_to_route.size()/scheduled_nets_at_time.size());
 
 		zlog_level(delta_log, ROUTER_V3, "-- Start concurrency stats --\n");
 		int temp = 0;
@@ -1923,7 +1984,7 @@ bool partitioning_route(t_router_opts *opts)
 						/*trace_rip_up_net(traces[net->local_id], g, params.pres_fac);*/
 					/*}*/
 					trace_rip_up_segment(traces[net->local_id], g, net->sinks[net->current_sink_index].rr_node, params.pres_fac);
-					/*printf("Net: %d\n", virtual_net.vpr_id);*/
+					printf("Net: %d\n", virtual_net.vpr_id);
 					route_net(g, virtual_net, params, state, route_trees[net->local_id], traces[net->local_id], net_timing[net->vpr_id], &perf);
 					/*route_tree_merge(route_trees[net->id][0], route_trees[net->id][virtual_net.sinks[0].id]);*/
 					++num_nets_routed;
@@ -1935,8 +1996,8 @@ bool partitioning_route(t_router_opts *opts)
 			}
 			assert(num_nets_routed == nets_to_route.size());
 
-			for (auto &net : nets) {
-				set_to_next_sink(net, route_trees[net.local_id], g, params.astar_fac);
+			for (auto &net : nets_to_route) {
+				set_to_next_sink(*net, route_trees[net->local_id], g, params.astar_fac);
 			}
 
 			route_timer.stop();
@@ -1956,6 +2017,11 @@ bool partitioning_route(t_router_opts *opts)
 				}
 			}
 			scheduled_nets_at_time.clear();
+			if (iter > 0) {
+				for (auto &net : nets_to_route) {
+					adjust_bounding_box(*net);
+				}
+			}
 			schedule_nets_fast(nets_to_route, scheduled_nets_at_time);
 
 			schedule_timer.stop();
