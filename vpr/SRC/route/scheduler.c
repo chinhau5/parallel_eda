@@ -19,6 +19,8 @@ typedef std::pair<box, const net_t *> value;
 /* TODO: check whether nets are global before routing */
 using namespace boost::timer;
 
+void sprintf_rr_node(int rr_node, char *buffer);
+
 void verify_rtree_overlap(vector<net_t *> &nets)
 {
 	vector<vector<const net_t *>> overlap(nets.size());
@@ -190,9 +192,67 @@ void schedule_nets_ind(vector<net_t *> &nets, vector<vector<const net_t *>> &net
 	}
 }
 
+void create_simple_nets(vector<net_t> &nets) 
+{
+	/*for (const auto &net) {*/
+	/*}*/
+}
+
+void schedule_nets_bounding_box(vector<net_t *> &nets, vector<pair<sink_t *, net_t *>> &scheduled_sinks)
+{
+	cpu_timer timer;
+	timer.start();
+
+	vector<pair<sink_t *, net_t *>> sinks;
+	for (auto &net : nets) {
+		int num_sinks = 0;
+		for (auto &sink : net->sinks) {
+			assert(sink.id < net->sink_routed.size() && sink.id >= 0);
+			if (!net->sink_routed[sink.id]) {
+				sinks.push_back(make_pair(&sink, net));
+				++num_sinks;
+			}
+		}
+		assert(num_sinks > 0);
+	}
+
+	std::sort(sinks.begin(), sinks.end(), [] (const pair<sink_t *, net_t *> &a, const pair<sink_t *, net_t *> &b) -> bool {
+			return get_bounding_box_area(a.first->current_bounding_box) > get_bounding_box_area(b.first->current_bounding_box);
+			});
 
 
+	extern zlog_category_t *schedule_log;
+	zlog_debug(schedule_log, "Largest %d sinks:\n", std::min(20, (int)sinks.size()));
+	for (int i = 0; i < std::min(20, (int)sinks.size()); ++i) {
+		char source[256];
+		char sink[256];
+		sprintf_rr_node(sinks[i].first->source.rr_node, source);
+		sprintf_rr_node(sinks[i].first->rr_node, sink);
+		zlog_debug(schedule_log, "Net %d Source: %s Sink: %s BB area: %d\n", sinks[i].second->vpr_id, source, sink, get_bounding_box_area(sinks[i].first->current_bounding_box));
+	}
 
+	/*printf("Num overlapping_nets:\n");*/
+	/*for (const auto &net : nets) {*/
+		/*printf("Net %d: %d\n", net->current_local_id, net->overlapping_nets_vec.size());*/
+	/*}*/
 
+	/*vector<bool> scheduled_sinks(sinks.size(), false);*/
 
+	for (int i = 0; i < sinks.size(); ++i) {
+		bool overlap_scheduled_sinks = any_of(scheduled_sinks.begin(), scheduled_sinks.end(), [&i, &sinks] (const pair<sink_t *, net_t *> &scheduled_sink) -> bool {
+				return box_overlap(sinks[i].first->current_bounding_box, scheduled_sink.first->current_bounding_box);
+				});
 
+		if (!overlap_scheduled_sinks) {
+			scheduled_sinks.push_back(sinks[i]);
+			net_t *net;
+			sink_t *sink;
+			std::tie(sink, net)	= sinks[i];
+			net->current_sink = sink;
+		}
+	}
+	timer.stop();
+	cpu_times elapsed = timer.elapsed();
+	extern zlog_category_t *delta_log;
+	zlog_info(delta_log, "Scheduling took %g\n", elapsed.wall / 1e9);
+}

@@ -42,6 +42,8 @@ typedef struct sink_t {
 	int rr_node;
 	int x;
 	int y;
+	source_t source;
+	bounding_box_t current_bounding_box;
 	bounding_box_t previous_bounding_box;
 } sink_t;
 
@@ -58,7 +60,10 @@ typedef struct net_t {
 	//source_t previous_source;
 	/*bool previous_source_valid;*/
 	std::vector<sink_t> sinks;
+	int num_sinks_routed;
 	int current_sink_index;
+	sink_t *current_sink;
+	vector<bool> sink_routed;
 	//int previous_sink_index;
 	/*bool previous_sink_valid;*/
 	bounding_box_t current_bounding_box;
@@ -75,8 +80,14 @@ typedef struct net_t {
 	int schedule;
 } net_t;
 
+//typedef struct simple_net_t {
+	//const net_t *parent_net;
+	//source_t source
+//} 
+
 typedef struct rr_node_property_t {
 	t_rr_type type;
+	bool inc_direction;
 	int xlow;
 	int ylow;
 	int xhigh;

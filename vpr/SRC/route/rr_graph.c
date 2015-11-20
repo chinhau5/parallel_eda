@@ -2013,6 +2013,8 @@ void dump_rr_graph(INP const char *file_name) {
 	fclose(fp);
 }
 
+#define PRINT_RR_NODE
+
 void sprintf_rr_node(int inode, char *buffer)
 {
 #ifdef PRINT_RR_NODE

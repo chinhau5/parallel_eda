@@ -147,4 +147,6 @@ void schedule_nets_ind(vector<net_t *> &nets, vector<vector<const net_t *>> &net
 
 void verify_ind(const vector<const net_t *> &nets);
 
+void schedule_nets_bounding_box(vector<net_t *> &nets, vector<pair<sink_t *, net_t *>> &scheduled_sinks);
+
 #endif
