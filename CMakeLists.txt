@@ -16,7 +16,7 @@ link_directories(
 add_compile_options(
 	-D TBB_USE_THREADING_TOOLS=1
 	-std=c++11
-	-g -O0
+	-g -O2
 	#-Bdynamic
 	-Wall
 	)

@@ -49,10 +49,16 @@ typedef struct sink_t {
 
 bool operator<(const sink_t &a, const sink_t &b);
 
+typedef struct sink_schedule_t {
+	bounding_box_t current_bounding_box;
+	bounding_box_t previous_bounding_box;
+} sink_schedule_t;
+
 typedef struct net_t {
 	int vpr_id;
 	int local_id;
 	int current_local_id;
+	int bb_area_rank;
 	/*bool global;*/
 	bool has_sink;
 	source_t source;
@@ -155,10 +161,11 @@ typedef struct route_tree_t {
 typedef std::vector<int> Segment;
 
 typedef struct trace_t {
-	int first_sink_rr_node;
+	//int first_sink_rr_node;
 	std::map<int, Segment> segments;
 	/* for debugging */
 	//int num_sources;
+	std::vector<const Segment *> paths_starting_with_source;
 	std::set<int> existing_nodes;
 } trace_t;
 

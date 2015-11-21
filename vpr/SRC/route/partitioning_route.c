@@ -428,18 +428,18 @@ RouteTreeEdge &route_tree_add_edge_between_rr_node(route_tree_t &rt, int rr_node
 	/*int rt_node_b = route_tree_add_rr_node(rt, rr_node_b);*/
 	/*assert(rt_node_a < num_vertices(rt.graph));*/
 	/*assert(rt_node_b < num_vertices(rt.graph));*/
-	RouteTreeNode &rt_node_a = *route_tree_get_rt_node(rt, rr_node_a);
-	RouteTreeNode &rt_node_b = *route_tree_get_rt_node(rt, rr_node_b);
+	RouteTreeNode *rt_node_a = route_tree_get_rt_node(rt, rr_node_a);
+	RouteTreeNode *rt_node_b = route_tree_get_rt_node(rt, rr_node_b);
 
-	if (get_edge(rt.graph, rt_node_a, rt_node_b)) {
+	if (get_edge(rt.graph, *rt_node_a, *rt_node_b)) {
 		char buffer_a[256];
 		char buffer_b[256];
-		sprintf_rr_node(rt_node_a.properties.rr_node, buffer_a);
-		sprintf_rr_node(rt_node_b.properties.rr_node, buffer_b);
+		sprintf_rr_node(rt_node_a->properties.rr_node, buffer_a);
+		sprintf_rr_node(rt_node_b->properties.rr_node, buffer_b);
 		zlog_error(delta_log, "Existing edge between %s and %s\n", buffer_a, buffer_b);
 		assert(false);
 	}
-	return add_edge(rt.graph, rt_node_a, rt_node_b);
+	return add_edge(rt.graph, *rt_node_a, *rt_node_b);
 }
 
 void route_tree_merge(route_tree_t &merged_rt, const route_tree_t &other_rt)
@@ -462,6 +462,8 @@ void route_tree_merge(route_tree_t &merged_rt, const route_tree_t &other_rt)
 
 void route_tree_add_to_heap_internal(const route_tree_t &rt, const RouteTreeNode *rt_node, const RRGraph &g, const RRNode &target, float criticality_fac, float astar_fac, const bounding_box_t &current_bounding_box, std::priority_queue<route_state_t> &heap, perf_t *perf)
 {
+	assert(rt_node->properties.valid);
+
 	const auto &prop = get_vertex(g, rt_node->properties.rr_node).properties;
 
 	char buffer[256];
@@ -472,7 +474,7 @@ void route_tree_add_to_heap_internal(const route_tree_t &rt, const RouteTreeNode
 			|| prop.yhigh < current_bounding_box.ymin
 			|| prop.ylow > current_bounding_box.ymax) {
 		zlog_level(delta_log, ROUTER_V2, "Existing route tree node %s outside of current bounding box\n", buffer);
-	} else if (rt_node->properties.valid && rt_node->properties.reexpand) {
+	} else if (rt_node->properties.reexpand) {
 		route_state_t item;
 
 		item.rr_node = rt_node->properties.rr_node;
@@ -507,53 +509,102 @@ void route_tree_add_to_heap(const route_tree_t &rt, const RRGraph &g, const RRNo
 void trace_init(trace_t &trace)
 {
 	/*trace.num_sources = 0;*/
-	trace.first_sink_rr_node = -1;
+	/*trace.first_sink_rr_node = -1;*/
 }
 
-const Segment &trace_add_path(trace_t &trace, const RRGraph &g, const route_state_t *state, int sink_rr_node)
+bool trace_empty(const trace_t &trace)
+{
+	return trace.existing_nodes.empty() && trace.paths_starting_with_source.empty() && trace.segments.empty();
+}
+
+const Segment &trace_add_path(trace_t &trace, const RRGraph &g, const route_state_t *state, int sink_rr_node, int vpr_net_id)
 {
 	assert(trace.segments.find(sink_rr_node) == trace.segments.end());
 
 	auto &new_segment = trace.segments.insert(make_pair(sink_rr_node, Segment())).first->second;
 
 	char buffer[256];
+	int prev_rr_node = -1;
 	int current_rr_node = sink_rr_node;
 	while (state[current_rr_node].prev_edge) {
 		if (trace.existing_nodes.find(current_rr_node) != trace.existing_nodes.end()) {
 			sprintf_rr_node(current_rr_node, buffer);
-			zlog_error(delta_log, "Error: Trying to add existing node %s to trace\n", buffer);
+			char prev_s[256];
+			sprintf_rr_node(prev_rr_node, prev_s);
+			zlog_warn(delta_log, "Warning: Trying to add existing node %s to trace. Stopping traceback\n", buffer);
 			/*assert(false);*/
+			/*current_rr_node = prev_rr_node;*/
+			break;
 		}
+
 		new_segment.push_back(current_rr_node);
 		trace.existing_nodes.insert(current_rr_node);
 
 		sprintf_rr_node(current_rr_node, buffer);
-		zlog_level(delta_log, ROUTER_V2, "Trace: %s\n", buffer);
+		zlog_level(delta_log, ROUTER_V2, "Net %d trace: %s\n", vpr_net_id, buffer);
 
-		int prev_rr_node = id(get_source(g, *state[current_rr_node].prev_edge));
-		current_rr_node = prev_rr_node;
+		int parent_rr_node = id(get_source(g, *state[current_rr_node].prev_edge));
+		prev_rr_node = current_rr_node;
+		current_rr_node = parent_rr_node;
 	}
 
+	/* we're checking for various conditions: */
 	const RRNode &first_node = get_vertex(g, current_rr_node);
 	sprintf_rr_node(current_rr_node, buffer);
-	if (trace.first_sink_rr_node == -1) {
-		if (first_node.properties.type != SOURCE) {
-			zlog_error(delta_log, "Error: First path started with %s instead of a SOURCE\n", buffer);
-			assert(false);
-		}
+	if (first_node.properties.type == SOURCE) {
+		if (trace.paths_starting_with_source.size() == 0) {
+			/* this is a first segment */
+			/*assert(trace.segments.size() == 1);*/ /* this is not true after the first iteration because we're ripping up segment by segment */
+			assert(trace.existing_nodes.find(current_rr_node) == trace.existing_nodes.end());
 
-		if (trace.existing_nodes.find(current_rr_node) != trace.existing_nodes.end()) {
-			zlog_error(delta_log, "Error: Trying to add existing node %s prev_edge %d to trace\n", buffer, state[current_rr_node].prev_edge ? 1 : 0);
-			/*assert(false);*/
-		}
-		zlog_level(delta_log, ROUTER_V2, "First segment trace: %s\n", buffer);
+			zlog_level(delta_log, ROUTER_V2, "Net %d first segment trace: %s\n", vpr_net_id, buffer);
 
-		new_segment.push_back(current_rr_node);
-		trace.existing_nodes.insert(current_rr_node);
-		trace.first_sink_rr_node = sink_rr_node;
+			/* shouldn't reach this case actually because paths_starting_with_source is empty */
+			/*if (trace.existing_nodes.find(current_rr_node) != trace.existing_nodes.end()) {*/
+				/*zlog_error(delta_log, "Error: Trying to add existing node %s prev_edge %d to trace\n", buffer, state[current_rr_node].prev_edge ? 1 : 0);*/
+				/*assert(false);*/
+			/*}*/
+
+			new_segment.push_back(current_rr_node);
+			trace.existing_nodes.insert(current_rr_node);
+			trace.paths_starting_with_source.push_back(&new_segment);
+		} else { /* we have existing paths that start with SOURCE */
+			if (trace.existing_nodes.find(current_rr_node) != trace.existing_nodes.end()) {
+				/* this is an existing SOURCE
+				 * we need to check whether it has capacity of > 1
+				 * >1 : no error 
+				 * <=1 : error */
+				assert(any_of(trace.paths_starting_with_source.begin(), trace.paths_starting_with_source.end(),
+							[&current_rr_node] (const Segment *path) -> bool {
+							return path->back() == current_rr_node;
+							}));
+
+				if (first_node.properties.capacity > 1) {
+					zlog_info(delta_log, "Reconnecting to existing %s\n", buffer);
+					new_segment.push_back(current_rr_node);
+					trace.paths_starting_with_source.push_back(&new_segment);
+				} else {
+					zlog_error(delta_log, "Error: Trying to reconnect to %s with only capacity of %d\n", buffer, first_node.properties.capacity);
+					assert(false);
+				}
+			} else {
+				/* this is a new SOURCE 
+				 * error because we now have mutliple sources for the net */
+				zlog_error(delta_log, "Error: Trying to start the trace with another source %s when existing sources ", buffer);
+				for (const auto &p : trace.paths_starting_with_source) {
+					char old_source[256];
+					sprintf_rr_node(p->back(), old_source);
+					zlog_error(delta_log, "%s ", buffer);
+				}
+				zlog_error(delta_log, "exist\n");
+				assert(false);
+			}
+		}
 	} else {
-		if (first_node.properties.type == SOURCE && trace.first_sink_rr_node != sink_rr_node) {
-			zlog_error(delta_log, "Error: Trying to start the trace with another source %s", buffer);
+		assert(first_node.properties.type == CHANX || first_node.properties.type == CHANY || first_node.properties.type == OPIN);
+
+		if (trace.segments.size() == 1) {
+			zlog_error(delta_log, "Error: First path started with %s instead of a SOURCE\n", buffer);
 			assert(false);
 		}
 	}
@@ -568,6 +619,22 @@ const Segment &trace_add_path(trace_t &trace, const RRGraph &g, const route_stat
 	/*}*/
 
 	return new_segment;
+}
+
+void trace_stats(trace_t &trace, const RRGraph &g)
+{
+	for (const auto &item : trace.segments) {
+		const Segment &segment = item.second;
+		int sink_rr_node = item.first;
+
+		int num_overused_nodes = 0;
+		for (const auto &rr_node : segment) {
+			auto &v = get_vertex(g, rr_node);
+			if (v.properties.occ > v.properties.capacity) {	
+
+			}
+		}
+	}
 }
 
 /*const vector<int> &route_tree_add_path(route_tree_t &rt, const RRGraph &g, const route_state_t *state, pair<vector<int>::const_iterator, vector<int>::const_iterator> &path)*/
@@ -618,7 +685,85 @@ const Segment &trace_add_path(trace_t &trace, const RRGraph &g, const route_stat
 	/*return iter->second;*/
 /*}*/
 
-void route_tree_add_path(route_tree_t &rt, const RRGraph &g, const route_state_t *state, int sink_rr_node)
+void route_tree_add_path(route_tree_t &rt, const RRGraph &g, const route_state_t *state, const vector<int> &rr_nodes, int vpr_net_id)
+{
+	char p[256];
+	char c[256];
+
+	for (int i = 0; i < rr_nodes.size()-1; ++i) {
+		int current_rr_node = rr_nodes[i];
+		RouteTreeNode *current_rt_node;
+		bool added;
+
+		std::tie(current_rt_node, added) = route_tree_add_rr_node(rt, current_rr_node);
+		if (!added) {
+			if (current_rt_node->properties.upstream_R != state[current_rr_node].upstream_R ||
+					current_rt_node->properties.delay != state[current_rr_node].delay) {
+				zlog_error(delta_log, "Error: Adding a new RT node with different properties [old_upstream_R: %g new_upstream_R: %g] [old_delay: %g new_delay: %g]\n", current_rt_node->properties.upstream_R, state[current_rr_node].upstream_R, current_rt_node->properties.delay, state[current_rr_node].delay); 
+				assert(false);
+			}
+		}
+		current_rt_node->properties.reexpand = get_vertex(g, current_rr_node).properties.type != IPIN;
+		current_rt_node->properties.rr_node = current_rr_node;
+		current_rt_node->properties.prev_edge = state[current_rr_node].prev_edge;
+		current_rt_node->properties.upstream_R = state[current_rr_node].upstream_R;
+		current_rt_node->properties.delay = state[current_rr_node].delay;
+
+		const RRNode &parent = get_source(g, *state[current_rr_node].prev_edge);
+		int parent_rr_node = id(parent);
+		assert(parent_rr_node == rr_nodes[i+1]);
+
+		RouteTreeNode *parent_rt_node;
+		std::tie(parent_rt_node, added) = route_tree_add_rr_node(rt, parent_rr_node);
+		if (!added) {
+			if (parent_rt_node->properties.upstream_R != state[parent_rr_node].upstream_R ||
+					parent_rt_node->properties.delay != state[parent_rr_node].delay) {
+				zlog_error(delta_log, "Error: Adding a new RT node with different properties [old_upstream_R: %g new_upstream_R: %g] [old_delay: %g new_delay: %g]\n", parent_rt_node->properties.upstream_R, state[parent_rr_node].upstream_R, parent_rt_node->properties.delay, state[parent_rr_node].delay); 
+				assert(false);
+			}
+		}
+
+		auto &e = route_tree_add_edge_between_rr_node(rt, parent_rr_node, current_rr_node);
+		e.properties.rr_edge = state[current_rr_node].prev_edge;
+
+		sprintf_rr_node(parent_rr_node, p);
+		sprintf_rr_node(current_rr_node, c);
+		zlog_level(delta_log, ROUTER_V2, "Net %d route tree edge: %s -> %s\n", vpr_net_id, p, c);
+
+		parent_rt_node->properties.reexpand = parent.properties.type != IPIN;
+		parent_rt_node->properties.rr_node = parent_rr_node;
+		if (i+1 == rr_nodes.size()-1) {
+			if (parent.properties.type == SOURCE) {
+				parent_rt_node->properties.prev_edge = nullptr;
+			} else {
+				const RREdge *edge_to_connection = state[parent_rr_node].prev_edge;
+				int connection_rr_node = id(get_source(g, *edge_to_connection));
+				if (state[connection_rr_node].prev_edge != nullptr) {
+					sprintf_rr_node(connection_rr_node, c);
+					sprintf_rr_node(id(get_source(g, *state[connection_rr_node].prev_edge)), p);
+					zlog_warn(delta_log, "Warning: Connection %s is not from existing route tree because we found a shorter path to it via %s\n", c, p);
+				}
+
+				auto &e = route_tree_add_edge_between_rr_node(rt, connection_rr_node, parent_rr_node);
+				e.properties.rr_edge = edge_to_connection;
+
+				parent_rt_node->properties.prev_edge = edge_to_connection;
+
+				sprintf_rr_node(connection_rr_node, p);
+				sprintf_rr_node(parent_rr_node, c);
+
+				zlog_level(delta_log, ROUTER_V2, "Net %d connection route tree edge: %s -> %s\n", vpr_net_id, p, c);
+			}
+		} else {
+			/* will be updated next iteration */
+			parent_rt_node->properties.prev_edge = nullptr;
+		}
+		parent_rt_node->properties.upstream_R = state[parent_rr_node].upstream_R;
+		parent_rt_node->properties.delay = state[parent_rr_node].delay;
+	}
+}
+
+void route_tree_add_path(route_tree_t &rt, const RRGraph &g, const route_state_t *state, int sink_rr_node, int vpr_net_id)
 {
 	int current_rr_node = sink_rr_node;
 	int new_branch = -1;
@@ -632,7 +777,7 @@ void route_tree_add_path(route_tree_t &rt, const RRGraph &g, const route_state_t
 		char c[256];
 		sprintf_rr_node(prev_rr_node, p);
 		sprintf_rr_node(current_rr_node, c);
-		zlog_level(delta_log, ROUTER_V2, "Route tree edge: %s -> %s\n", p, c);
+		zlog_level(delta_log, ROUTER_V2, "Net %d route tree edge: %s -> %s\n", vpr_net_id, p, c);
 
 		RouteTreeNode *prev_rt_node;
 	   	bool added;
@@ -759,6 +904,8 @@ void update_one_cost(RRGraph &g, const vector<int>::const_iterator &rr_nodes_beg
 
 void update_one_cost(RRGraph &g, route_tree_t &rt, const RouteTreeNode &node, int delta, float pres_fac)
 {
+	assert(node.properties.valid);
+
 	RRNode &rr_node = get_vertex(g, node.properties.rr_node);
 
 	update_one_cost_internal(rr_node, delta, pres_fac);
@@ -824,6 +971,8 @@ bool route_tree_empty(const route_tree_t &rt)
 
 void check_net_route(const route_tree_t &rt, const RouteTreeNode &node, RRGraph &g, vector<int> &overused_rr_node)
 {
+	assert(node.properties.valid);
+
 	const auto &rr_node = get_vertex(g, node.properties.rr_node);
 
 	if (rr_node.properties.occ > rr_node.properties.capacity) {
@@ -838,6 +987,8 @@ void check_net_route(const route_tree_t &rt, const RouteTreeNode &node, RRGraph 
 
 void check_route_tree_internal(const route_tree_t &rt, const RouteTreeNode &node, RRGraph &g, vector<int> &visited_sinks, vector<int> &visited_nodes)
 {
+	assert(node.properties.valid);
+
 	auto &rr_node = get_vertex(g, node.properties.rr_node);
 	char buffer[256];
 	if (rr_node.properties.type == SINK) {
@@ -872,17 +1023,47 @@ void check_route_tree(const route_tree_t &rt, const net_t &net, RRGraph &g)
 	sort(sinks.begin(), sinks.end());
 	
 	if (visited_sinks != sinks) {
-		zlog_error(delta_log, "Error: Visited only %d sinks out of %d sinks of net %d\n", visited_sinks.size(), sinks.size(), net.vpr_id);
-		vector<int> difference;
+		zlog_error(delta_log, "Error: Visited %d sinks out of %d sinks of net %d\n", visited_sinks.size(), sinks.size(), net.vpr_id);
+		vector<int> only_in_required;
+		vector<int> only_in_visited;
 		vector<int> sym_difference;
-		set_difference(sinks.begin(), sinks.end(), visited_sinks.begin(), visited_sinks.end(), back_inserter(difference));
-		set_symmetric_difference(sinks.begin(), sinks.end(), visited_sinks.begin(), visited_sinks.end(), back_inserter(sym_difference));
-		assert(difference == sym_difference);
-		zlog_error(delta_log, "Difference: ");
-		for (const int d : difference) {
+		set_difference(sinks.begin(), sinks.end(), visited_sinks.begin(), visited_sinks.end(), back_inserter(only_in_required));
+		set_difference(visited_sinks.begin(), visited_sinks.end(), sinks.begin(), sinks.end(), back_inserter(only_in_visited));
+		/*set_symmetric_difference(sinks.begin(), sinks.end(), visited_sinks.begin(), visited_sinks.end(), back_inserter(sym_difference));*/
+		/*assert(difference == sym_difference);*/
+
+		write_graph(rt.graph, "error.dot",
+				[] (const RouteTreeNode &rt_node) -> string {
+					char buffer[256];
+					sprintf_rr_node(rt_node.properties.rr_node, buffer);
+					return buffer;
+				},
+				[] (const RouteTreeEdge &rt_edge) -> string {
+					return "";
+				},
+				[] (const RouteTreeNode &rt_node) -> bool {
+					return !rt_node.properties.valid;
+				});
+
+
+		zlog_error(delta_log, "Only in required: ");
+		for (const int d : only_in_required) {
 			zlog_error(delta_log, "%d ", d);
 		}
 		zlog_error(delta_log, "\n");
+
+		zlog_error(delta_log, "Only in visited: ");
+		for (const int d : only_in_visited) {
+			zlog_error(delta_log, "%d ", d);
+		}
+		zlog_error(delta_log, "\n");
+
+		zlog_error(delta_log, "Visited sinks: ");
+		for (const int d : visited_sinks) {
+			zlog_error(delta_log, "%d ", d);
+		}
+		zlog_error(delta_log, "\n");
+
 		assert(false);
 	}
 }
@@ -931,6 +1112,11 @@ void route_net(RRGraph &g, net_t &net, const route_parameters_t &params, route_s
 				modified.push_back(item.rr_node);
 				found_sink = true;
 			} else if (item.known_cost < state[item.rr_node].known_cost && item.cost < state[item.rr_node].cost) {
+				/*if (route_tree_get_rt_node(rt, item.rr_node)) {*/
+					/*sprintf_rr_node(item.rr_node, buffer);*/
+					/*zlog_warn(delta_log, "Warning: Found a lower cost path to existing route tree node %s\n", buffer);*/
+					/*assert(false);*/
+				/*}*/
 				const auto &sink_vertex = get_vertex(g, sink.rr_node);
 
 				state[item.rr_node] = item;
@@ -971,7 +1157,7 @@ void route_net(RRGraph &g, net_t &net, const route_parameters_t &params, route_s
 
 		assert(found_sink);
 
-		const auto &new_path = trace_add_path(trace, g, state, sink.rr_node);
+		const auto &new_path = trace_add_path(trace, g, state, sink.rr_node, net.vpr_id);
 		/* new_path.second-1 because we do not update the last node because it's the node in existing route tree (which was already updated previously */
 		/*int new_path_first_rr_node = *(new_path.end()-1);*/
 		/* if the first node is a connection to existing route, don't update its cost again */
@@ -984,7 +1170,7 @@ void route_net(RRGraph &g, net_t &net, const route_parameters_t &params, route_s
 
 		/* important to update route tree only after updating cost because the previous check relies on whether the
 		 * first node is already in the route tree */
-		route_tree_add_path(rt, g, state, sink.rr_node);
+		route_tree_add_path(rt, g, state, new_path, net.vpr_id);
 
 		net_timing.delay[sink.id+1] = route_tree_get_rt_node(rt, sink.rr_node)->properties.delay;
 
@@ -1110,7 +1296,7 @@ bounding_box_t get_bounding_box(const PointA &a, const PointB &b)
 	bb.xmin -= 1;
 	bb.ymin -= 1;
 
-	const int bb_factor = 3;
+	const int bb_factor = 2;
 
 	extern int nx;
 	extern int ny;
@@ -1225,7 +1411,7 @@ void init_nets(vector<net_t> &nets, vector<net_t> &global_nets)
 		std::sort(net.sinks.begin(), net.sinks.end(), [&net, &i] (const sink_t &a, const sink_t &b) -> bool {
 				int a_to_src_dist = abs(a.x - net.source.x) + abs(a.y - net.source.y);
 				int b_to_src_dist = abs(b.x - net.source.x) + abs(b.y - net.source.y);
-				return a_to_src_dist < b_to_src_dist;
+				return a_to_src_dist > b_to_src_dist;
 				});
 
 		net.current_sink_index = 0;
@@ -1638,7 +1824,8 @@ void schedule_nets_fast(vector<net_t *> &nets, vector<vector<const net_t *>> &ne
 	cpu_timer timer;
 	timer.start();
 
-	sort(nets.begin(), nets.end(), [] (const net_t *a, const net_t *b) { return a->non_overlapping_nets_vec.size() < b->non_overlapping_nets_vec.size(); });
+	/*sort(nets.begin(), nets.end(), [] (const net_t *a, const net_t *b) { return a->non_overlapping_nets_vec.size() < b->non_overlapping_nets_vec.size(); });*/
+	sort(nets.begin(), nets.end(), [] (const net_t *a, const net_t *b) { return get_bounding_box_area(a->current_bounding_box) > get_bounding_box_area(b->current_bounding_box); });
 
 	/*printf("Num overlapping_nets:\n");*/
 	/*for (const auto &net : nets) {*/
@@ -1833,7 +2020,7 @@ void update_sink_bounding_boxes(net_t &net, route_tree_t &rt, const RRGraph &g, 
 	}
 }
 
-void set_to_next_sink(net_t &net, route_tree_t &rt, const RRGraph &g, float astar_fac)
+void set_to_next_sink(net_t &net, route_tree_t &rt, const RRGraph &g, float astar_fac, perf_t &perf)
 {
 	/*net.previous_sink_index = net.current_sink_index;*/
 	/*net.previous_source = net.current_source;*/
@@ -1863,19 +2050,41 @@ void set_to_next_sink(net_t &net, route_tree_t &rt, const RRGraph &g, float asta
 	fpga_bounding_box.xmax = nx+2;
 	fpga_bounding_box.ymin = 0;
 	fpga_bounding_box.ymax = ny+2;
-	const sink_t &target = net.sinks[net.current_sink_index];
-	route_tree_add_to_heap(rt, g, get_vertex(g, target.rr_node), target.criticality_fac, astar_fac, fpga_bounding_box, heap, NULL);
-	net.current_source.rr_node = heap.top().rr_node;
-	assert(get_vertex(g, net.current_source.rr_node).properties.type == SOURCE);
-	extern struct s_net *clb_net;
-	extern struct s_block *block;
-	int b = clb_net[net.vpr_id].node_block[0];
-	int p = clb_net[net.vpr_id].node_block_pin[0];
+	const auto &sink = net.sinks[net.current_sink_index];
+	route_tree_add_to_heap(rt, g, get_vertex(g, sink.rr_node), sink.criticality_fac, astar_fac, fpga_bounding_box, heap, &perf);
+	const RRNode *current_rr_node = &get_vertex(g, heap.top().rr_node);
+	while (current_rr_node->properties.type != CHANX && current_rr_node->properties.type != CHANY) {
+		heap.pop();
+		current_rr_node = &get_vertex(g, heap.top().rr_node);
+	}
+	source_t new_source;
+	if (current_rr_node->properties.inc_direction) {
+		new_source.x = current_rr_node->properties.xlow; 
+		new_source.y = current_rr_node->properties.ylow;  
+	} else {
+		new_source.x = current_rr_node->properties.xhigh; 
+		new_source.y = current_rr_node->properties.yhigh;  
+	}
+	/*source_t new_source;*/
+	/*int min_distance = std::numeric_limits<int>::max();*/
+	/*for_all_vertices(rt.graph, [] (const RouteTreeNode &v) -> void {*/
+			/*if (v.properties.valid) {*/
+			/*v.properties.xlow*/
+			/*}*/
+			/*});*/
+	/*const sink_t &target = net.sinks[net.current_sink_index];*/
+	/*route_tree_add_to_heap(rt, g, get_vertex(g, target.rr_node), target.criticality_fac, astar_fac, fpga_bounding_box, heap, NULL);*/
+	/*net.current_source.rr_node = heap.top().rr_node;*/
+	/*assert(get_vertex(g, net.current_source.rr_node).properties.type == SOURCE);*/
+	/*extern struct s_net *clb_net;*/
+	/*extern struct s_block *block;*/
+	/*int b = clb_net[net.vpr_id].node_block[0];*/
+	/*int p = clb_net[net.vpr_id].node_block_pin[0];*/
 	/* TODO: fix the code below, the calculation of coordinates is wrong */
-	net.current_source.x = block[b].x;
-	net.current_source.y = block[b].y + block[b].type->pin_height[p];
+	/*net.current_source.x = block[b].x;*/
+	/*net.current_source.y = block[b].y + block[b].type->pin_height[p];*/
 
-	net.current_bounding_box = get_bounding_box(net.current_source, net.sinks[net.current_sink_index]);
+	net.current_bounding_box = get_bounding_box(new_source, net.sinks[net.current_sink_index]);
 
 	/*adjust_bounding_box(net);*/
 }
@@ -1928,7 +2137,8 @@ void trace_rip_up_net(trace_t &trace, RRGraph &g, float pres_fac)
 		update_one_cost(g, segment.second.begin(), segment.second.end(), -1, pres_fac);
 	}
 	trace.segments.clear();
-	trace.first_sink_rr_node = -1;
+	/*trace.first_sink_rr_node = -1;*/
+	trace.paths_starting_with_source.clear();
 	trace.existing_nodes.clear();
 }
 
@@ -1956,14 +2166,19 @@ void trace_rip_up_segment(trace_t &trace, RRGraph &g, int sink_rr_node, float pr
 			char buffer[256];
 			sprintf_rr_node(node, buffer);
 			zlog_level(delta_log, ROUTER_V2, "Ripping up node %s from the trace\n", buffer);
+			assert(trace.existing_nodes.find(node) != trace.existing_nodes.end());
 			trace.existing_nodes.erase(node);
 		}
 
-		trace.segments.erase(iter);
-
-		if (sink_rr_node == trace.first_sink_rr_node) {
-			trace.first_sink_rr_node = -1;
+		if (get_vertex(g, iter->second.back()).properties.type == SOURCE) {
+			auto ptr_iter = find_if(trace.paths_starting_with_source.begin(), trace.paths_starting_with_source.end(), [&sink_rr_node] (const Segment *path) {
+					return path->front() == sink_rr_node;
+					});
+			assert(ptr_iter != trace.paths_starting_with_source.end());
+			trace.paths_starting_with_source.erase(ptr_iter);
 		}
+
+		trace.segments.erase(iter);
 	}
 }
 
@@ -2003,6 +2218,19 @@ bool partitioning_route_bounding_box(t_router_opts *opts)
 	vector<net_t> nets;
 	vector<net_t> global_nets;
 	init_nets(nets, global_nets);
+
+	vector<net_t *> nets_ptr(nets.size());
+	for (int i = 0; i < nets.size(); ++i) {
+		nets_ptr[i] = &nets[i];
+	}
+	extern s_bb *route_bb;
+	sort(nets_ptr.begin(), nets_ptr.end(), [] (const net_t *a, const net_t *b) -> bool {
+			return get_bounding_box_area(route_bb[a->vpr_id]) > get_bounding_box_area(route_bb[b->vpr_id]);
+			});
+	int rank = 0;
+	for (auto &net : nets_ptr) {
+		net->bb_area_rank = rank++;
+	}
 
 	extern int nx;
 	extern int ny;
@@ -2214,7 +2442,7 @@ bool partitioning_route_bounding_box(t_router_opts *opts)
 			vector<int> overused_rr_node;
 			check_net_route(route_trees[net.local_id], get_vertex(route_trees[net.local_id].graph, route_trees[net.local_id].root), g, overused_rr_node);
 			if (!overused_rr_node.empty()) {
-				zlog_level(delta_log, ROUTER_V3, "Net %d overused nodes:\n", net.vpr_id);
+				zlog_level(delta_log, ROUTER_V3, "Net %d bb_rank %d overused nodes:\n", net.vpr_id, net.bb_area_rank);
 				for (const auto &item : overused_rr_node) {
 					zlog_level(delta_log, ROUTER_V3, "%d ", item);
 				}
@@ -2267,11 +2495,11 @@ bool partitioning_route(t_router_opts *opts)
 
 	init_logging();
 
-	test_scheduler();
+	/*test_scheduler();*/
 
-	test_rtree();
+	/*test_rtree();*/
 
-	test_graph();
+	/*test_graph();*/
 
 	RRGraph g;
 	init_graph(g);
@@ -2279,6 +2507,19 @@ bool partitioning_route(t_router_opts *opts)
 	vector<net_t> nets;
 	vector<net_t> global_nets;
 	init_nets(nets, global_nets);
+
+	vector<net_t *> nets_ptr(nets.size());
+	for (int i = 0; i < nets.size(); ++i) {
+		nets_ptr[i] = &nets[i];
+	}
+	extern s_bb *route_bb;
+	sort(nets_ptr.begin(), nets_ptr.end(), [] (const net_t *a, const net_t *b) -> bool {
+			return get_bounding_box_area(route_bb[a->vpr_id]) > get_bounding_box_area(route_bb[b->vpr_id]);
+			});
+	int rank = 0;
+	for (auto &net : nets_ptr) {
+		net->bb_area_rank = rank++;
+	}
 
 	extern int nx;
 	extern int ny;
@@ -2292,10 +2533,15 @@ bool partitioning_route(t_router_opts *opts)
 		route_tree_init(route_trees[i]);
 	}
 
+	vector<trace_t> prev_traces(nets.size());
 	vector<trace_t> traces(nets.size());
 	for (int i = 0; i < nets.size(); ++i) {
 		trace_init(traces[i]);
+		trace_init(prev_traces[i]);
 	}
+
+	vector<trace_t> *prev_traces_ptr = &prev_traces;
+	vector<trace_t> *current_traces_ptr = &traces;
 
 	route_state_t *state = new route_state_t[num_vertices(g)];
 
@@ -2368,7 +2614,7 @@ bool partitioning_route(t_router_opts *opts)
 				adjust_bounding_box(*net);
 			}
 		}
-		schedule_nets_num_sinks(nets_to_route, scheduled_nets_at_time);
+		schedule_nets_fast(nets_to_route, scheduled_nets_at_time);
 
 		schedule_timer.stop();
 		nanosecond_type schedule_time = schedule_timer.elapsed().wall;
@@ -2406,9 +2652,9 @@ bool partitioning_route(t_router_opts *opts)
 					/*if (time == 0) {*/
 						/*trace_rip_up_net(traces[net->local_id], g, params.pres_fac);*/
 					/*}*/
-					trace_rip_up_segment(traces[net->local_id], g, net->sinks[net->current_sink_index].rr_node, params.pres_fac);
+					trace_rip_up_segment((*prev_traces_ptr)[net->local_id], g, net->sinks[net->current_sink_index].rr_node, params.pres_fac);
 					/*printf("Net: %d\n", virtual_net.vpr_id);*/
-					route_net(g, virtual_net, params, state, route_trees[net->local_id], traces[net->local_id], net_timing[net->vpr_id], &perf);
+					route_net(g, virtual_net, params, state, route_trees[net->local_id], (*current_traces_ptr)[net->local_id], net_timing[net->vpr_id], &perf);
 					/*route_tree_merge(route_trees[net->id][0], route_trees[net->id][virtual_net.sinks[0].id]);*/
 					++num_nets_routed;
 				}
@@ -2420,7 +2666,7 @@ bool partitioning_route(t_router_opts *opts)
 			assert(num_nets_routed == nets_to_route.size());
 
 			for (auto &net : nets_to_route) {
-				set_to_next_sink(*net, route_trees[net->local_id], g, params.astar_fac);
+				set_to_next_sink(*net, route_trees[net->local_id], g, params.astar_fac, perf);
 			}
 
 			route_timer.stop();
@@ -2445,7 +2691,7 @@ bool partitioning_route(t_router_opts *opts)
 					adjust_bounding_box(*net);
 				}
 			}
-			schedule_nets_num_sinks(nets_to_route, scheduled_nets_at_time);
+			schedule_nets_fast(nets_to_route, scheduled_nets_at_time);
 
 			schedule_timer.stop();
 			schedule_time += schedule_timer.elapsed().wall;
@@ -2477,11 +2723,11 @@ bool partitioning_route(t_router_opts *opts)
 			vector<int> overused_rr_node;
 			check_net_route(route_trees[net.local_id], get_vertex(route_trees[net.local_id].graph, route_trees[net.local_id].root), g, overused_rr_node);
 			if (!overused_rr_node.empty()) {
-				zlog_level(delta_log, ROUTER_V2, "Net %d overused nodes:\n", net.vpr_id);
+				zlog_level(delta_log, ROUTER_V1, "Net %d bb_rank %d overused nodes:\n", net.vpr_id, net.bb_area_rank);
 				for (const auto &item : overused_rr_node) {
-					zlog_level(delta_log, ROUTER_V2, "%d ", item);
+					zlog_level(delta_log, ROUTER_V1, "%d ", item);
 				}
-				zlog_level(delta_log, ROUTER_V2, "\n");
+				zlog_level(delta_log, ROUTER_V1, "\n");
 			}
 		}
 
@@ -2511,6 +2757,12 @@ bool partitioning_route(t_router_opts *opts)
 
 			for (auto &net : nets) { 
 				reset_current_source_sink(net);
+			}
+
+			/* swap the pointers */
+			std::swap(current_traces_ptr, prev_traces_ptr);
+			for (const auto &trace : *current_traces_ptr) {
+				assert(trace_empty(trace));
 			}
 		}
 

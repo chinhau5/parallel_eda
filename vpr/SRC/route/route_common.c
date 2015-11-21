@@ -348,7 +348,7 @@ boolean try_route_new(int width_fac, struct s_router_opts router_opts,
 		case HYBRID:
 			vpr_printf(TIO_MESSAGE_INFO, "Confirming Router Algorithm: HYBRID.\n");
 			assert(router_opts.route_type != GLOBAL);
-			success = partitioning_route_bounding_box(&router_opts);
+			success = partitioning_route(&router_opts);
 			break;
 		default:
 			success = FALSE;

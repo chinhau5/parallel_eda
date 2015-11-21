@@ -258,4 +258,27 @@ void clear_edges(graph_t<VertexProperties, EdgeProperties> &g)
 	g.edges.clear();
 }
 
+template<typename VertexProperties, typename EdgeProperties, typename VertexLabeler, typename EdgeLabeler, typename VertexFilter>
+void write_graph(const graph_t<VertexProperties, EdgeProperties> &g, const char *filename, const VertexLabeler &vertex_label, const EdgeLabeler &edge_label, const VertexFilter &vertex_filter)
+{
+	FILE *file = fopen(filename, "w");
+	fprintf(file, "digraph g {\n");
+	for_all_vertices(g, [&g, &vertex_label, &vertex_filter, &file] (const vertex_t<VertexProperties, EdgeProperties> &v) -> void {
+		if (!vertex_filter(v)) {
+			fprintf(file, "%d [label=\"%s\"", id(v), vertex_label(v).c_str());
+			fprintf(file, "];\n");
+		}
+	});
+	for_all_edges(g, [&g, &edge_label, &vertex_filter, &file] (const edge_t<EdgeProperties> &e) -> void {
+		const auto &from = get_source(g, e);
+		const auto &to = get_target(g, e);
+		if (!vertex_filter(from) && !vertex_filter(to)) {
+			fprintf(file, "%d -> %d [label=\"%s\"];\n", id(from), id(to), edge_label(e).c_str());
+		}
+	});
+	fprintf(file, "}\n");
+	fclose(file);
+}
+
+
 #endif
