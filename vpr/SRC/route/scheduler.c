@@ -28,7 +28,7 @@ void verify_rtree_overlap(vector<net_t *> &nets)
 
 	for (int i = 0; i < nets.size(); ++i) {
 		for (int j = i + 1;  j < nets.size(); ++j) {
-			if (box_overlap(nets[i]->current_bounding_box, nets[j]->current_bounding_box)) {
+			if (box_overlap(nets[i]->sinks[nets[i]->current_sink_index].current_bounding_box, nets[j]->sinks[nets[j]->current_sink_index].current_bounding_box)) {
 				overlap[nets[i]->current_local_id].push_back(nets[j]);
 				overlap[nets[j]->current_local_id].push_back(nets[i]);
 			} else {
@@ -62,7 +62,7 @@ void load_overlapping_nets_rtree(vector<net_t *> &nets)
 	vector<value> bulk;
 	for (const auto &net : nets) {
 		// create a box
-		box b(point(net->current_bounding_box.xmin, net->current_bounding_box.ymin), point(net->current_bounding_box.xmax, net->current_bounding_box.ymax));
+		box b(point(net->sinks[net->current_sink_index].current_bounding_box.xmin, net->sinks[net->current_sink_index].current_bounding_box.ymin), point(net->sinks[net->current_sink_index].current_bounding_box.xmax, net->sinks[net->current_sink_index].current_bounding_box.ymax));
 		// insert new value
 		bulk.push_back(std::make_pair(b, net));
 	}
@@ -96,7 +96,7 @@ void load_overlapping_nets_rtree(vector<net_t *> &nets)
 
 	timer.start();
 	for (auto &net : nets) {
-		box query_box(point(net->current_bounding_box.xmin, net->current_bounding_box.ymin), point(net->current_bounding_box.xmax, net->current_bounding_box.ymax));
+		box query_box(point(net->sinks[net->current_sink_index].current_bounding_box.xmin, net->sinks[net->current_sink_index].current_bounding_box.ymin), point(net->sinks[net->current_sink_index].current_bounding_box.xmax, net->sinks[net->current_sink_index].current_bounding_box.ymax));
 		std::vector<value> result_s;
 
 		vector<bool> overlapping_nets(nets.size(), false);
@@ -142,7 +142,7 @@ void verify_ind(const vector<const net_t *> &nets)
 {
 	for (int i = 0; i < nets.size(); ++i) {
 		for (int j = i + 1;  j < nets.size(); ++j) {
-			assert(!box_overlap(nets[i]->current_bounding_box, nets[j]->current_bounding_box));
+			assert(!box_overlap(nets[i]->sinks[nets[i]->current_sink_index].current_bounding_box, nets[j]->sinks[nets[j]->current_sink_index].current_bounding_box));
 		}
 	}
 }

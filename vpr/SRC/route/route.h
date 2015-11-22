@@ -31,14 +31,17 @@ int get_bounding_box_area(const BoundingBox &bb)
 }
 
 typedef struct source_t {
+	struct net_t *net;
 	int rr_node;
 	int x;
 	int y;
 } source_t;
 
 typedef struct sink_t {
+	struct net_t *net;
 	int id;
 	float criticality_fac;
+	int distance_to_source_rank;
 	int rr_node;
 	int x;
 	int y;

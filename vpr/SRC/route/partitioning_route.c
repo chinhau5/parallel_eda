@@ -621,8 +621,10 @@ const Segment &trace_add_path(trace_t &trace, const RRGraph &g, const route_stat
 	return new_segment;
 }
 
-void trace_stats(trace_t &trace, const RRGraph &g)
+void trace_stats(trace_t &trace, const net_t &net, const RRGraph &g)
 {
+	assert(net.sinks.size() == trace.segments.size());
+
 	for (const auto &item : trace.segments) {
 		const Segment &segment = item.second;
 		int sink_rr_node = item.first;
@@ -630,9 +632,25 @@ void trace_stats(trace_t &trace, const RRGraph &g)
 		int num_overused_nodes = 0;
 		for (const auto &rr_node : segment) {
 			auto &v = get_vertex(g, rr_node);
-			if (v.properties.occ > v.properties.capacity) {	
-
+			if (v.properties.occ > v.properties.capacity) {
+				++num_overused_nodes;
 			}
+		}
+
+		int isink = -1;
+		int num_matches = 0;
+		for (int i = 0; i < net.sinks.size(); ++i) {
+			if (net.sinks[i].rr_node == sink_rr_node) {
+				isink = i;
+				++num_matches;
+			}
+		}
+		assert(num_matches == 1 && isink != -1);
+
+		if (num_overused_nodes > 0) {
+			char buffer[256];
+			sprintf_rr_node(sink_rr_node, buffer);
+			zlog_level(delta_log, ROUTER_V1, "%s (distance rank %d/%d) segment has %d/%d (%g) overused nodes\n", buffer, net.sinks[isink].distance_to_source_rank, net.sinks.size(), num_overused_nodes, segment.size(), (float)num_overused_nodes/segment.size()*100);
 		}
 	}
 }
@@ -1074,7 +1092,7 @@ void route_net(RRGraph &g, net_t &net, const route_parameters_t &params, route_s
 
 	vector<int> modified;
 
-	zlog_level(delta_log, ROUTER_V1, "Routing VPR net id %d BB x %d-%d y %d-%d\n", net.vpr_id, net.current_bounding_box.xmin, net.current_bounding_box.xmax, net.current_bounding_box.ymin, net.current_bounding_box.ymax);
+	zlog_level(delta_log, ROUTER_V1, "Routing VPR net id %d\n", net.vpr_id);
 
 	if (route_tree_empty(rt)) {
 		/* special case */
@@ -1082,7 +1100,16 @@ void route_net(RRGraph &g, net_t &net, const route_parameters_t &params, route_s
 
 		route_tree_set_source(rt, get_vertex(g, net.current_source.rr_node));
 	} else {
-		assert(get_vertex(rt.graph, rt.root).properties.rr_node == net.source.rr_node);
+		RouteTreeNode rt_root = get_vertex(rt.graph, rt.root);
+		if (rt_root.properties.rr_node != net.source.rr_node) {
+			char root[256];
+			char source[256];
+			sprintf_rr_node(rt_root.properties.rr_node, root);
+			sprintf_rr_node(net.source.rr_node, source);
+			zlog_error(delta_log, "Error: Non empty route tree node has root %s that is different from net source %s\n",
+					root, source);
+			assert(false);
+		}
 	}
 
 	vector<sink_t> sorted_sinks = net.sinks;
@@ -1096,8 +1123,8 @@ void route_net(RRGraph &g, net_t &net, const route_parameters_t &params, route_s
 	int isink = 0;
 	for (const auto &sink : sorted_sinks) {
 		sprintf_rr_node(sink.rr_node, buffer);
-		zlog_level(delta_log, ROUTER_V1, "Sink %d: %s criticality: %g\n", sink.id, buffer, sink.criticality_fac);
-		route_tree_add_to_heap(rt, g, get_vertex(g, sink.rr_node), sink.criticality_fac, params.astar_fac, net.current_bounding_box, heap, perf);
+		zlog_level(delta_log, ROUTER_V1, "Sink %d: %s criticality: %g BB: %d-%d %d-%d\n", sink.id, buffer, sink.criticality_fac, sink.current_bounding_box.xmin, sink.current_bounding_box.xmax, sink.current_bounding_box.ymin, sink.current_bounding_box.ymax);
+		route_tree_add_to_heap(rt, g, get_vertex(g, sink.rr_node), sink.criticality_fac, params.astar_fac, sink.current_bounding_box, heap, perf);
 
 		bool found_sink = false;
 		while (!heap.empty() && !found_sink) {
@@ -1122,13 +1149,13 @@ void route_net(RRGraph &g, net_t &net, const route_parameters_t &params, route_s
 				state[item.rr_node] = item;
 				modified.push_back(item.rr_node);
 
-				expand_neighbors(g, item, sink_vertex, sink.criticality_fac, params.astar_fac, heap, [&net, &sink_vertex] (const RRNode &v) -> bool {
+				expand_neighbors(g, item, sink_vertex, sink.criticality_fac, params.astar_fac, heap, [&net, &sink, &sink_vertex] (const RRNode &v) -> bool {
 					const auto &prop = v.properties;
 
-					if (prop.xhigh < net.current_bounding_box.xmin
-							|| prop.xlow > net.current_bounding_box.xmax
-							|| prop.yhigh < net.current_bounding_box.ymin
-							|| prop.ylow > net.current_bounding_box.ymax) {
+					if (prop.xhigh < sink.current_bounding_box.xmin
+							|| prop.xlow > sink.current_bounding_box.xmax
+							|| prop.yhigh < sink.current_bounding_box.ymin
+							|| prop.ylow > sink.current_bounding_box.ymax) {
 					zlog_level(delta_log, ROUTER_V3, "outside of bounding box\n");
 					return false;
 					}
@@ -1414,6 +1441,11 @@ void init_nets(vector<net_t> &nets, vector<net_t> &global_nets)
 				return a_to_src_dist > b_to_src_dist;
 				});
 
+		int rank = 0;
+		for (auto &sink : net.sinks) {
+			sink.distance_to_source_rank = rank++;
+		}
+
 		net.current_sink_index = 0;
 
 		net.current_bounding_box = get_bounding_box(net.current_source, net.sinks[net.current_sink_index]);
@@ -1432,18 +1464,27 @@ void init_nets(vector<net_t> &nets, vector<net_t> &global_nets)
 			zlog_debug(net_log, "%s x: %d y: %d\n", buffer, s.x, s.y);
 		}
 
+		/*net.box.xmin = route_bb[i].xmin;*/
+		/*net.box.ymin = route_bb[i].ymin;*/
+		/*net.box.xmax = route_bb[i].xmax;*/
+		/*net.box.ymax = route_bb[i].ymax;*/
+
 		if (clb_net[i].is_global) {
 			global_nets.push_back(net);
+
 			zlog_info(net_log, "Global net %d\n", i);
 		} else {
 			nets.push_back(net);
 			++local_id;
 		}
+	}
 
-		/*net.box.xmin = route_bb[i].xmin;*/
-		/*net.box.ymin = route_bb[i].ymin;*/
-		/*net.box.xmax = route_bb[i].xmax;*/
-		/*net.box.ymax = route_bb[i].ymax;*/
+	/* update pointers */
+	for (auto &net : nets) {
+		net.source.net = &net;
+		for (auto &sink : net.sinks) {
+			sink.net = &net;
+		}
 	}
 	/*int num_local_nets = local_id;*/
 	/*for (auto &net : nets) {*/
@@ -1825,7 +1866,7 @@ void schedule_nets_fast(vector<net_t *> &nets, vector<vector<const net_t *>> &ne
 	timer.start();
 
 	/*sort(nets.begin(), nets.end(), [] (const net_t *a, const net_t *b) { return a->non_overlapping_nets_vec.size() < b->non_overlapping_nets_vec.size(); });*/
-	sort(nets.begin(), nets.end(), [] (const net_t *a, const net_t *b) { return get_bounding_box_area(a->current_bounding_box) > get_bounding_box_area(b->current_bounding_box); });
+	sort(nets.begin(), nets.end(), [] (const net_t *a, const net_t *b) { return get_bounding_box_area(a->sinks[a->current_sink_index].current_bounding_box) > get_bounding_box_area(b->sinks[b->current_sink_index].current_bounding_box); });
 
 	/*printf("Num overlapping_nets:\n");*/
 	/*for (const auto &net : nets) {*/
@@ -1930,12 +1971,12 @@ void set_current_source(net_t &net, route_tree_t &rt, const RRGraph &g, const si
 void adjust_bounding_box(net_t &net)
 {
 	assert(net.current_sink_index >= 0 && net.current_sink_index < net.sinks.size());
-	const auto &current_sink = net.sinks[net.current_sink_index];
+	auto &current_sink = net.sinks[net.current_sink_index];
 
-	net.current_bounding_box.xmin = std::min(net.current_bounding_box.xmin, current_sink.previous_bounding_box.xmin);
-	net.current_bounding_box.ymin = std::min(net.current_bounding_box.ymin, current_sink.previous_bounding_box.ymin);
-	net.current_bounding_box.xmax = std::max(net.current_bounding_box.xmax, current_sink.previous_bounding_box.xmax);
-	net.current_bounding_box.ymax = std::max(net.current_bounding_box.ymax, current_sink.previous_bounding_box.ymax);
+	current_sink.current_bounding_box.xmin = std::min(current_sink.current_bounding_box.xmin, current_sink.previous_bounding_box.xmin);
+	current_sink.current_bounding_box.ymin = std::min(current_sink.current_bounding_box.ymin, current_sink.previous_bounding_box.ymin);
+	current_sink.current_bounding_box.xmax = std::max(current_sink.current_bounding_box.xmax, current_sink.previous_bounding_box.xmax);
+	current_sink.current_bounding_box.ymax = std::max(current_sink.current_bounding_box.ymax, current_sink.previous_bounding_box.ymax);
 }
 
 int adjust_bounding_box_2(net_t &net)
@@ -2027,7 +2068,7 @@ void set_to_next_sink(net_t &net, route_tree_t &rt, const RRGraph &g, float asta
 	/*net.previous_bounding_box = get_bounding_box(net.previous_source, net.sinks[net.previous_sink_index]);*/
 
 	assert(net.current_sink_index >= 0 && net.current_sink_index < net.sinks.size());
-	net.sinks[net.current_sink_index].previous_bounding_box = net.current_bounding_box;
+	net.sinks[net.current_sink_index].previous_bounding_box = net.sinks[net.current_sink_index].current_bounding_box;
 
 	net.current_sink_index++;
 	if (net.current_sink_index >= net.sinks.size()) {
@@ -2084,7 +2125,7 @@ void set_to_next_sink(net_t &net, route_tree_t &rt, const RRGraph &g, float asta
 	/*net.current_source.x = block[b].x;*/
 	/*net.current_source.y = block[b].y + block[b].type->pin_height[p];*/
 
-	net.current_bounding_box = get_bounding_box(new_source, net.sinks[net.current_sink_index]);
+	net.sinks[net.current_sink_index].current_bounding_box = get_bounding_box(new_source, net.sinks[net.current_sink_index]);
 
 	/*adjust_bounding_box(net);*/
 }
@@ -2118,7 +2159,7 @@ void reset_current_source_sink(net_t &net)
 	assert(net.sinks.size() > 0);
 	net.has_sink = true;
 
-	net.current_bounding_box = get_bounding_box(net.current_source, net.sinks[net.current_sink_index]);
+	net.sinks[net.current_sink_index].current_bounding_box = get_bounding_box(net.current_source, net.sinks[net.current_sink_index]);
 }
 
 /*void temp_route_nets(RRGraph &g, vector<net_t *> &nets, const route_parameters_t &params, route_tree_t *route_trees, t_net_timing *net_timing)*/
@@ -2653,7 +2694,7 @@ bool partitioning_route(t_router_opts *opts)
 						/*trace_rip_up_net(traces[net->local_id], g, params.pres_fac);*/
 					/*}*/
 					trace_rip_up_segment((*prev_traces_ptr)[net->local_id], g, net->sinks[net->current_sink_index].rr_node, params.pres_fac);
-					/*printf("Net: %d\n", virtual_net.vpr_id);*/
+					printf("Net: %d\n", virtual_net.vpr_id);
 					route_net(g, virtual_net, params, state, route_trees[net->local_id], (*current_traces_ptr)[net->local_id], net_timing[net->vpr_id], &perf);
 					/*route_tree_merge(route_trees[net->id][0], route_trees[net->id][virtual_net.sinks[0].id]);*/
 					++num_nets_routed;
@@ -2730,6 +2771,11 @@ bool partitioning_route(t_router_opts *opts)
 				zlog_level(delta_log, ROUTER_V1, "\n");
 			}
 		}
+
+		/*for (const auto &net : nets) {*/
+			/*zlog_level(delta_log, ROUTER_V1, "Net %d trace stats:\n", net.vpr_id);*/
+			/*trace_stats((*current_traces_ptr)[net.local_id], net, g);*/
+		/*}*/
 
 		if (feasible_routing(g)) {
 			zlog_info(delta_log, "Routed in %d iterations\n", iter);
