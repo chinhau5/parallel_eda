@@ -25,6 +25,7 @@ typedef struct bounding_box_t {
 template<typename BoundingBox>
 int get_bounding_box_area(const BoundingBox &bb)
 {
+	assert(bb.xmax > bb.xmin && bb.ymax > bb.ymin);
 	int area = (bb.xmax - bb.xmin + 1) * (bb.ymax - bb.ymin + 1);
 	assert(area >= 0);
 	return area;
@@ -41,13 +42,15 @@ typedef struct sink_t {
 	struct net_t *net;
 	int id;
 	float criticality_fac;
-	int distance_to_source_rank;
 	int rr_node;
 	int x;
 	int y;
 	source_t source;
 	bounding_box_t current_bounding_box;
 	bounding_box_t previous_bounding_box;
+	int bb_factor;
+	int distance_to_source_rank;
+	int congested_iterations;
 } sink_t;
 
 bool operator<(const sink_t &a, const sink_t &b);

@@ -155,7 +155,7 @@ void schedule_nets_ind(vector<net_t *> &nets, vector<vector<const net_t *>> &net
 	vector<pair<const bounding_box_t *, net_t *>> bbs(nets.size());
 
 	for (int i = 0; i < nets.size(); ++i) {
-		bbs[i].first = &nets[i]->current_bounding_box;
+		bbs[i].first = &(nets[i]->sinks[nets[i]->current_sink_index].current_bounding_box);
 		bbs[i].second = nets[i];
 	}
 
