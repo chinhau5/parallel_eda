@@ -57,8 +57,8 @@ struct s_TokenPair OptionBaseTokenList[] = {
 		{ "power_output_file", OT_POWER_OUT_FILE }, /* Output file for power results */
 		{ "power", OT_POWER }, /* Run power estimation? */
 		{ "tech_properties", OT_CMOS_TECH_BEHAVIOR_FILE }, /* Technology properties */
-        { "num_threads", OT_NUM_THREADS },
-	//{ "test",
+        { "num_threads", OT_NUM_THREADS }, { "bb_expand_threshold", OT_BB_EXPAND_THRESHOLD },
+		{ "scheduler", OT_SCHEDULER },
 		{ NULL, OT_BASE_UNKNOWN } /* End of list marker */
 };
 
@@ -74,5 +74,6 @@ struct s_TokenPair OptionArgTokenList[] = { { "on", OT_ON }, { "off", OT_OFF },
 				OT_TIMING }, { "max_inputs", OT_MAX_INPUTS }, { "greedy",
 				OT_GREEDY }, { "lp", OT_LP }, { "brute_force", OT_BRUTE_FORCE },
 	{ "barrier", OT_BARRIER }, { "fine_grained", OT_FINE_GRAINED }, { "hybrid", OT_HYBRID },
+	{ "ind", OT_SCH_IND }, { "fast", OT_SCH_FAST },
 		{ NULL, OT_BASE_UNKNOWN } /* End of list marker */
 };

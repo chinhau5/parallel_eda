@@ -712,6 +712,8 @@ enum e_base_cost_type {
 
 #define NO_FIXED_CHANNEL_WIDTH -1
 
+enum class SchedulerType { IND, FAST };
+
 typedef struct s_router_opts t_router_opts;
 struct s_router_opts {
 	float first_iter_pres_fac;
@@ -732,6 +734,7 @@ struct s_router_opts {
 	boolean full_stats;
 	boolean doRouting;
     int num_threads;
+    SchedulerType scheduler;
 };
 
 /* All the parameters controlling the router's operation are in this        *

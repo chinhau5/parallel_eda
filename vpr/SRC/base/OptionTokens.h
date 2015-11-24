@@ -75,6 +75,8 @@ enum e_OptionBaseToken {
 	OT_POWER_OUT_FILE,
 	OT_CMOS_TECH_BEHAVIOR_FILE,
     OT_NUM_THREADS,
+	OT_BB_EXPAND_THRESHOLD,
+	OT_SCHEDULER,
 	OT_BASE_UNKNOWN /* Must be last since used for counting enum items */
 };
 
@@ -101,6 +103,8 @@ enum e_OptionArgToken {
 	OT_BARRIER,
 	OT_FINE_GRAINED,
 	OT_HYBRID,
+	OT_SCH_IND,
+	OT_SCH_FAST,
 	OT_ARG_UNKNOWN /* Must be last since used for counting enum items */
 };
 

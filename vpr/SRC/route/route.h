@@ -25,7 +25,7 @@ typedef struct bounding_box_t {
 template<typename BoundingBox>
 int get_bounding_box_area(const BoundingBox &bb)
 {
-	assert(bb.xmax > bb.xmin && bb.ymax > bb.ymin);
+	assert(bb.xmax >= bb.xmin && bb.ymax >= bb.ymin);
 	int area = (bb.xmax - bb.xmin + 1) * (bb.ymax - bb.ymin + 1);
 	assert(area >= 0);
 	return area;

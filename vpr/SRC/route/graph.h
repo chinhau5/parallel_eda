@@ -52,6 +52,12 @@ int num_edges(const graph_t<VertexProperties, EdgeProperties> &g)
 }
 
 template<typename VertexProperties, typename EdgeProperties>
+int num_out_edges(const graph_t<VertexProperties, EdgeProperties> &g, const vertex_t<VertexProperties, EdgeProperties> &v)
+{
+	return v.edges.size();
+}
+
+template<typename VertexProperties, typename EdgeProperties>
 vertex_t<VertexProperties, EdgeProperties> &get_vertex(graph_t<VertexProperties, EdgeProperties> &g, int v)
 {
 	assert(v < g.vertices.size());

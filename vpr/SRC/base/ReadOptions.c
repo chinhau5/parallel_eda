@@ -33,6 +33,8 @@ static char **ReadPlaceAlgorithm(INP char **Args,
 		OUTP enum e_place_algorithm *Algo);
 static char **ReadRouterAlgorithm(INP char **Args,
 		OUTP enum e_router_algorithm *Algo);
+static char **ReadScheduler(INP char **Args,
+		OUTP SchedulerType *Algo);
 static char **ReadPackerAlgorithm(INP char **Args,
 		OUTP enum e_packer_algorithm *Algo);
 static char **ReadBaseCostType(INP char **Args,
@@ -457,6 +459,8 @@ ProcessOption(INP char **Args, INOUTP t_options * Options) {
 		return ReadBaseCostType(Args, &Options->base_cost_type);
     case OT_NUM_THREADS:
         return ReadInt(Args, &Options->num_threads);
+    case OT_SCHEDULER:
+    	return ReadScheduler(Args, &Options->scheduler);
             
 		/* Routing options valid only for timing-driven routing */
 	case OT_ASTAR_FAC:
@@ -791,6 +795,27 @@ ReadPackerAlgorithm(INP char **Args, OUTP enum e_packer_algorithm *Algo) {
 		break;
 	case OT_BRUTE_FORCE:
 		*Algo = PACK_BRUTE_FORCE;
+		break;
+	default:
+		Error(*PrevArgs);
+	}
+
+	return Args;
+}
+
+static char **
+ReadScheduler(INP char **Args, OUTP SchedulerType *Algo) {
+	enum e_OptionArgToken Token;
+	char **PrevArgs;
+
+	PrevArgs = Args;
+	Args = ReadToken(Args, &Token);
+	switch (Token) {
+	case OT_SCH_FAST:
+		*Algo = SchedulerType::FAST;
+		break;
+	case OT_SCH_IND:
+		*Algo = SchedulerType::IND;
 		break;
 	default:
 		Error(*PrevArgs);

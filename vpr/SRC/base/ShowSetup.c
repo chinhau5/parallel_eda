@@ -231,6 +231,21 @@ static void ShowRouterOpts(INP struct s_router_opts RouterOpts) {
 			vpr_printf(TIO_MESSAGE_INFO, "RouterOpts.criticality_exp: %f\n", RouterOpts.criticality_exp);
 			vpr_printf(TIO_MESSAGE_INFO, "RouterOpts.max_criticality: %f\n", RouterOpts.max_criticality);
 		}
+
+		vpr_printf(TIO_MESSAGE_INFO, "RouterOpts.num_threads: %d\n", RouterOpts.num_threads);
+
+		vpr_printf(TIO_MESSAGE_INFO, "RouterOpts.scheduler: ");
+		switch (RouterOpts.scheduler) {
+		case SchedulerType::FAST:
+			vpr_printf(TIO_MESSAGE_INFO, "FAST\n");
+			break;
+		case SchedulerType::IND:
+			vpr_printf(TIO_MESSAGE_INFO, "IND\n");
+			break;
+		default:
+			vpr_printf(TIO_MESSAGE_INFO, "Unknown scheduler type\n");
+			exit(-1);
+		}
 	} else {
 		assert(GLOBAL == RouterOpts.route_type);
 

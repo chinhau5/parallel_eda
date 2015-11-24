@@ -625,7 +625,7 @@ void build_rr_graph(INP t_graph_type graph_type, INP int L_num_types,
 	rr_graph_externals(timing_inf, segment_inf, num_seg_types, nodes_per_chan,
 			wire_to_ipin_switch, base_cost_type);
 /*	if (getEchoEnabled() && isEchoFileEnabled(E_ECHO_RR_GRAPH)) {*/
-		dump_rr_graph(getEchoFileName(E_ECHO_RR_GRAPH));
+		//dump_rr_graph(getEchoFileName(E_ECHO_RR_GRAPH));
 /*	} else*/
 /*		;*/
 
@@ -2021,19 +2021,19 @@ void sprintf_rr_node(int inode, char *buffer)
 	if (rr_node[inode].direction == INC_DIRECTION) {
 		if (rr_node[inode].type == CHANX) {
 			sprintf(buffer, "%d %s (%d->%d,%d) %d", inode, rr_types[rr_node[inode].type], rr_node[inode].xlow, rr_node[inode].xhigh, rr_node[inode].ylow, rr_node[inode].ptc_num);
-		} else if (rr_node[inode].type == CHANY) {
-			sprintf(buffer, "%d %s (%d,%d->%d) %d", inode, rr_types[rr_node[inode].type], rr_node[inode].xlow, rr_node[inode].ylow, rr_node[inode].yhigh, rr_node[inode].ptc_num);
 		} else {
-			sprintf(buffer, "%d %s (%d,%d)(%d,%d) %d", inode, rr_types[rr_node[inode].type], rr_node[inode].xlow, rr_node[inode].ylow, rr_node[inode].xhigh, rr_node[inode].yhigh, rr_node[inode].ptc_num);
-		}
-	} else {
+			assert(rr_node[inode].type == CHANY);
+			sprintf(buffer, "%d %s (%d,%d->%d) %d", inode, rr_types[rr_node[inode].type], rr_node[inode].xlow, rr_node[inode].ylow, rr_node[inode].yhigh, rr_node[inode].ptc_num);
+		} 
+	} else if (rr_node[inode].direction == DEC_DIRECTION) {
 		if (rr_node[inode].type == CHANX) {
 			sprintf(buffer, "%d %s (%d->%d,%d) %d", inode, rr_types[rr_node[inode].type], rr_node[inode].xhigh, rr_node[inode].xlow, rr_node[inode].ylow, rr_node[inode].ptc_num);
-		} else if (rr_node[inode].type == CHANY) {
-			sprintf(buffer, "%d %s (%d,%d->%d) %d", inode, rr_types[rr_node[inode].type], rr_node[inode].xlow, rr_node[inode].yhigh, rr_node[inode].ylow, rr_node[inode].ptc_num);
 		} else {
-			sprintf(buffer, "%d %s (%d,%d)(%d,%d) %d", inode, rr_types[rr_node[inode].type], rr_node[inode].xhigh, rr_node[inode].yhigh, rr_node[inode].xlow, rr_node[inode].ylow, rr_node[inode].ptc_num);
+			assert(rr_node[inode].type == CHANY);
+			sprintf(buffer, "%d %s (%d,%d->%d) %d", inode, rr_types[rr_node[inode].type], rr_node[inode].xlow, rr_node[inode].yhigh, rr_node[inode].ylow, rr_node[inode].ptc_num);
 		}
+	} else {
+		sprintf(buffer, "%d %s (%d,%d)(%d,%d) %d", inode, rr_types[rr_node[inode].type], rr_node[inode].xlow, rr_node[inode].xhigh, rr_node[inode].ylow, rr_node[inode].yhigh, rr_node[inode].ptc_num);
 	}
 #else
 	buffer[0] = '\0';

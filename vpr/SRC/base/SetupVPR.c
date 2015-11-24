@@ -462,6 +462,11 @@ static void SetupRouterOpts(INP t_options Options, INP boolean TimingEnabled,
         RouterOpts->num_threads = Options.num_threads;
     }
 
+    RouterOpts->scheduler = SchedulerType::FAST;
+	if (Options.Count[OT_SCHEDULER]) {
+		RouterOpts->scheduler = Options.scheduler;
+	}
+
 }
 
 static void SetupAnnealSched(INP t_options Options,

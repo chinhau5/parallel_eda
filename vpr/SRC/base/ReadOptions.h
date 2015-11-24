@@ -79,6 +79,7 @@ struct s_options {
 	enum e_router_algorithm RouterAlgorithm;
 	enum e_base_cost_type base_cost_type;
     int num_threads;
+    SchedulerType scheduler;
 
 	/* Timing-driven router options only */
 	float astar_fac;
