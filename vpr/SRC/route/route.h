@@ -20,6 +20,12 @@ typedef struct bounding_box_t {
 	int xmax;
 	int ymin;
 	int ymax;
+	bool operator==(const bounding_box_t &other) const {
+		return other.xmin == xmin && 
+			other.xmax == xmax && 
+			other.ymin == ymin && 
+			other.ymax == ymax;
+	}
 } bounding_box_t;
 
 template<typename BoundingBox>
@@ -78,9 +84,9 @@ typedef struct net_t {
 	vector<bool> sink_routed;
 	//int previous_sink_index;
 	/*bool previous_sink_valid;*/
-	bounding_box_t current_bounding_box;
+	//bounding_box_t current_bounding_box;
 	/*bool previous_bounding_box_valid;*/
-	/*bounding_box_t box;*/
+	bounding_box_t bounding_box;
 	std::vector<bool> overlapping_nets;
 	std::vector<bool> non_overlapping_nets;
 	int num_overlapping_nets;
@@ -91,6 +97,11 @@ typedef struct net_t {
 	int pid;
 	int schedule;
 } net_t;
+
+typedef struct virtual_net_t {
+	source_t *source;
+	sink_t *sink;
+} virtual_net_t;
 
 //typedef struct simple_net_t {
 	//const net_t *parent_net;
@@ -187,5 +198,10 @@ bool box_overlap(const BoundingBox &box_a, const BoundingBox &box_b)
 
 	return overlap(a_hor, b_hor) && overlap(a_vert, b_vert);
 }
+
+bool hybrid_route(t_router_opts *opts);
+bool partitioning_route(t_router_opts *opts);
+bool greedy_route(t_router_opts *opts);
+bool partitioning_route_bounding_box(t_router_opts *opts);
 
 #endif

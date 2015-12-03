@@ -8,7 +8,7 @@ using namespace std;
 
 template<typename Properties>
 struct edge_t {
-	int id;
+	int m_id;
 	int a;
 	int b;
 	Properties properties;	
@@ -16,7 +16,7 @@ struct edge_t {
 
 template<typename VertexProperties, typename EdgeProperties>
 struct vertex_t {
-	int id;
+	int m_id;
 	vector<int> edges;
 	VertexProperties properties;	
 };
@@ -30,13 +30,13 @@ struct graph_t {
 template<typename VertexProperties, typename EdgeProperties>
 int id(const vertex_t<VertexProperties, EdgeProperties> &v)
 {
-	return v.id;
+	return v.m_id;
 }
 
 template<typename EdgeProperties>
 int id(const edge_t<EdgeProperties> &e)
 {
-	return e.id;
+	return e.m_id;
 }
 
 template<typename VertexProperties, typename EdgeProperties>
@@ -77,7 +77,7 @@ void add_vertex(graph_t<VertexProperties, EdgeProperties> &g, int n = 1)
 	int start = g.vertices.size();
 	g.vertices.resize(g.vertices.size()+n);
 	for (int i = start; i < g.vertices.size(); ++i) {
-		g.vertices[i].id = i;
+		g.vertices[i].m_id = i;
 	}
 }
 
@@ -85,16 +85,16 @@ template<typename VertexProperties, typename EdgeProperties>
 edge_t<EdgeProperties> &add_edge(graph_t<VertexProperties, EdgeProperties> &g, vertex_t<VertexProperties, EdgeProperties> &v_a, vertex_t<VertexProperties, EdgeProperties> &v_b)
 {
 	edge_t<EdgeProperties> e;
-	e.id = g.edges.size();
-	e.a = v_a.id;
-	e.b = v_b.id;
+	e.m_id = g.edges.size();
+	e.a = v_a.m_id;
+	e.b = v_b.m_id;
 
-	assert(find_if(v_a.edges.begin(), v_a.edges.end(), [&g, &v_b] (int e) -> bool { return g.edges[e].b == v_b.id; }) == v_a.edges.end());
+	assert(find_if(v_a.edges.begin(), v_a.edges.end(), [&g, &v_b] (int e) -> bool { return g.edges[e].b == v_b.m_id; }) == v_a.edges.end());
 
 	g.edges.push_back(e);
-	v_a.edges.push_back(e.id);
+	v_a.edges.push_back(e.m_id);
 
-	return g.edges[e.id];
+	return g.edges[e.m_id];
 }
 
 template<typename VertexProperties, typename EdgeProperties>
@@ -102,15 +102,15 @@ void remove_edge(graph_t<VertexProperties, EdgeProperties> &g, const edge_t<Edge
 {
 	for (auto &v : g.vertices) {
 		for (auto &e : v.edges) {
-			if (e > e_del.id) {
+			if (e > e_del.m_id) {
 				--e;
 			}
 		}
 	}
 
 	for (auto &e : g.edges) {
-		if (e.id > e_del.id) {
-			--e.id;
+		if (e.m_id > e_del.m_id) {
+			--e.m_id;
 		}
 	}
 
@@ -118,7 +118,7 @@ void remove_edge(graph_t<VertexProperties, EdgeProperties> &g, const edge_t<Edge
 	assert(iter != g.vertices[e_del.a].edges.end());
 
 	g.vertices[e_del.a].edges.erase(iter);
-	g.edges.erase(g.edges.begin() + e_del.id);
+	g.edges.erase(g.edges.begin() + e_del.m_id);
 }
 
 template<typename VertexProperties, typename EdgeProperties>
@@ -136,8 +136,8 @@ void remove_edge(graph_t<VertexProperties, EdgeProperties> &g, int a, int b)
 	}
 
 	for (auto &e : g.edges) {
-		if (e.id > *iter) {
-			--e.id;
+		if (e.m_id > *iter) {
+			--e.m_id;
 		}
 	}
 
@@ -162,7 +162,7 @@ const edge_t<EdgeProperties> &get_edge(const graph_t<VertexProperties, EdgePrope
 template<typename VertexProperties, typename EdgeProperties>
 const edge_t<EdgeProperties> *get_edge(const graph_t<VertexProperties, EdgeProperties> &g, const vertex_t<VertexProperties, EdgeProperties> &v_a, const vertex_t<VertexProperties, EdgeProperties> &v_b)
 {
-	auto iter = find_if(v_a.edges.begin(), v_a.edges.end(), [&g, &v_b] (int e) -> bool { return g.edges[e].b == v_b.id; });
+	auto iter = find_if(v_a.edges.begin(), v_a.edges.end(), [&g, &v_b] (int e) -> bool { return g.edges[e].b == v_b.m_id; });
 
 	const edge_t<EdgeProperties> *res;
 	if (iter != v_a.edges.end()) {
@@ -242,8 +242,8 @@ void for_all_vertices(const graph_t<VertexProperties, EdgeProperties> &g, const 
 template<typename VertexProperties, typename EdgeProperties, typename Func>
 void for_all_out_edges(const graph_t<VertexProperties, EdgeProperties> &g, const vertex_t<VertexProperties, EdgeProperties> &v, const Func &f)
 {
-	assert(v.id < g.vertices.size());
-	for (const auto &n : g.vertices[v.id].edges) {
+	assert(v.m_id < g.vertices.size());
+	for (const auto &n : g.vertices[v.m_id].edges) {
 		f((g).edges[n]);
 	}
 }

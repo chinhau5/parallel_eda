@@ -17,6 +17,7 @@
 #include <time.h>
 /*#include <glog/logging.h>*/
 #include <zlog.h>
+#include <chrono>
 #include "tbb/task_scheduler_init.h"
 #include "vpr_api.h"
 
@@ -37,11 +38,15 @@ void test_dfs();
 void init_parallel_route_logging();
 void init_advanced_parallel_route_logging();
 
+std::chrono::time_point<std::chrono::high_resolution_clock> program_start;
+
 int main(int argc, char **argv) {
 	t_options Options;
 	t_arch Arch;
 	t_vpr_setup vpr_setup;
 	clock_t entire_flow_begin,entire_flow_end;
+
+	program_start = std::chrono::high_resolution_clock::now(); 
 
 	entire_flow_begin = clock();
 

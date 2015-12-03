@@ -734,7 +734,9 @@ struct s_router_opts {
 	boolean full_stats;
 	boolean doRouting;
     int num_threads;
+    int grain_size;
     SchedulerType scheduler;
+    int bb_expand_threshold;
 };
 
 /* All the parameters controlling the router's operation are in this        *

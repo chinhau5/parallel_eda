@@ -461,6 +461,8 @@ ProcessOption(INP char **Args, INOUTP t_options * Options) {
         return ReadInt(Args, &Options->num_threads);
     case OT_SCHEDULER:
     	return ReadScheduler(Args, &Options->scheduler);
+    case OT_GRAIN_SIZE:
+    	return ReadInt(Args, &Options->grain_size);
             
 		/* Routing options valid only for timing-driven routing */
 	case OT_ASTAR_FAC:
@@ -469,6 +471,8 @@ ProcessOption(INP char **Args, INOUTP t_options * Options) {
 		return ReadFloat(Args, &Options->max_criticality);
 	case OT_CRITICALITY_EXP:
 		return ReadFloat(Args, &Options->criticality_exp);
+	case OT_BB_EXPAND_THRESHOLD:
+	    return ReadInt(Args, &Options->bb_expand_threshold);
 
 		/* Power options */
 	case OT_POWER:

@@ -19,7 +19,10 @@
 #include "ReadOptions.h"
 #include "parallel_route_timing.h"
 #include "advanced_parallel_route_timing.h"
-#include "hybrid_route.h"
+/*#include "route.h"*/
+
+bool partitioning_route(t_router_opts *opts);
+bool greedy_route(t_router_opts *opts);
 
 /***************** Variables shared only by route modules *******************/
 
@@ -348,7 +351,7 @@ boolean try_route_new(int width_fac, struct s_router_opts router_opts,
 		case HYBRID:
 			vpr_printf(TIO_MESSAGE_INFO, "Confirming Router Algorithm: HYBRID.\n");
 			assert(router_opts.route_type != GLOBAL);
-			success = partitioning_route(&router_opts);
+			success = greedy_route(&router_opts);
 			break;
 		default:
 			success = FALSE;

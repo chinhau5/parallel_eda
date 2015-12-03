@@ -97,7 +97,8 @@ target_include_directories(Vpr PUBLIC
 	#libarchfpga/include 
 	/usr/local/include
 	/opt/local/include
-	~/Downloads/tbb44_20150728oss/include
+	#~/Downloads/tbb44_20150728oss/include
+	/Users/chinhau5/Downloads/tbb44_20151115oss/include
 	SRC/util
 	SRC/timing 
 	SRC/pack 

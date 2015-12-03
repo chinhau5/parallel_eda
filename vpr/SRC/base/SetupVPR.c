@@ -467,6 +467,16 @@ static void SetupRouterOpts(INP t_options Options, INP boolean TimingEnabled,
 		RouterOpts->scheduler = Options.scheduler;
 	}
 
+	RouterOpts->grain_size = 1;
+	if (Options.Count[OT_GRAIN_SIZE]) {
+		RouterOpts->grain_size = Options.grain_size;
+	}
+
+	RouterOpts->bb_expand_threshold = RouterOpts->max_router_iterations+1; /* disable bb expansion by default */
+	if (Options.Count[OT_BB_EXPAND_THRESHOLD]) {
+		RouterOpts->bb_expand_threshold = Options.bb_expand_threshold;
+	}
+
 }
 
 static void SetupAnnealSched(INP t_options Options,
