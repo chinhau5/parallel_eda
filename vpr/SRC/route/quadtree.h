@@ -26,6 +26,17 @@ class QuadTree {
 		}
 
 	public:
+		bool empty() const
+		{
+			bool e = items.empty();
+			if (children) {
+				for (int i = 0; i < 4; ++i) {
+					e = e && children[i].empty();
+				}
+			}
+			return e; 
+		}
+
 		void verify(int &num_items) const
 		{
 			for (const auto &item : items) {

@@ -67,6 +67,7 @@ typedef struct sink_schedule_t {
 } sink_schedule_t;
 
 typedef struct net_t {
+	//std::mutex lock;
 	int vpr_id;
 	int local_id;
 	int current_local_id;
@@ -99,6 +100,7 @@ typedef struct net_t {
 } net_t;
 
 typedef struct virtual_net_t {
+	bool valid;
 	source_t *source;
 	sink_t *sink;
 } virtual_net_t;

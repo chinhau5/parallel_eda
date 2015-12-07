@@ -6,6 +6,7 @@ link_directories(
 	/usr/local/lib
 	/opt/local/lib
 	~/Downloads/tbb44_20151115oss/build/macos_intel64_clang_cc5.2.0_os10.11.1_debug
+	~/Downloads/tbb44_20151115oss/build/macos_intel64_clang_cc5.2.0_os10.11.1_release
 	)
 
 #set(CMAKE_SKIP_RPATH true)
@@ -15,8 +16,9 @@ link_directories(
 #generic compile options go here
 add_compile_options(
 	#-D TBB_USE_DEBUG=1
+	-ferror-limit=0
 	-std=c++11
-	-g -O0
+	-g -O2
 	#-Bdynamic
 	-Wall
 	)
@@ -58,7 +60,7 @@ else()
 		boost_timer-mt-d
 		boost_system-mt-d
 		igraph
-		tbb_debug
+		tbb
 		)
 endif()
 
