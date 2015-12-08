@@ -2,6 +2,7 @@
 #define ROUTE_H
 
 #include "graph.h"
+#include "tbb/tbb.h"
 
 typedef struct perf_t {
 	int num_heap_pushes;
@@ -100,6 +101,7 @@ typedef struct net_t {
 } net_t;
 
 typedef struct virtual_net_t {
+	tbb::spin_mutex lock;
 	bool valid;
 	source_t *source;
 	sink_t *sink;

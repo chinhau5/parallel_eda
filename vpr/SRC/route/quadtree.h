@@ -26,6 +26,18 @@ class QuadTree {
 		}
 
 	public:
+		template<typename Func>
+		void print_items(const Func &func) const
+		{
+			for (const auto &item : items) {
+				func(item);
+			}
+			if (children) {
+				for (int i = 0; i < 4; ++i) {
+					children[i].print_items(func);
+				}
+			}
+		}
 		bool empty() const
 		{
 			bool e = items.empty();
