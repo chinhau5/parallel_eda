@@ -61,6 +61,8 @@ set(srcs
 	SRC/route/fine_grained_parallel_route_timing_2.c
 	SRC/route/test.c
 	SRC/route/partitioning_route.c
+	SRC/route/route_tree.c
+	SRC/route/trace.c
 	SRC/route/scheduler.c
 	SRC/route/advanced_parallel_route_timing.c
 	SRC/route/route_tree_timing.c

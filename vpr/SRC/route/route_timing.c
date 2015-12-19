@@ -5,6 +5,7 @@
 #include <pthread.h>
 #include <zlog.h> 
 #include <algorithm>
+#include <random>
 #include "util.h"
 #include "vpr_types.h"
 #include "globals.h"
@@ -130,12 +131,16 @@ boolean try_timing_driven_route(struct s_router_opts router_opts,
 		my_sink_order[i] = (int *) malloc(max_pins_per_net * sizeof(int));
 	}
 
+	std::mt19937 mt(time(NULL));
+
 	for (itry = 1; itry <= router_opts.max_router_iterations; itry++) {
 		begin = clock();
 		vpr_printf(TIO_MESSAGE_INFO, "\n");
 		vpr_printf(TIO_MESSAGE_INFO, "Routing iteration: %d\n", itry);
 
 		int num_heap_pushes = 0;
+
+		/*std::shuffle(net_index, net_index+num_nets, mt);*/
 
 		for (i = 0; i < num_nets; i++) {
 			inet = net_index[i];

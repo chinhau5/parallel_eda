@@ -624,10 +624,10 @@ void build_rr_graph(INP t_graph_type graph_type, INP int L_num_types,
 
 	rr_graph_externals(timing_inf, segment_inf, num_seg_types, nodes_per_chan,
 			wire_to_ipin_switch, base_cost_type);
-/*	if (getEchoEnabled() && isEchoFileEnabled(E_ECHO_RR_GRAPH)) {*/
-		/*dump_rr_graph(getEchoFileName(E_ECHO_RR_GRAPH));*/
-/*	} else*/
-/*		;*/
+	/*if (getEchoEnabled() && isEchoFileEnabled(E_ECHO_RR_GRAPH)) {*/
+		dump_rr_graph("/Volumes/DATA/rr_graph.echo");//getEchoFileName(E_ECHO_RR_GRAPH));
+	/*} else*/
+		/*;*/
 
 	/*load_reachability();*/
 
@@ -2013,7 +2013,7 @@ void dump_rr_graph(INP const char *file_name) {
 	fclose(fp);
 }
 
-#define PRINT_RR_NODE
+/*#define PRINT_RR_NODE*/
 
 void sprintf_rr_node(int inode, char *buffer)
 {

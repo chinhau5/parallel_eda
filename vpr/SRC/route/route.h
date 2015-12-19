@@ -1,8 +1,12 @@
 #ifndef ROUTE_H
 #define ROUTE_H
 
+#include <assert.h>
+#include <tbb/tbb.h>
+#include <boost/numeric/interval.hpp>
+#include <zlog.h>
 #include "graph.h"
-#include "tbb/tbb.h"
+#include "vpr_types.h"
 
 typedef struct perf_t {
 	int num_heap_pushes;
@@ -29,15 +33,6 @@ typedef struct bounding_box_t {
 	}
 } bounding_box_t;
 
-template<typename BoundingBox>
-int get_bounding_box_area(const BoundingBox &bb)
-{
-	assert(bb.xmax >= bb.xmin && bb.ymax >= bb.ymin);
-	int area = (bb.xmax - bb.xmin + 1) * (bb.ymax - bb.ymin + 1);
-	assert(area >= 0);
-	return area;
-}
-
 typedef struct source_t {
 	struct net_t *net;
 	int rr_node;
@@ -55,6 +50,7 @@ typedef struct sink_t {
 	source_t source;
 	bounding_box_t current_bounding_box;
 	bounding_box_t previous_bounding_box;
+	bounding_box_t scheduler_bounding_box;
 	int bb_factor;
 	int distance_to_source_rank;
 	int congested_iterations;
@@ -101,7 +97,7 @@ typedef struct net_t {
 } net_t;
 
 typedef struct virtual_net_t {
-	tbb::spin_mutex lock;
+	//tbb::spin_mutex lock;
 	bool valid;
 	source_t *source;
 	sink_t *sink;
@@ -139,6 +135,8 @@ typedef struct rr_edge_property_t {
 	float R;
 } rr_edge_property_t;
 
+typedef graph_t<rr_node_property_t, rr_edge_property_t> RRGraph;
+typedef vertex_t<rr_node_property_t, rr_edge_property_t> RRNode;
 typedef edge_t<rr_edge_property_t> RREdge;
 
 typedef struct route_state_t {
@@ -150,45 +148,14 @@ typedef struct route_state_t {
 	float cost;
 } route_state_t;
 
-typedef struct rt_node_property_t {
-	bool valid;
-	bool reexpand;
-	int rr_node;
-	const RREdge *prev_edge;
-	float upstream_R;	
-	/*float upstream_R_from_route_state;*/
-	float downstream_C;
-	float delay;
-} rt_node_property_t;
-
-typedef struct rt_edge_property_t {
-	const RREdge *rr_edge;
-} rt_edge_property_t;
-
-typedef graph_t<rr_node_property_t, rr_edge_property_t> RRGraph;
-typedef vertex_t<rr_node_property_t, rr_edge_property_t> RRNode;
-
-typedef graph_t<rt_node_property_t, rt_edge_property_t> RouteTree;
-typedef vertex_t<rt_node_property_t, rt_edge_property_t> RouteTreeNode;
-typedef edge_t<rt_edge_property_t> RouteTreeEdge;
-
-typedef struct route_tree_t {
-	RouteTree graph;
-	std::map<int, int> rr_node_to_rt_node;
-	/*map<int, vector<int>> sink_rr_node_to_path;*/
-	int root;
-} route_tree_t;
-
-typedef std::vector<int> Segment;
-
-typedef struct trace_t {
-	//int first_sink_rr_node;
-	std::map<int, Segment> segments;
-	/* for debugging */
-	//int num_sources;
-	std::vector<const Segment *> paths_starting_with_source;
-	std::set<int> existing_nodes;
-} trace_t;
+template<typename BoundingBox>
+int get_bounding_box_area(const BoundingBox &bb)
+{
+	assert(bb.xmax >= bb.xmin && bb.ymax >= bb.ymin);
+	int area = (bb.xmax - bb.xmin + 1) * (bb.ymax - bb.ymin + 1);
+	assert(area >= 0);
+	return area;
+}
 
 template<typename BoundingBox>
 bool box_overlap(const BoundingBox &box_a, const BoundingBox &box_b)
@@ -207,5 +174,28 @@ bool hybrid_route(t_router_opts *opts);
 bool partitioning_route(t_router_opts *opts);
 bool greedy_route(t_router_opts *opts);
 bool partitioning_route_bounding_box(t_router_opts *opts);
+
+float get_timing_driven_expected_cost(const RRNode &current, const RRNode &target,
+		float criticality_fac, float R_upstream);
+
+void update_one_cost(RRGraph &g, const vector<int>::const_iterator &rr_nodes_begin, const vector<int>::const_iterator &rr_nodes_end, int delta, float pres_fac);
+
+#include "route_tree.h"
+
+void update_one_cost(RRGraph &g, route_tree_t &rt, const RouteTreeNode &node, int delta, float pres_fac);
+
+void update_one_cost_internal(RRNode &rr_node, int delta, float pres_fac);
+
+bool operator<(const route_state_t &a, const route_state_t &b);
+
+enum {
+	ROUTER_V1 = ZLOG_LEVEL_DEBUG+3,
+	ROUTER_V2 = ZLOG_LEVEL_DEBUG+2, 
+	ROUTER_V3 = ZLOG_LEVEL_DEBUG+1
+};
+
+#define zlog_level(cat, level, ...) \
+	zlog(cat, __FILE__, sizeof(__FILE__)-1, __func__, sizeof(__func__)-1, __LINE__, \
+	level, __VA_ARGS__)
 
 #endif

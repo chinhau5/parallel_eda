@@ -23,9 +23,272 @@ struct vertex_t {
 
 template<typename VertexProperties, typename EdgeProperties>
 struct graph_t {
-	vector<vertex_t<VertexProperties, EdgeProperties>> vertices;
-	vector<edge_t<EdgeProperties>> edges;
+	typedef vector<vertex_t<VertexProperties, EdgeProperties>> Vertices;
+	typedef vector<edge_t<EdgeProperties>> Edges;
+	Vertices vertices;
+	Edges edges;
+
+	struct out_edges_iterator : public std::iterator<
+					  typename std::forward_iterator_tag,
+					  edge_t<EdgeProperties>,
+					  ptrdiff_t,
+					  edge_t<EdgeProperties> *,
+					  edge_t<EdgeProperties> & 
+					  > {
+		vector<int>::const_iterator iter;
+		graph_t &g;
+
+		out_edges_iterator(graph_t &g, const vector<int>::const_iterator &iter) 
+			: g(g), iter(iter)
+	   	{
+		}
+
+		out_edges_iterator &operator++()
+		{
+			++iter;
+			return *this;
+		}
+
+		typename out_edges_iterator::reference operator*() const
+		{
+			return g.edges[*iter];
+		}
+
+		typename out_edges_iterator::pointer operator->() const
+		{
+			return &g.edges[*iter];
+		}
+
+		bool operator==(const out_edges_iterator &other) const
+		{
+			return other.iter == iter;
+		}
+
+		bool operator!=(const out_edges_iterator &other) const
+		{
+			return other.iter != iter;
+		}
+	};
+
+	struct out_edges_const_iterator : public std::iterator<
+					  typename std::forward_iterator_tag,
+					  edge_t<EdgeProperties>,
+					  ptrdiff_t,
+					  const edge_t<EdgeProperties> *,
+					  const edge_t<EdgeProperties> & 
+					  > {
+		vector<int>::const_iterator iter;
+		const graph_t &g;
+
+		out_edges_const_iterator(const graph_t &g, const vector<int>::const_iterator &iter) 
+			: g(g), iter(iter)
+	   	{
+		}
+
+		out_edges_const_iterator &operator++()
+		{
+			++iter;
+			return *this;
+		}
+
+		typename out_edges_const_iterator::reference operator*() const
+		{
+			return g.edges[*iter];
+		}
+
+		typename out_edges_const_iterator::pointer operator->() const
+		{
+			return &g.edges[*iter];
+		}
+
+		bool operator==(const out_edges_const_iterator &other) const
+		{
+			return other.iter == iter;
+		}
+
+		bool operator!=(const out_edges_const_iterator &other) const
+		{
+			return other.iter != iter;
+		}
+	};
+
+	template<typename Value, typename Base>
+	struct iterator : public std::iterator<
+					  typename std::forward_iterator_tag,
+					  Value,
+					  ptrdiff_t,
+					  Value *,
+					  Value & 
+					  > {
+		Base iter;
+
+		iterator(const Base &iter) 
+			: iter(iter)
+	   	{
+			//printf("iterator constructor\n");
+		}
+
+		//iterator(const iterator &other) 
+			//: iter(other.iter)
+		   //{
+			//printf("iterator copy constructor\n");
+		//}
+
+		//void operator=(const iterator &other) 
+		   //{
+			//iter = other.iter;
+			//printf("iterator assignment\n");
+		//}
+
+		iterator &operator++()
+		{
+			++iter;
+			return *this;
+		}
+
+		typename iterator::reference operator*() const
+		{
+			return *iter;
+		}
+
+		typename iterator::pointer operator->() const
+		{
+			return &(*iter);
+		}
+
+		bool operator==(const iterator &other) const
+		{
+			return other.iter == iter;
+		}
+
+		bool operator!=(const iterator &other) const
+		{
+			return other.iter != iter;
+		}
+	};
+
+	//typedef iterator<edge_t<EdgeProperties>, typename Edges::iterator> edge_iterator;
+	//typedef iterator<const edge_t<EdgeProperties>, typename Edges::const_iterator> const_edge_iterator;
+
+	//typedef iterator<vertex_t<VertexProperties, EdgeProperties>, typename Vertices::iterator> vertex_iterator;
+	//typedef iterator<const vertex_t<VertexProperties, EdgeProperties>, typename Vertices::const_iterator> const_vertex_iterator;
+	typedef typename Edges::iterator edge_iterator;
+	typedef typename Edges::const_iterator edge_const_iterator;
+
+	typedef typename Vertices::iterator vertex_iterator;
+	typedef typename Vertices::const_iterator vertex_const_iterator;
 };
+
+//template<typename VertexProperties, typename EdgeProperties>
+//bool operator!=(typename graph_t<VertexProperties, EdgeProperties>::const_vertex_iterator &a,
+		//typename graph_t<VertexProperties, EdgeProperties>::const_vertex_iterator &b)
+//{
+	//return a.iter != b.iter;
+//}
+
+//template<typename VertexProperties, typename EdgeProperties>
+//bool operator!=(typename graph_t<VertexProperties, EdgeProperties>::vertex_iterator &a,
+		//typename graph_t<VertexProperties, EdgeProperties>::vertex_iterator &b)
+//{
+	//return a.iter != b.iter;
+//}
+
+//template<typename VertexProperties, typename EdgeProperties, typename Value, typename Base>
+//bool operator!=(const typename graph_t<VertexProperties, EdgeProperties>::template iterator<Value, Base> &a,
+		//const typename graph_t<VertexProperties, EdgeProperties>::template iterator<Value, Base> &b)
+//{
+	//return a.iter != b.iter;
+//}
+
+template<typename VertexProperties, typename EdgeProperties, typename Value, typename Base>
+bool operator==(const typename graph_t<VertexProperties, EdgeProperties>::template iterator<Value, Base> &a,
+		const typename graph_t<VertexProperties, EdgeProperties>::template iterator<Value, Base> &b)
+{
+	return a.iter != b.iter;
+}
+
+template<typename VertexProperties, typename EdgeProperties, typename Value, typename Base>
+bool operator==(typename graph_t<VertexProperties, EdgeProperties>::template iterator<Value, Base> &a,
+		typename graph_t<VertexProperties, EdgeProperties>::template iterator<Value, Base> &b)
+{
+	return a.iter != b.iter;
+}
+
+
+template<typename Iterator>
+struct adapter_t {
+	Iterator b;
+	Iterator e;
+
+	adapter_t(Iterator b, Iterator e)
+		: b(b), e(e)
+	{
+	}
+
+	Iterator begin() const
+	{
+		return b;
+	}
+
+	Iterator end() const
+	{
+		return e;
+	}
+};
+
+template<typename VertexProperties, typename EdgeProperties>
+adapter_t<typename graph_t<VertexProperties, EdgeProperties>::Edges::const_iterator>
+get_edges(const graph_t<VertexProperties, EdgeProperties> &g) 
+{
+	return
+		adapter_t<typename graph_t<VertexProperties, EdgeProperties>::Edges::const_iterator>
+		(g.edges.cbegin(), g.edges.cend());
+}
+
+template<typename VertexProperties, typename EdgeProperties>
+adapter_t<typename graph_t<VertexProperties, EdgeProperties>::Edges::iterator>
+get_edges(graph_t<VertexProperties, EdgeProperties> &g) 
+{
+	return
+		adapter_t<typename graph_t<VertexProperties, EdgeProperties>::Edges::iterator>
+		(g.edges.begin(), g.edges.end());
+}
+
+template<typename VertexProperties, typename EdgeProperties>
+adapter_t<typename graph_t<VertexProperties, EdgeProperties>::Vertices::const_iterator>
+get_vertices(const graph_t<VertexProperties, EdgeProperties> &g) 
+{
+	return
+		adapter_t<typename graph_t<VertexProperties, EdgeProperties>::Vertices::const_iterator>
+		(g.vertices.cbegin(), g.vertices.cend());
+}
+
+template<typename VertexProperties, typename EdgeProperties>
+adapter_t<typename graph_t<VertexProperties, EdgeProperties>::Vertices::iterator>
+get_vertices(graph_t<VertexProperties, EdgeProperties> &g) 
+{
+	return
+		adapter_t<typename graph_t<VertexProperties, EdgeProperties>::Vertices::iterator>
+		(g.vertices.begin(), g.vertices.end());
+}
+
+template<typename VertexProperties, typename EdgeProperties>
+adapter_t<typename graph_t<VertexProperties, EdgeProperties>::out_edges_iterator>
+get_out_edges(graph_t<VertexProperties, EdgeProperties> &g, const vertex_t<VertexProperties, EdgeProperties> &v)
+{
+	return adapter_t<typename graph_t<VertexProperties, EdgeProperties>::out_edges_iterator>
+		(typename graph_t<VertexProperties, EdgeProperties>::out_edges_iterator(g, v.edges.begin()),
+		 typename graph_t<VertexProperties, EdgeProperties>::out_edges_iterator(g, v.edges.end()));
+}
+
+template<typename VertexProperties, typename EdgeProperties>
+adapter_t<typename graph_t<VertexProperties, EdgeProperties>::out_edges_const_iterator>
+get_out_edges(const graph_t<VertexProperties, EdgeProperties> &g, const vertex_t<VertexProperties, EdgeProperties> &v)
+{
+	return adapter_t<typename graph_t<VertexProperties, EdgeProperties>::out_edges_const_iterator>
+		(typename graph_t<VertexProperties, EdgeProperties>::out_edges_const_iterator(g, v.edges.begin()),
+		 typename graph_t<VertexProperties, EdgeProperties>::out_edges_const_iterator(g, v.edges.end()));
+}
 
 template<typename VertexProperties, typename EdgeProperties>
 int id(const vertex_t<VertexProperties, EdgeProperties> &v)
@@ -181,7 +444,21 @@ const vertex_t<VertexProperties, EdgeProperties> &get_source(const graph_t<Verte
 }
 
 template<typename VertexProperties, typename EdgeProperties>
+vertex_t<VertexProperties, EdgeProperties> &get_source(graph_t<VertexProperties, EdgeProperties> &g, const edge_t<EdgeProperties> &e)
+{
+	assert(e.a < g.vertices.size());
+	return g.vertices[e.a];
+}
+
+template<typename VertexProperties, typename EdgeProperties>
 const vertex_t<VertexProperties, EdgeProperties> &get_target(const graph_t<VertexProperties, EdgeProperties> &g, const edge_t<EdgeProperties> &e)
+{
+	assert(e.b < g.vertices.size());
+	return g.vertices[e.b];
+}
+
+template<typename VertexProperties, typename EdgeProperties>
+vertex_t<VertexProperties, EdgeProperties> &get_target(graph_t<VertexProperties, EdgeProperties> &g, const edge_t<EdgeProperties> &e)
 {
 	assert(e.b < g.vertices.size());
 	return g.vertices[e.b];
@@ -265,14 +542,13 @@ void clear_edges(graph_t<VertexProperties, EdgeProperties> &g)
 }
 
 template<typename VertexProperties, typename EdgeProperties, typename VertexLabeler, typename EdgeLabeler, typename VertexFilter>
-void write_graph(const graph_t<VertexProperties, EdgeProperties> &g, const char *filename, const VertexLabeler &vertex_label, const EdgeLabeler &edge_label, const VertexFilter &vertex_filter)
+void write_graph(const graph_t<VertexProperties, EdgeProperties> &g, const char *filename, const VertexLabeler &vertex_attrs, const EdgeLabeler &edge_label, const VertexFilter &vertex_filter)
 {
 	FILE *file = fopen(filename, "w");
 	fprintf(file, "digraph g {\n");
-	for_all_vertices(g, [&g, &vertex_label, &vertex_filter, &file] (const vertex_t<VertexProperties, EdgeProperties> &v) -> void {
+	for_all_vertices(g, [&g, &vertex_attrs, &vertex_filter, &file] (const vertex_t<VertexProperties, EdgeProperties> &v) -> void {
 		if (!vertex_filter(v)) {
-			fprintf(file, "%d [label=\"%s\"", id(v), vertex_label(v).c_str());
-			fprintf(file, "];\n");
+			fprintf(file, "%d [%s];\n", id(v), vertex_attrs(v).c_str());
 		}
 	});
 	for_all_edges(g, [&g, &edge_label, &vertex_filter, &file] (const edge_t<EdgeProperties> &e) -> void {

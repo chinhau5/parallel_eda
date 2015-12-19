@@ -26,6 +26,20 @@ class QuadTree {
 		}
 
 	public:
+		int num_levels() const
+		{
+			int num_levels_;
+			if (children) {
+				num_levels_ = std::numeric_limits<int>::min();
+				for (int i = 0; i < 4; ++i) {
+					num_levels_ = std::max(num_levels_, 1+children[i].num_levels());
+				}
+			} else {
+				num_levels_ = 1;
+			}
+			return num_levels_;
+		}
+
 		template<typename Func>
 		void print_items(const Func &func) const
 		{
@@ -58,6 +72,20 @@ class QuadTree {
 			if (children) {
 				for (int i = 0; i < 4; ++i) {
 					children[i].verify(num_items);
+				}
+			}
+		}
+
+		void print_num_items(int level)
+		{
+			extern zlog_category_t *delta_log;
+			for (int i = 0; i < level; ++i) {
+				zlog_info(delta_log, "\t");
+			}
+			zlog_info(delta_log, "num_items level %d quadrant %d: %lu\n", level, quadrant, items.size());
+			if (children) {
+				for (int i = 0; i < 4; ++i) {
+					children[i].print_num_items(level+1);
 				}
 			}
 		}
