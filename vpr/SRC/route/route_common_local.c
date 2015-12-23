@@ -20,6 +20,7 @@
 #include "read_xml_arch_file.h"
 #include "ReadOptions.h"
 #include "parallel_route_timing.h"
+#include "utility.h"
 
 extern int nx, ny;
 extern int num_rr_nodes;

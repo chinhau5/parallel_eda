@@ -63,6 +63,8 @@ set(srcs
 	SRC/route/partitioning_route.c
 	SRC/route/route_tree.c
 	SRC/route/trace.c
+	SRC/route/utility.c
+	SRC/route/cluster.c
 	SRC/route/scheduler.c
 	SRC/route/advanced_parallel_route_timing.c
 	SRC/route/route_tree_timing.c
@@ -101,6 +103,9 @@ target_include_directories(Vpr PUBLIC
 	/opt/local/include
 	#~/Downloads/tbb44_20150728oss/include
 	/Users/chinhau5/Downloads/tbb44_20151115oss/include
+	/Users/chinhau5/Downloads/mlpack-1.0.12/build/include
+	/Users/chinhau5/Downloads/armadillo-6.400.3/include
+	/opt/local/include/libxml2
 	SRC/util
 	SRC/timing 
 	SRC/pack 

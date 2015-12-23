@@ -34,6 +34,8 @@
 #include "parallel_route_timing.h"
 #include "barrier.h"
 #include "bounding_box.h"
+#include "utility.h"
+
 using namespace std;
 
 extern int num_nets;

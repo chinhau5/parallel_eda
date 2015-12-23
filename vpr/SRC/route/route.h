@@ -2,11 +2,12 @@
 #define ROUTE_H
 
 #include <assert.h>
-#include <tbb/tbb.h>
 #include <boost/numeric/interval.hpp>
+#include <tbb/tbb.h>
 #include <zlog.h>
-#include "graph.h"
 #include "vpr_types.h"
+#include "graph.h"
+#include "geometry.h"
 
 typedef struct perf_t {
 	int num_heap_pushes;
@@ -98,9 +99,12 @@ typedef struct net_t {
 
 typedef struct virtual_net_t {
 	//tbb::spin_mutex lock;
+	int id;
 	bool valid;
 	source_t *source;
-	sink_t *sink;
+	vector<sink_t *> sinks;
+	point_t<int> centroid;
+	int nearest_rr_node;
 } virtual_net_t;
 
 //typedef struct simple_net_t {
@@ -187,15 +191,5 @@ void update_one_cost(RRGraph &g, route_tree_t &rt, const RouteTreeNode &node, in
 void update_one_cost_internal(RRNode &rr_node, int delta, float pres_fac);
 
 bool operator<(const route_state_t &a, const route_state_t &b);
-
-enum {
-	ROUTER_V1 = ZLOG_LEVEL_DEBUG+3,
-	ROUTER_V2 = ZLOG_LEVEL_DEBUG+2, 
-	ROUTER_V3 = ZLOG_LEVEL_DEBUG+1
-};
-
-#define zlog_level(cat, level, ...) \
-	zlog(cat, __FILE__, sizeof(__FILE__)-1, __func__, sizeof(__func__)-1, __LINE__, \
-	level, __VA_ARGS__)
 
 #endif

@@ -51,7 +51,5 @@ void load_net_rr_terminals(t_ivec *** L_rr_node_indices);
 
 void print_rr_node(FILE *fp, t_rr_node *L_rr_node, int inode);
 
-void sprintf_rr_node(int inode, char *buffer);
-
 #endif
 

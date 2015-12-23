@@ -35,8 +35,8 @@ struct graph_t {
 					  edge_t<EdgeProperties> *,
 					  edge_t<EdgeProperties> & 
 					  > {
-		vector<int>::const_iterator iter;
 		graph_t &g;
+		vector<int>::const_iterator iter;
 
 		out_edges_iterator(graph_t &g, const vector<int>::const_iterator &iter) 
 			: g(g), iter(iter)
@@ -77,8 +77,8 @@ struct graph_t {
 					  const edge_t<EdgeProperties> *,
 					  const edge_t<EdgeProperties> & 
 					  > {
-		vector<int>::const_iterator iter;
 		const graph_t &g;
+		vector<int>::const_iterator iter;
 
 		out_edges_const_iterator(const graph_t &g, const vector<int>::const_iterator &iter) 
 			: g(g), iter(iter)

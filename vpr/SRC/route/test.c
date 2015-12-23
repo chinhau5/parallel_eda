@@ -42,6 +42,9 @@ void test_rtree()
 	for (const auto &v : result_s) {
 		printf("overlapping: %d\n", v.second);
 	}
+
+	bgi::rtree< value, bgi::rstar<16> > t2;
+	t2.insert(make_pair(b1, 1));
 }
 
 void print_vector(igraph_vector_t *v) {

@@ -36,68 +36,74 @@ bool route_tree_empty(const route_tree_t &rt)
 	return rt.root_rt_node_id == -1;
 }
 
-RouteTreeNode *route_tree_add_rr_node(route_tree_t &rt, int rr_node)
+RouteTreeNode *route_tree_add_rr_node(route_tree_t &rt, const RRNode &rr_node)
 {
-	auto iter = rt.rr_node_to_rt_node.find(rr_node);
+	int rr_node_id = id(rr_node);
+
+	auto iter = rt.rr_node_to_rt_node.find(rr_node_id);
 
 	RouteTreeNode *v = nullptr;
+
 	if (iter == rt.rr_node_to_rt_node.end()) {
 		add_vertex(rt.graph);
 		int rt_node = num_vertices(rt.graph)-1;
-		rt.rr_node_to_rt_node[rr_node] = rt_node;
+		rt.rr_node_to_rt_node[rr_node_id] = rt_node;
 		v = &get_vertex(rt.graph, rt_node);
-		v->properties.rr_node = rr_node;
+		v->properties.rr_node = rr_node_id;
 	} else {
 		v = &get_vertex(rt.graph, iter->second);
-		assert(v->properties.rr_node == rr_node);
+		assert(v->properties.rr_node == rr_node_id);
 		if (v->properties.valid) {
 			v = nullptr;
 		}
 	}
+
 	if (v) {
 		assert(!v->properties.valid);
 		v->properties.valid = true;
 		v->properties.rt_edge_to_parent = -1;
 		v->properties.pending_rip_up = false;
+		v->properties.num_iterations_fixed = 0;
+
+		route_tree_t::segment seg(route_tree_t::point(rr_node.properties.xlow, rr_node.properties.ylow), route_tree_t::point(rr_node.properties.xhigh, rr_node.properties.yhigh));
+
+		/*assert(rt.point_tree.count(seg) == 0);*/
+
+		rt.point_tree.insert(make_pair(seg, id(*v)));
+
+		++rt.num_nodes;
 	}
+
 	return v;
 }
 
-RouteTreeNode *route_tree_get_rt_node(route_tree_t &rt, int rr_node)
+void route_tree_remove_node(route_tree_t &rt, const RRNode &rr_node)
 {
-	auto iter = rt.rr_node_to_rt_node.find(rr_node);
-	if (iter == rt.rr_node_to_rt_node.end()) {
-		return nullptr;
-	}	
+	RouteTreeNode *rt_node = route_tree_get_rt_node(rt, id(rr_node));
 
-	RouteTreeNode *res;
-	RouteTreeNode &v = get_vertex(rt.graph, iter->second);
-	if (v.properties.valid) {
-		res = &v;
-	} else {
-		res = nullptr;
+	assert(rt_node->properties.valid);
+	rt_node->properties.valid = false;
+
+	if (id(*rt_node) == rt.root_rt_node_id) {
+		rt.root_rt_node_id = -1;
 	}
 
-	return res;
+	assert(rt.point_tree.remove(make_pair(
+					route_tree_t::segment(
+						route_tree_t::point(rr_node.properties.xlow, rr_node.properties.ylow),
+						route_tree_t::point(rr_node.properties.xhigh, rr_node.properties.yhigh)
+						),
+					id(*rt_node)
+					)
+				)
+		  );
+
+	--rt.num_nodes;
 }
 
-const RouteTreeNode *route_tree_get_rt_node(const route_tree_t &rt, int rr_node)
+int route_tree_num_nodes(const route_tree_t &rt)
 {
-	const RouteTreeNode *res;
-
-	auto iter = rt.rr_node_to_rt_node.find(rr_node);
-	if (iter == rt.rr_node_to_rt_node.end()) {
-		res = nullptr;
-	} else {	
-		const RouteTreeNode &v = get_vertex(rt.graph, iter->second);
-		if (v.properties.valid) {
-			res = &v;
-		} else {
-			res = nullptr;
-		}
-	}
-
-	return res;
+	return rt.num_nodes;
 }
 
 RouteTreeEdge &route_tree_add_edge_between_rr_node(route_tree_t &rt, int rr_node_a, int rr_node_b)
@@ -122,9 +128,70 @@ RouteTreeEdge &route_tree_add_edge_between_rr_node(route_tree_t &rt, int rr_node
 	}
 
 	auto &edge = add_edge(rt.graph, *rt_node_a, *rt_node_b);
+	/* a route tree node can only have one driver */
+	assert(rt_node_b->properties.rt_edge_to_parent == -1);
 	rt_node_b->properties.rt_edge_to_parent = id(edge);
 
 	return edge;
+}
+
+void route_tree_remove_edge(route_tree_t &rt, const RouteTreeEdge &edge)
+{
+	char s_from[256];
+	char s_to[256];
+	sprintf_rr_node(get_source(rt.graph, edge).properties.rr_node, s_from);
+	sprintf_rr_node(get_target(rt.graph, edge).properties.rr_node, s_to);
+	zlog_level(delta_log, ROUTER_V2, "Removing edge %s -> %s\n", s_from, s_to);
+
+	for (auto &rt_node: route_tree_get_nodes(rt)) {
+		if (rt_node.properties.rt_edge_to_parent > id(edge)) {
+			--rt_node.properties.rt_edge_to_parent;
+		}
+	}
+
+	auto &target = get_target(rt.graph, edge);
+	target.properties.rt_edge_to_parent = -1;
+	remove_edge(rt.graph, edge);
+}
+
+RouteTreeNode *route_tree_get_rt_node(route_tree_t &rt, int rr_node)
+{
+	RouteTreeNode *res;
+
+	auto iter = rt.rr_node_to_rt_node.find(rr_node);
+
+	if (iter == rt.rr_node_to_rt_node.end()) {
+		res = nullptr;
+	} else {
+		RouteTreeNode &v = get_vertex(rt.graph, iter->second);
+		if (v.properties.valid) {
+			res = &v;
+		} else {
+			res = nullptr;
+		}
+	}
+
+	return res;
+}
+
+const RouteTreeNode *route_tree_get_rt_node(const route_tree_t &rt, int rr_node)
+{
+	const RouteTreeNode *res;
+
+	auto iter = rt.rr_node_to_rt_node.find(rr_node);
+	
+	if (iter == rt.rr_node_to_rt_node.end()) {
+		res = nullptr;
+	} else {	
+		const RouteTreeNode &v = get_vertex(rt.graph, iter->second);
+		if (v.properties.valid) {
+			res = &v;
+		} else {
+			res = nullptr;
+		}
+	}
+
+	return res;
 }
 
 adapter_t<route_tree_t::vertex_iterator>
@@ -169,24 +236,6 @@ route_tree_get_branches(const route_tree_t &rt, const RouteTreeNode &rt_node)
 			route_tree_t::branch_const_iterator(begin(out_edges)), route_tree_t::branch_const_iterator(end(out_edges)));
 }
 
-void route_tree_merge(route_tree_t &merged_rt, const route_tree_t &other_rt)
-{
-	/*for_all_edges(other_rt.graph, [&merged_rt, &other_rt] (const RouteTreeEdge &e) -> void {*/
-			/*const RouteTreeNode &other_source_rt_node = get_source(other_rt.graph, e);*/
-			/*const RouteTreeNode &other_target_rt_node = get_target(other_rt.graph, e);*/
-			/*int source_rr_node = other_source_rt_node.properties.rr_node;*/
-			/*int target_rr_node = other_target_rt_node.properties.rr_node;*/
-
-			/*RouteTreeNode &merged_source_rt_node = route_tree_add_rr_node(merged_rt, source_rr_node);*/
-			/*merged_source_rt_node.properties = other_source_rt_node.properties;*/
-			/*RouteTreeNode &merged_target_rt_node = route_tree_add_rr_node(merged_rt, target_rr_node);*/
-			/*merged_target_rt_node.properties = other_target_rt_node.properties;*/
-
-			/*route_tree_add_edge_between_rr_node(merged_rt, source_rr_node, target_rr_node);*/
-			/*}*/
-			/*);*/
-}
-
 void route_tree_rip_up_marked(route_tree_t &rt, RRGraph &g, float pres_fac)
 {
 	char buffer[256];
@@ -197,26 +246,61 @@ void route_tree_rip_up_marked(route_tree_t &rt, RRGraph &g, float pres_fac)
 			zlog_level(delta_log, ROUTER_V2, "Ripping up node %s from route tree\n", buffer);
 
 			update_one_cost_internal(rr_node, -1, pres_fac);
-			rt_node.properties.valid = false;
+			route_tree_remove_node(rt, rr_node);
 			rt_node.properties.pending_rip_up = false;
 
 			if (rt_node.properties.rt_edge_to_parent != -1) {
 				auto &edge = get_edge(rt.graph, rt_node.properties.rt_edge_to_parent);
-				for (auto &other_node : route_tree_get_nodes(rt)) {
-					if (other_node.properties.rt_edge_to_parent > rt_node.properties.rt_edge_to_parent) {
-						--other_node.properties.rt_edge_to_parent;
-					}
-				}
-				char buffer2[256];
-				const auto &parent = get_source(rt.graph, edge);
-				sprintf_rr_node(parent.properties.rr_node, buffer2);
-				zlog_level(delta_log, ROUTER_V2, "Removing edge %s -> %s\n", buffer2, buffer);
-				remove_edge(rt.graph, edge);
+				route_tree_remove_edge(rt, edge);
 			} 
 		} else {
 			zlog_level(delta_log, ROUTER_V2, "NOT ripping up node %s from route tree\n", buffer);
 		}
 	}
+}
+
+bool route_tree_node_check_and_mark_for_rip_up(route_tree_t &rt, RouteTreeNode &rt_node, const RRGraph &g, int num_iterations_fixed_threshold)
+{
+	const auto &rr_node = get_vertex(g, rt_node.properties.rr_node);
+
+	++rt_node.properties.num_iterations_fixed;
+
+	if (rt_node.properties.rt_edge_to_parent != -1) {
+		rt_node.properties.pending_rip_up = get_source(rt.graph, get_edge(rt.graph, rt_node.properties.rt_edge_to_parent)).properties.pending_rip_up;
+	} else {
+		rt_node.properties.pending_rip_up = false;
+	}
+
+	rt_node.properties.pending_rip_up |= (rr_node.properties.occ > rr_node.properties.capacity) || (rt_node.properties.num_iterations_fixed > num_iterations_fixed_threshold);
+
+	if (rt_node.properties.pending_rip_up) {
+		rt_node.properties.num_iterations_fixed = 0;
+	}
+
+	return rt_node.properties.pending_rip_up;
+}
+
+void route_tree_mark_nodes_to_be_ripped_internal(route_tree_t &rt, const RRGraph &g, RouteTreeNode &rt_node, int num_iterations_fixed_threshold)
+{
+	assert(rt_node.properties.valid);
+
+	route_tree_node_check_and_mark_for_rip_up(rt, rt_node, g, num_iterations_fixed_threshold);
+
+	for (auto &branch : route_tree_get_branches(rt, rt_node)) {
+		auto &child = get_target(rt.graph, branch);
+
+		route_tree_mark_nodes_to_be_ripped_internal(rt, g, child, num_iterations_fixed_threshold);
+	}
+}
+
+void route_tree_mark_nodes_to_be_ripped(route_tree_t &rt, const RRGraph &g, int num_iterations_fixed_threshold)
+{
+	if (rt.root_rt_node_id == -1) {
+		return;
+	}
+
+	auto &root_rt_node = get_vertex(rt.graph, rt.root_rt_node_id);
+	route_tree_mark_nodes_to_be_ripped_internal(rt, g, root_rt_node, num_iterations_fixed_threshold);
 }
 
 void route_tree_rip_up_segment_2(route_tree_t &rt, int sink_rr_node, RRGraph &g, float pres_fac)
@@ -268,39 +352,6 @@ void route_tree_rip_up_segment_2(route_tree_t &rt, int sink_rr_node, RRGraph &g,
 
 		current = parent;
 	} while (current && num_out_edges(rt.graph, *current) == 0);
-}
-
-void route_tree_mark_nodes_to_be_ripped_internal(route_tree_t &rt, const RRGraph &g, RouteTreeNode &rt_node, bool pending_rip_up)
-{
-	assert(rt_node.properties.valid);
-
-	rt_node.properties.pending_rip_up = pending_rip_up;
-
-	for (auto &branch : route_tree_get_branches(rt, rt_node)) {
-		auto &child = get_target(rt.graph, branch);
-
-		bool child_pending_rip_up;
-		if (!pending_rip_up) {
-			const auto &rr_node = get_vertex(g, child.properties.rr_node);
-			child_pending_rip_up = rr_node.properties.occ > rr_node.properties.capacity;
-		} else {
-			child_pending_rip_up = true;
-		}
-		
-		route_tree_mark_nodes_to_be_ripped_internal(rt, g, child, child_pending_rip_up);
-	}
-}
-
-void route_tree_mark_nodes_to_be_ripped(route_tree_t &rt, const RRGraph &g)
-{
-	if (rt.root_rt_node_id == -1) {
-		return;
-	}
-
-	auto &root_rt_node = get_vertex(rt.graph, rt.root_rt_node_id);
-	const auto &root_rr_node = get_vertex(g, root_rt_node.properties.rr_node);
-	bool pending_rip_up = root_rr_node.properties.occ > root_rr_node.properties.capacity;
-	route_tree_mark_nodes_to_be_ripped_internal(rt, g, root_rt_node, pending_rip_up);
 }
 
 void route_tree_rip_up_segment(route_tree_t &rt, int sink_rr_node, RRGraph &g, float pres_fac)
@@ -404,7 +455,7 @@ void route_tree_add_path(route_tree_t &rt, const RRGraph &g, const route_state_t
 		/* current */
 		int current_rr_node_id = rr_nodes[i];
 		const RRNode &current_rr_node = get_vertex(g, current_rr_node_id);
-		RouteTreeNode *current_rt_node = route_tree_checked_add_rr_node(rt, current_rr_node_id, state);
+		RouteTreeNode *current_rt_node = route_tree_checked_add_rr_node(rt, current_rr_node, state);
 		route_tree_set_node_properties(*current_rt_node, current_rr_node.properties.type != IPIN && current_rr_node.properties.type != SINK, state[current_rr_node_id].prev_edge, state[current_rr_node_id].upstream_R, state[current_rr_node_id].delay);
 
 		/* parent */
@@ -412,7 +463,7 @@ void route_tree_add_path(route_tree_t &rt, const RRGraph &g, const route_state_t
 		int parent_rr_node_id = id(parent_rr_node);
 		assert(parent_rr_node_id == rr_nodes[i+1]);
 
-		RouteTreeNode *parent_rt_node = route_tree_checked_add_rr_node(rt, parent_rr_node_id, state);
+		RouteTreeNode *parent_rt_node = route_tree_checked_add_rr_node(rt, parent_rr_node, state);
 		auto connection = route_tree_get_connection(parent_rr_node, g, state, i+1 == rr_nodes.size()-1);
 		route_tree_set_node_properties(*parent_rt_node, parent_rr_node.properties.type != IPIN && parent_rr_node.properties.type != SINK, connection.first, state[parent_rr_node_id].upstream_R, state[parent_rr_node_id].delay);
 
@@ -577,7 +628,8 @@ void route_tree_set_node_properties(RouteTreeNode &rt_node, bool reexpand, const
 
 RouteTreeNode *route_tree_add_or_get_rr_node(route_tree_t &rt, int rr_node_id, const RRGraph &g, const route_state_t *state, bool &update_cost, bool &stop_traceback)
 {
-	RouteTreeNode *rt_node = route_tree_add_rr_node(rt, rr_node_id);
+	const auto &rr_node = get_vertex(g, rr_node_id);
+	RouteTreeNode *rt_node = route_tree_add_rr_node(rt, rr_node);
 	update_cost = false;
 	stop_traceback = false;
 
@@ -614,7 +666,6 @@ RouteTreeNode *route_tree_add_or_get_rr_node(route_tree_t &rt, int rr_node_id, c
 					/*});*/
 			stop_traceback = true;
 		} else {
-			const auto &rr_node = get_vertex(g, rr_node_id);
 			zlog_level(delta_log, ROUTER_V2, "Reconnecting to existing route tree node %s ", buffer);
 			if (rr_node.properties.type == SOURCE) {
 				if (rr_node.properties.capacity > 1) {
@@ -635,9 +686,10 @@ RouteTreeNode *route_tree_add_or_get_rr_node(route_tree_t &rt, int rr_node_id, c
 	return rt_node;
 }
 
-RouteTreeNode *route_tree_checked_add_rr_node(route_tree_t &rt, int rr_node_id, const route_state_t *state)
+RouteTreeNode *route_tree_checked_add_rr_node(route_tree_t &rt, const RRNode &rr_node, const route_state_t *state)
 {
-	RouteTreeNode *rt_node = route_tree_add_rr_node(rt, rr_node_id);
+	RouteTreeNode *rt_node = route_tree_add_rr_node(rt, rr_node);
+	int rr_node_id = id(rr_node);
 	if (!rt_node && (rt_node = route_tree_get_rt_node(rt, rr_node_id))) {
 		if (rt_node->properties.upstream_R != state[rr_node_id].upstream_R ||
 				rt_node->properties.delay != state[rr_node_id].delay) {
@@ -749,10 +801,10 @@ void route_tree_add_to_heap(const route_tree_t &rt, const RRGraph &g, const RRNo
 	/*return iter->second;*/
 /*}*/
 
-void route_tree_is_only_path_internal(const RRGraph &g, const RRNode &node)
-{
+/*void route_tree_is_only_path_internal(const RRGraph &g, const RRNode &node)*/
+/*{*/
 
-}
+/*}*/
 
 /*RouteTree &route_tree_get_sink_root(route_tree_t &rt, int sink_rr_node)*/
 /*{*/
@@ -794,3 +846,20 @@ void route_tree_is_only_path_internal(const RRGraph &g, const RRNode &node)
 	/*return add_edge(rt.graph, rt_node_a, rt_node_b);*/
 /*}*/
 
+void route_tree_merge(route_tree_t &merged_rt, const route_tree_t &other_rt)
+{
+	/*for_all_edges(other_rt.graph, [&merged_rt, &other_rt] (const RouteTreeEdge &e) -> void {*/
+			/*const RouteTreeNode &other_source_rt_node = get_source(other_rt.graph, e);*/
+			/*const RouteTreeNode &other_target_rt_node = get_target(other_rt.graph, e);*/
+			/*int source_rr_node = other_source_rt_node.properties.rr_node;*/
+			/*int target_rr_node = other_target_rt_node.properties.rr_node;*/
+
+			/*RouteTreeNode &merged_source_rt_node = route_tree_add_rr_node(merged_rt, source_rr_node);*/
+			/*merged_source_rt_node.properties = other_source_rt_node.properties;*/
+			/*RouteTreeNode &merged_target_rt_node = route_tree_add_rr_node(merged_rt, target_rr_node);*/
+			/*merged_target_rt_node.properties = other_target_rt_node.properties;*/
+
+			/*route_tree_add_edge_between_rr_node(merged_rt, source_rr_node, target_rr_node);*/
+			/*}*/
+			/*);*/
+}

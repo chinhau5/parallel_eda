@@ -7,6 +7,7 @@ link_directories(
 	/opt/local/lib
 	~/Downloads/tbb44_20151115oss/build/macos_intel64_clang_cc5.2.0_os10.11.1_debug
 	~/Downloads/tbb44_20151115oss/build/macos_intel64_clang_cc5.2.0_os10.11.1_release
+	/Users/chinhau5/Downloads/mlpack-1.0.12/build/lib
 	)
 
 #set(CMAKE_SKIP_RPATH true)
@@ -18,9 +19,10 @@ add_compile_options(
 	#-D TBB_USE_DEBUG=1
 	-ferror-limit=0
 	-std=c++11
-	-g -O2
+	-g -O0
 	#-Bdynamic
 	-Wall
+	#	-H
 	)
 
 if (CMAKE_SYSTEM_NAME STREQUAL "Linux" AND SANITIZE EQUAL 1)
@@ -61,6 +63,7 @@ else()
 		boost_system-mt-d
 		igraph
 		tbb
+		mlpack
 		)
 endif()
 
