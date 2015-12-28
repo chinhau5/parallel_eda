@@ -2,6 +2,7 @@
 #include <fcntl.h>
 #include <unistd.h>
 #include <semaphore.h>
+#include <sstream>
 #include <random>
 #include <memory>
 #include <ctime>
@@ -10,7 +11,7 @@
 /*#include <boost/numeric/interval.hpp>*/
 #include <boost/timer/timer.hpp>
 #include <zlog.h>
-#define TBB_USE_DEBUG 1
+/*#define TBB_USE_DEBUG 1*/
 #include <tbb/task_scheduler_init.h>
 #include <tbb/concurrent_queue.h>
 #include <tbb/tbb.h>
@@ -1586,10 +1587,7 @@ void init_nets(vector<net_t> &nets, vector<net_t> &global_nets, int bb_factor)
 	extern struct s_bb *route_bb;
 	extern struct s_block *block;
 
-	struct point {
-		int x;
-		int y;
-	} bl, tr;
+	point_t<int> bl, tr;
 
 	int local_id = 0;
 	for (int i = 0; i < num_nets; ++i) {
@@ -2564,10 +2562,7 @@ void update_sink_bounding_boxes_3(net_t &net, route_tree_t &rt, const RRGraph &g
 					return;
 					}
 
-					struct point {
-					int x;
-					int y;
-					} bottom_left, top_right;
+					point_t<int> bottom_left, top_right;
 
 					bottom_left.x = std::min(sink.x, from_node.properties.xlow);
 					bottom_left.y = std::min(sink.y, from_node.properties.ylow);
@@ -2603,6 +2598,133 @@ void update_sink_bounding_boxes_3(net_t &net, route_tree_t &rt, const RRGraph &g
 	}
 }
 
+void update_virtual_net_current_sinks(virtual_net_t &virtual_net, const route_tree_t &rt)
+{
+	virtual_net.current_sinks.clear();
+	for (const auto &sink : virtual_net.sinks) {
+		const RouteTreeNode *sink_rt_node = route_tree_get_rt_node(rt, sink->rr_node);
+		if (!sink_rt_node || sink_rt_node->properties.pending_rip_up) {
+			char buffer[256];
+			sprintf_rr_node(sink->rr_node, buffer);
+			zlog_level(scheduler_log, ROUTER_V3, "Adding sink %s to net %d virtual net %d\n", buffer, virtual_net.sinks[0]->net->vpr_id, virtual_net.id);
+			virtual_net.current_sinks.push_back(sink);
+		}
+	}
+}
+
+void update_virtual_net_scheduler_bounding_box(virtual_net_t &virtual_net, const route_tree_t &rt, const RRGraph &g, bool was_ripped_up)
+{
+	virtual_net.scheduler_bounding_box = bg::make_inverse<box>();
+
+	if (was_ripped_up) {
+		zlog_level(scheduler_log, ROUTER_V3, "Expanding scheduler bounding box to cover marked rt nodes\n");
+
+		for (const auto &rt_node : route_tree_get_nodes(rt)) {
+			if (rt_node.properties.pending_rip_up) {
+				auto &rr_node = get_vertex(g, rt_node.properties.rr_node);
+
+				char buffer[256];
+				sprintf_rr_node(id(rr_node), buffer);
+				zlog_level(scheduler_log, ROUTER_V3, "\t%s\n", buffer);
+
+				bg::expand(virtual_net.scheduler_bounding_box, segment(point(rr_node.properties.xlow, rr_node.properties.ylow), point(rr_node.properties.xhigh, rr_node.properties.yhigh)));
+			}
+		}
+	}
+
+	zlog_level(scheduler_log, ROUTER_V3, "Scheduler bounding box before expanding with sink bounding box: %s\n",
+			static_cast<const std::ostringstream &>(std::ostringstream() << bg::dsv(virtual_net.scheduler_bounding_box)).str().c_str());
+
+	bg::expand(virtual_net.scheduler_bounding_box, virtual_net.current_bounding_box);
+
+	zlog_level(scheduler_log, ROUTER_V3, "Scheduler bounding box after expanding with sink bounding box %s: %s\n",
+			static_cast<const std::ostringstream &>(std::ostringstream() << bg::dsv(virtual_net.current_bounding_box)).str().c_str(),
+			static_cast<const std::ostringstream &>(std::ostringstream() << bg::dsv(virtual_net.scheduler_bounding_box)).str().c_str());
+}
+
+void update_virtual_net_sink_bounding_boxes(virtual_net_t &virtual_net, route_tree_t &rt, const RRGraph &g, float astar_fac)
+{
+	/*net.previous_sink_index = net.current_sink_index;*/
+	/*net.previous_source = net.current_source;*/
+	/*net.previous_bounding_box = get_bounding_box(net.previous_source, net.sinks[net.previous_sink_index]);*/
+
+	/*current_sink.previous_bounding_box = current_sink.current_bounding_box;*/
+	/*assert(!route_tree_empty(rt));*/
+
+	int min_area = std::numeric_limits<int>::max();
+	const RRNode *new_from = nullptr;
+
+	box sink_bounding_box = bg::make_inverse<box>();
+	for (const auto &sink : virtual_net.current_sinks) {
+		bg::expand(sink_bounding_box, point(sink->x, sink->y));
+	}
+	point c;
+	bg::centroid(sink_bounding_box, c);
+
+	const net_t &net = *virtual_net.current_sinks[0]->net;
+
+	zlog_level(scheduler_log, ROUTER_V2, "Getting nearest node from route tree to centroid %d,%d\n", c.get<0>(), c.get<1>());  
+	RouteTreeNode *nearest_rt_node = route_tree_get_nearest_node(rt, c, g);
+
+	char buffer[256];
+
+	if (nearest_rt_node == nullptr) {
+		const auto &nodes = route_tree_get_nodes(rt);
+		if (route_tree_empty(rt) || all_of(begin(nodes), end(nodes), [] (const RouteTreeNode &node) -> bool { return node.properties.pending_rip_up; })) {
+			virtual_net.nearest_rr_node = net.source.rr_node;
+			zlog_level(scheduler_log, ROUTER_V2, "Net %d empty route tree. Setting virtual net %d bounding box to start from source\n", net.vpr_id, virtual_net.id);
+		} else {
+			zlog_error(scheduler_log, "Error: Unable to find node in route tree that is closest to virtual net %d centroid %d,%d\n", virtual_net.id, c.get<0>(), c.get<1>());
+			assert(false);
+		}
+	} else {
+		virtual_net.nearest_rr_node = nearest_rt_node->properties.rr_node;
+	}
+
+	sprintf_rr_node(virtual_net.nearest_rr_node, buffer);
+	zlog_level(scheduler_log, ROUTER_V2, "Net %d virtual net %d new source %s\n", net.vpr_id, virtual_net.id, buffer);
+
+	virtual_net.current_bounding_box = bg::make_inverse<box>();
+	auto &rr_node = get_vertex(g, virtual_net.nearest_rr_node);
+	bg::expand(virtual_net.current_bounding_box, segment(point(rr_node.properties.xlow, rr_node.properties.ylow), point(rr_node.properties.xhigh, rr_node.properties.yhigh)));
+	bg::expand(virtual_net.current_bounding_box, sink_bounding_box);
+
+	int bb_factor = 0;
+	for (const auto &sink : virtual_net.current_sinks) {
+		bb_factor += sink->bb_factor;
+	}
+	bb_factor /= virtual_net.current_sinks.size();
+
+	int xmin = virtual_net.current_bounding_box.min_corner().get<0>();
+	int ymin = virtual_net.current_bounding_box.min_corner().get<1>();
+	int xmax = virtual_net.current_bounding_box.max_corner().get<0>();
+	int ymax = virtual_net.current_bounding_box.max_corner().get<1>();
+
+	extern int nx;
+	extern int ny;
+
+	xmin = std::max(xmin - 1 - bb_factor, 0);
+	xmax = std::min(xmax + bb_factor, nx + 1);
+	ymin = std::max(ymin - 1 - bb_factor, 0);
+	ymax = std::min(ymax + bb_factor, ny + 1);
+
+	virtual_net.current_bounding_box.min_corner().set<0>(xmin);
+	virtual_net.current_bounding_box.min_corner().set<1>(ymin);
+	virtual_net.current_bounding_box.max_corner().set<0>(xmax);
+	virtual_net.current_bounding_box.max_corner().set<1>(ymax);
+
+	for (const auto &sink : virtual_net.current_sinks) {
+		sink->current_bounding_box.xmin = virtual_net.current_bounding_box.min_corner().get<0>();
+		sink->current_bounding_box.ymin = virtual_net.current_bounding_box.min_corner().get<1>();
+		sink->current_bounding_box.xmax = virtual_net.current_bounding_box.max_corner().get<0>();
+		sink->current_bounding_box.ymax = virtual_net.current_bounding_box.max_corner().get<1>();
+	}
+
+	zlog_level(scheduler_log, ROUTER_V2, "Net %d virtual net %d sink bounding box %s current bounding box %s\n", net.vpr_id, virtual_net.id, 
+			static_cast<const std::ostringstream &>(std::ostringstream() << bg::dsv(sink_bounding_box)).str().c_str(),
+			static_cast<const std::ostringstream &>(std::ostringstream() << bg::dsv(virtual_net.current_bounding_box)).str().c_str());
+}
+
 void update_sink_bounding_boxes_5(vector<virtual_net_t> &virtual_nets, route_tree_t &rt, const RRGraph &g, float astar_fac)
 {
 	/*net.previous_sink_index = net.current_sink_index;*/
@@ -2613,14 +2735,15 @@ void update_sink_bounding_boxes_5(vector<virtual_net_t> &virtual_nets, route_tre
 	/*assert(!route_tree_empty(rt));*/
 
 	for (auto &vnet : virtual_nets) {
-		if (vnet.valid) {
+		if (!vnet.routed) {
 			int min_area = std::numeric_limits<int>::max();
 			const RRNode *new_from = nullptr;
 
 			const net_t &net = *vnet.sinks[0]->net;
 
-			zlog_level(scheduler_log, ROUTER_V2, "Getting nearest node from route tree to centroid %d,%d\n", vnet.centroid.x, vnet.centroid.y);  
-			RouteTreeNode *nearest_rt_node = route_tree_get_nearest_node(rt, vnet.centroid, g);
+			point centroid;
+			zlog_level(scheduler_log, ROUTER_V2, "Getting nearest node from route tree to centroid %d,%d\n", centroid.get<0>(), centroid.get<1>());  
+			RouteTreeNode *nearest_rt_node = route_tree_get_nearest_node(rt, centroid, g);
 
 			char buffer[256];
 
@@ -2630,8 +2753,7 @@ void update_sink_bounding_boxes_5(vector<virtual_net_t> &virtual_nets, route_tre
 					vnet.nearest_rr_node = net.source.rr_node;
 					zlog_level(scheduler_log, ROUTER_V2, "Net %d empty route tree. Setting virtual net %d bounding box to start from source\n", net.vpr_id, vnet.id);
 				} else {
-					zlog_error(scheduler_log, "Error: Unable to find node in route tree that is closest to virtual net %d centroid %d,%d\n", vnet.id, vnet.centroid.x, vnet.centroid.y);
-					assert(false);
+					zlog_error(scheduler_log, "Error: Unable to find node in route tree that is closest to virtual net %d centroid %d,%d\n", vnet.id, centroid.get<0>(), centroid.get<1>());					assert(false);
 				}
 			} else {
 				vnet.nearest_rr_node = nearest_rt_node->properties.rr_node;
@@ -2685,10 +2807,7 @@ void update_sink_bounding_boxes_4(net_t &net, route_tree_t &rt, const RRGraph &g
 					continue;
 				}
 
-				struct point {
-					int x;
-					int y;
-				} bottom_left, top_right;
+				point_t<int> bottom_left, top_right;
 
 				bottom_left.x = std::min(sink.x, from_node.properties.xlow);
 				bottom_left.y = std::min(sink.y, from_node.properties.ylow);
@@ -2775,10 +2894,7 @@ void update_sink_bounding_boxes_2(net_t &net, route_tree_t &rt, const RRGraph &g
 					return;
 					}
 
-					struct point {
-					int x;
-					int y;
-					} bottom_left, top_right;
+					point_t<int> bottom_left, top_right;
 
 					bottom_left.x = std::min(sink.x, from_node.properties.xlow);
 					bottom_left.y = std::min(sink.y, from_node.properties.ylow);
@@ -2932,10 +3048,7 @@ void set_to_next_sink(net_t &net, route_tree_t &rt, const RRGraph &g, float asta
 				return;
 			}
 
-			struct point {
-				int x;
-				int y;
-			} bottom_left, top_right;
+			point_t<int> bottom_left, top_right;
 			
 			bottom_left.x = std::min(new_sink.x, from_node.properties.xlow);
 			bottom_left.y = std::min(new_sink.y, from_node.properties.ylow);
@@ -3702,6 +3815,7 @@ class RouteWorker {
 struct SchedulerArgs {
 	int *iteration;
 	vector<virtual_net_t> *virtual_nets;
+	vector<net_t> *nets;
 	vector<vector<virtual_net_t>> *virtual_nets_by_net;
 
 	sem_t *produce_sem;	
@@ -3713,6 +3827,8 @@ struct SchedulerArgs {
 	route_parameters_t *params;
 	vector<route_tree_t> *route_trees;
 	int num_nets;
+
+	vector<std::mutex> *net_locks;
 };
 
 FILE *sched_output_log;
@@ -3730,7 +3846,7 @@ void *test_scheduler_thread_tmp(void *args)
 
 		sargs->pending_virtual_nets->push(vnet);
 
-		vnet->valid = false;
+		vnet->routed = true;
 
 		++num_virtual_nets_dispatched;
 
@@ -3791,12 +3907,202 @@ static void *test_scheduler_thread(void *args)
 					zlog_level(scheduler_log, ROUTER_V2, "Sink %d (%d) already routed\n", sink->id, sink->rr_node);
 					net->sink_routed[sink->id] = true;
 				}
-				vnet.valid = false;
+				vnet.routed = true;
 			}
 		}
 	}
 
 	fclose(sched_output_log);
+
+	return nullptr;
+}
+
+static void *scheduler_thread_2(void *args)
+{
+	SchedulerArgs *sargs = (SchedulerArgs *)args;
+
+	char filename[256];
+	sprintf(filename, "/Volumes/DATA/scheduler_%d.log", *sargs->iteration);
+	sched_output_log = fopen(filename, "w");
+
+	zlog_level(scheduler_log, ROUTER_V1, "Scheduler thread iter %d\n", *sargs->iteration);
+
+	int num_routed_virtual_nets = 0;
+	int num_virtual_nets = 0;
+
+	using value = pair<box, virtual_net_t *>;
+	struct equal {
+		bool operator()(const value &a, const value &b) const
+		{
+			return bg::equals(a.first, b.first) && a.second == b.second;
+		}
+	};
+	bg::index::rtree<value, bgi::rstar<16>, bgi::indexable<value>, equal> pending_rtree;
+
+	vector<virtual_net_t *> in_flight_virtual_nets;
+
+#ifdef __linux__
+		__itt_frame_begin_v3(pD, NULL);
+#endif
+
+	for (const auto &net : *sargs->nets) {
+		route_tree_mark_nodes_to_be_ripped((*sargs->route_trees)[net.local_id], *sargs->g, 1000);
+
+		for (const auto &virtual_net : net.virtual_nets) {
+			update_virtual_net_current_sinks(*virtual_net, (*sargs->route_trees)[net.local_id]);
+			virtual_net->routed = virtual_net->current_sinks.empty();
+			if (!virtual_net->routed) {
+				/* the sequence of this 2 calls are important */
+				update_virtual_net_sink_bounding_boxes(*virtual_net, (*sargs->route_trees)[net.local_id], *sargs->g, sargs->params->astar_fac);
+				update_virtual_net_scheduler_bounding_box(*virtual_net, (*sargs->route_trees)[net.local_id], *sargs->g, false);
+
+				zlog_level(scheduler_log, ROUTER_V2, "Adding net %d virtual net %d bb %s\n", virtual_net->sinks[0]->net->vpr_id, virtual_net->id, static_cast<const std::ostringstream &>(std::ostringstream() << bg::dsv(virtual_net->scheduler_bounding_box)).str().c_str());
+
+				virtual_net->saved_scheduler_bounding_box = virtual_net->scheduler_bounding_box;
+				pending_rtree.insert(make_pair(virtual_net->scheduler_bounding_box, virtual_net));
+
+				++num_virtual_nets;
+			} else {
+				zlog_level(scheduler_log, ROUTER_V2, "Routed net %d virtual net %d\n", virtual_net->sinks[0]->net->vpr_id, virtual_net->id);
+			}
+		}
+	}
+
+#ifdef __linux__ 
+		__itt_frame_end_v3(pD, NULL);
+#endif
+
+	zlog_level(scheduler_log, ROUTER_V1, "Number of virtual nets: %d\n", num_virtual_nets);
+
+	/*vector<bool> ripped_up(sargs->nets->size(), false);*/
+
+	while (num_routed_virtual_nets < num_virtual_nets) {
+		/*auto pred = bg::index::satisfies([](const pair<box, virtual_net_t *> &v)->bool{return true;});*/
+		/*bgi::rtree<pair<box, virtual_net_t *>, bgi::rstar<16>>::const_query_iterator iter;*/
+		/*switch (in_flight_virtual_nets.size()) {*/
+			/*case 0:*/
+				/*iter = pending_rtree.qbegin(*/
+						/*bgi::satisfies([] (const pair<box, virtual_net_t *> &v) -> bool{ return true; })*/
+						/*);*/
+				/*break;*/
+			/*case 1:*/
+				/*iter = pending_rtree.qbegin(*/
+						/*bgi::disjoint(in_flight_virtual_nets[0]->bounding_box)*/
+						/*);*/
+				/*break;*/
+			/*default:*/
+				/*auto pred = bgi::disjoint(in_flight_virtual_nets[0]->bounding_box) &&*/
+						/*bgi::disjoint(in_flight_virtual_nets[1]->bounding_box);*/
+		 
+				/*for (const auto &in_flight : in_flight_virtual_nets) {*/
+					/*pred = pred && bgi::disjoint(in_flight->bounding_box);*/
+				/*}*/
+
+				/*iter = pending_rtree.qbegin(pred);*/
+				/*break;*/
+		/*}*/
+		/*auto pred = bgi::disjoint(point(0, 0));*/
+		/*for (const auto &in_flight : in_flight_virtual_nets) {*/
+			/*pred = pred && bgi::disjoint(in_flight->bounding_box);*/
+		/*}*/
+		zlog_level(scheduler_log, ROUTER_V3, "Going to dispatching virtual net. Pending rtree size: %lu\n", pending_rtree.size());
+
+		const auto &pred = bgi::satisfies([&in_flight_virtual_nets] (const pair<box, virtual_net_t *> &v) -> bool {
+				bool dis = std::find_if(begin(in_flight_virtual_nets), end(in_flight_virtual_nets), [&v] (virtual_net_t *in_flight) -> bool { return in_flight->sinks[0]->net == v.second->sinks[0]->net; }) == end(in_flight_virtual_nets);
+				for (int i = 0; i < in_flight_virtual_nets.size() && dis; ++i) {
+					dis &= bg::disjoint(v.first, in_flight_virtual_nets[i]->scheduler_bounding_box);
+				}
+				return dis;
+				}
+				);
+
+		vector<virtual_net_t *> dispatched_virtual_nets;
+		for (auto iter = pending_rtree.qbegin(pred); iter != pending_rtree.qend(); ++iter) {
+			/* remove the iter from pending_rtree */
+			/* add the iter to in_flight_virtual_nets */
+			/* loop again */
+
+			in_flight_virtual_nets.push_back(iter->second);
+
+			dispatched_virtual_nets.push_back(iter->second);
+
+			sargs->pending_virtual_nets->push(iter->second);
+
+			zlog_level(scheduler_log, ROUTER_V3, "Dispatching net %d virtual net %d\n", iter->second->sinks[0]->net->vpr_id, iter->second->id);
+
+			assert(!sem_post(sargs->consume_sem));
+		}
+
+		/*for (const auto &virtual_net : dispatched_virtual_nets) {*/
+			/*zlog_level(scheduler_log, ROUTER_V3, "Removing dispatched net %d virtual net %d bb %s\n", virtual_net->sinks[0]->net->vpr_id, virtual_net->id, static_cast<const std::ostringstream &>(std::ostringstream() << bg::dsv(virtual_net->saved_scheduler_bounding_box)).str().c_str());*/
+			/*assert(pending_rtree.remove(make_pair(virtual_net->saved_scheduler_bounding_box, virtual_net)));*/
+		/*}*/
+
+		/* verification, to remove later */
+		for (int i = 0; i < in_flight_virtual_nets.size(); ++i) {
+			for (int j = i+1; j < in_flight_virtual_nets.size(); ++j) {
+				assert(!bg::intersects(in_flight_virtual_nets[i]->scheduler_bounding_box, in_flight_virtual_nets[j]->scheduler_bounding_box));
+			}
+		}
+
+		do {
+			zlog_level(scheduler_log, ROUTER_V3, "Going to wait for net to finish routing\n");
+			/* we need to wait for existing in flight nets to complete */
+			while (sem_wait(sargs->produce_sem) == -1 && errno == EINTR);
+			/* remove the completed net from in_flight_virtual_net */
+			virtual_net_t *routed_vnet;
+			assert(sargs->routed_virtual_nets->try_pop(routed_vnet));
+
+			assert(routed_vnet->routed);
+
+			zlog_level(scheduler_log, ROUTER_V3, "Removing routed net %d virtual net %d bb %s\n", routed_vnet->sinks[0]->net->vpr_id, routed_vnet->id, static_cast<const std::ostringstream &>(std::ostringstream() << bg::dsv(routed_vnet->saved_scheduler_bounding_box)).str().c_str());
+
+			assert(pending_rtree.remove(make_pair(routed_vnet->saved_scheduler_bounding_box, routed_vnet)));
+
+			auto iter = find(begin(in_flight_virtual_nets), end(in_flight_virtual_nets), routed_vnet);
+			assert(iter != end(in_flight_virtual_nets));
+			in_flight_virtual_nets.erase(iter);
+			/*std::remove(begin(in_flight_virtual_nets), end(in_flight_virtual_nets), routed_vnet);*/
+
+			net_t *net = routed_vnet->sinks[0]->net;
+
+			/*bool locked;*/
+			/*if ((*sargs->net_locks)[net->local_id].try_lock()) {*/
+				/*locked = true;*/
+			/*} else {*/
+				/*assert(false);*/
+			/*}*/
+
+			for (const auto &virtual_net : net->virtual_nets) {
+				if (!virtual_net->routed) {
+					zlog_level(scheduler_log, ROUTER_V3, "Removing net %d virtual net %d bb %s\n", virtual_net->sinks[0]->net->vpr_id, virtual_net->id, static_cast<const std::ostringstream &>(std::ostringstream() << bg::dsv(virtual_net->saved_scheduler_bounding_box)).str().c_str());
+
+					if (!pending_rtree.remove(make_pair(virtual_net->saved_scheduler_bounding_box, virtual_net))) {
+						zlog_level(scheduler_log, ROUTER_V2, "Failed to remove net %d virtual net %d bb %s\n", virtual_net->sinks[0]->net->vpr_id, virtual_net->id, static_cast<const std::ostringstream &>(std::ostringstream() << bg::dsv(virtual_net->saved_scheduler_bounding_box)).str().c_str());
+						assert(false);
+					}
+
+					zlog_level(scheduler_log, ROUTER_V3, "Reinserting net %d virtual net %d bb %s\n", virtual_net->sinks[0]->net->vpr_id, virtual_net->id, static_cast<const std::ostringstream &>(std::ostringstream() << bg::dsv(virtual_net->scheduler_bounding_box)).str().c_str());
+					virtual_net->saved_scheduler_bounding_box = virtual_net->scheduler_bounding_box;
+					pending_rtree.insert(make_pair(virtual_net->scheduler_bounding_box, virtual_net));
+				}
+			}
+
+			/*if (locked) {*/
+				/*(*sargs->net_locks)[net->local_id].unlock();*/
+			/*}*/
+			/* do we need to remark all the unrouted virtual net's route tree again? */
+			/* need to remove the unrouted virtual nets from the pending rtree and reinsert because the bounding boxes have been update */
+			/*for (const auto &net : *sargs->nets) {*/
+				/*if (!net.ripped_up) {*/
+					/*route_tree_mark_nodes_to_be_ripped((*sargs->route_trees)[net.local_id], *sargs->g, 3);*/
+					/*update_sinks(net->virtual_nets, (*sargs->route_trees)[net->local_id], *sargs->g, sargs->params->astar_fac);*/
+				/*}*/
+			/*}*/
+
+			++num_routed_virtual_nets;
+		} while (sargs->routed_virtual_nets->unsafe_size() > 0);
+	}
 
 	return nullptr;
 }
@@ -3812,7 +4118,7 @@ static void *scheduler_thread(void *args)
 		__itt_frame_begin_v3(pD, NULL);
 #endif
 		for (auto iter = begin(*sargs->virtual_nets); iter != end(*sargs->virtual_nets); ++iter) {
-			if (!iter->valid) {
+			if (iter->routed) {
 				continue;
 			}
 
@@ -3831,7 +4137,7 @@ static void *scheduler_thread(void *args)
 
 				sargs->pending_virtual_nets->push(&(*iter));
 
-				iter->valid = false;
+				iter->routed = true;
 
 				++num_virtual_nets_dispatched;
 
@@ -3919,67 +4225,21 @@ static void *worker_thread_3(void *args)
 		/*route_tree_rip_up_segment_2(wargs->route_trees[net->local_id], current_virtual_net->sinks[0]->rr_node, wargs->g, wargs->params.pres_fac);*/
 		route_tree_rip_up_marked(wargs->route_trees[net->local_id], wargs->g, wargs->params.pres_fac);
 
-		vector<sink_t *> sinks;
-
-		bounding_box_t box;
-		bool box_initialized = false;
-
-		int total_bb_factor = 0;
-		for (const auto &sink : current_virtual_net->sinks) {
-			RouteTreeNode *sink_rt_node = route_tree_get_rt_node(wargs->route_trees[net->local_id], sink->rr_node);
-			if (!sink_rt_node || sink_rt_node->properties.pending_rip_up) {
-				sinks.push_back(sink);
-
-				if (!box_initialized) {
-					auto &rr_node = get_vertex(wargs->g, current_virtual_net->nearest_rr_node);
-					point_t<int> source;
-					if (abs(rr_node.properties.xlow - sink->x) + abs(rr_node.properties.ylow - sink->y) >
-							abs(rr_node.properties.xhigh - sink->x) + abs(rr_node.properties.yhigh - sink->y)) {
-						source.x = rr_node.properties.xlow;
-						source.y = rr_node.properties.ylow;
-					} else {
-						source.x = rr_node.properties.xhigh;
-						source.y = rr_node.properties.yhigh;
-					}
-					box.xmin = std::min(source.x, sink->x);
-					box.xmax = std::max(source.x, sink->x);
-					box.ymin = std::min(source.y, sink->y);
-					box.ymax = std::max(source.y, sink->y);
-					box_initialized = true;
-				} else {
-					box.xmin = std::min(box.xmin, sink->x);
-					box.xmax = std::max(box.xmax, sink->x);
-					box.ymin = std::min(box.ymin, sink->y);
-					box.ymax = std::max(box.ymax, sink->y);
-				}
-
-				total_bb_factor += sink->bb_factor;
-			}
-		}
-		extern int nx;
-		extern int ny;
-
-		int bb_factor = total_bb_factor/sinks.size();
-		box.xmin = std::max(box.xmin - 1 - bb_factor, 0);
-		box.xmax = std::min(box.xmax + bb_factor, nx + 1);
-		box.ymin = std::max(box.ymin - 1 - bb_factor, 0);
-		box.ymax = std::min(box.ymax + bb_factor, ny + 1);
-
-		for (const auto &sink : current_virtual_net->sinks) {
-			RouteTreeNode *sink_rt_node = route_tree_get_rt_node(wargs->route_trees[net->local_id], sink->rr_node);
-			if (!sink_rt_node || sink_rt_node->properties.pending_rip_up) {
-				zlog_level(delta_log, ROUTER_V2, "Bounding box for sink %d (%d): %d-%d %d-%d\n", 
-						sink->id, sink->rr_node, box.xmin, box.xmax, box.ymin, box.ymax);
-				sink->current_bounding_box = box;
-			}
-		}
-
-		route_net_2(wargs->g, net->vpr_id, current_virtual_net->source, sinks, wargs->params, wargs->state, wargs->route_trees[net->local_id], (**wargs->current_traces_ptr)[net->local_id], (**wargs->prev_traces_ptr)[net->local_id], wargs->net_timing[net->vpr_id], nullptr);
+		route_net_2(wargs->g, net->vpr_id, current_virtual_net->source, current_virtual_net->current_sinks, wargs->params, wargs->state, wargs->route_trees[net->local_id], (**wargs->current_traces_ptr)[net->local_id], (**wargs->prev_traces_ptr)[net->local_id], wargs->net_timing[net->vpr_id], nullptr);
 
 		for (const auto &sink : current_virtual_net->sinks) {
 			net->sink_routed[sink->id] = true;
 		}
-		current_virtual_net->valid = false;
+		current_virtual_net->routed = true;
+
+		for (const auto &virtual_net : net->virtual_nets) {
+			if (!virtual_net->routed) {
+				zlog_level(delta_log, ROUTER_V3, "Updating bounding boxes of net %d virtual net %d\n", virtual_net->sinks[0]->net->vpr_id, virtual_net->id);
+				/* remove unrouted virtual net from rtree and reinsert after updating it's scheduler bounding box */
+				update_virtual_net_sink_bounding_boxes(*virtual_net, wargs->route_trees[net->local_id], wargs->g, wargs->params.astar_fac);
+				update_virtual_net_scheduler_bounding_box(*virtual_net, wargs->route_trees[net->local_id], wargs->g, true);
+			}
+		}
 
 		/*current_virtual_net->sinks[0]->previous_bounding_box = current_virtual_net->sinks[0]->current_bounding_box;*/
 
@@ -4466,7 +4726,7 @@ bool greedy_route(t_router_opts *opts)
 	}
 	printf("max_num_sinks: %u\n", max_num_sinks);
 	vector<vector<virtual_net_t>> virtual_nets_by_net;
-	create_clustered_virtual_nets(nets, max_num_sinks/5, virtual_nets_by_net);
+	create_clustered_virtual_nets(nets, 5, virtual_nets_by_net);
 
 	int num_routed_virtual_nets;
 
@@ -4540,6 +4800,8 @@ bool greedy_route(t_router_opts *opts)
 	sargs.g = &g;
 	sargs.params = &params;
 	sargs.num_nets = nets.size();
+	sargs.nets = &nets;
+	sargs.net_locks = &net_locks;
 
 	for_all_vertices(g, [] (RRNode &v) -> void {
 			v.properties.acc_cost = 1;
@@ -4581,7 +4843,7 @@ bool greedy_route(t_router_opts *opts)
 		}
 		for (auto &virtual_nets : virtual_nets_by_net) {
 			for (auto &vnet : virtual_nets) {
-				vnet.valid = true;
+				vnet.routed = false;
 			}
 		}
 		num_routed_virtual_nets = 0;
@@ -4599,7 +4861,7 @@ bool greedy_route(t_router_opts *opts)
 		route_timer.start();
 
 		/*std::shuffle(begin(virtual_nets), end(virtual_nets), mt);*/
-		test_scheduler_thread(&sargs);
+		scheduler_thread_2(&sargs);
 
 		route_timer.stop();
 		cpu_times elapsed = route_timer.elapsed();
@@ -4639,7 +4901,7 @@ bool greedy_route(t_router_opts *opts)
 
 		for (auto &virtual_nets : virtual_nets_by_net) {
 			for (auto &vnet : virtual_nets) {
-				assert(!vnet.valid);
+				assert(vnet.routed);
 			}
 		}
 
@@ -4851,7 +5113,7 @@ bool greedy_route_4(t_router_opts *opts)
 	num_virtual_nets = 0;
 	for (auto &net : nets) {
 		for (auto &sink : net.sinks) {
-			virtual_nets[num_virtual_nets].valid = true;
+			virtual_nets[num_virtual_nets].routed = false;
 			virtual_nets[num_virtual_nets].source = &net.source;
 			virtual_nets[num_virtual_nets].sinks.push_back(&sink);
 			++num_virtual_nets;
@@ -4980,7 +5242,7 @@ bool greedy_route_4(t_router_opts *opts)
 			fill(begin(net.sink_routed), end(net.sink_routed), false);
 		}
 		for (auto &vnet : virtual_nets) {
-			vnet.valid = true;
+			vnet.routed = false;
 		}
 		num_routed_virtual_nets = 0;
 		if (!in_flight_qt.empty()) {
@@ -5036,7 +5298,7 @@ bool greedy_route_4(t_router_opts *opts)
 		}
 
 		for (const auto &vnet : virtual_nets) {
-			assert(!vnet.valid);
+			assert(vnet.routed);
 		}
 
 		char filename[256];
@@ -5246,7 +5508,7 @@ bool greedy_route_3(t_router_opts *opts)
 	num_virtual_nets = 0;
 	for (auto &net : nets) {
 		for (auto &sink : net.sinks) {
-			virtual_nets[num_virtual_nets].valid = true;
+			virtual_nets[num_virtual_nets].routed = false;
 			virtual_nets[num_virtual_nets].source = &net.source;
 			virtual_nets[num_virtual_nets].sinks.push_back(&sink);
 			++num_virtual_nets;
@@ -5340,7 +5602,7 @@ bool greedy_route_3(t_router_opts *opts)
 			fill(begin(net.sink_routed), end(net.sink_routed), false);
 		}
 		for (auto &vnet : virtual_nets) {
-			vnet.valid = true;
+			vnet.routed = false;
 		}
 		num_routed_virtual_nets = 0;
 		assert(in_flight_qt.empty());
@@ -5394,7 +5656,7 @@ bool greedy_route_3(t_router_opts *opts)
 		}
 
 		for (const auto &vnet : virtual_nets) {
-			assert(!vnet.valid);
+			assert(vnet.routed);
 		}
 
 		char filename[256];

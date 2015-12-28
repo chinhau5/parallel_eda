@@ -9,6 +9,7 @@ void sprintf_rr_node(int rr_node, char *buffer);
 void route_tree_init(route_tree_t &rt)
 {
 	rt.root_rt_node_id = -1;
+	rt.num_nodes = 0;
 }
 
 void route_tree_clear(route_tree_t &rt)
@@ -42,39 +43,41 @@ RouteTreeNode *route_tree_add_rr_node(route_tree_t &rt, const RRNode &rr_node)
 
 	auto iter = rt.rr_node_to_rt_node.find(rr_node_id);
 
-	RouteTreeNode *v = nullptr;
+	RouteTreeNode *rt_node = nullptr;
 
 	if (iter == rt.rr_node_to_rt_node.end()) {
 		add_vertex(rt.graph);
-		int rt_node = num_vertices(rt.graph)-1;
-		rt.rr_node_to_rt_node[rr_node_id] = rt_node;
-		v = &get_vertex(rt.graph, rt_node);
-		v->properties.rr_node = rr_node_id;
+		int rt_node_id = num_vertices(rt.graph)-1;
+		rt.rr_node_to_rt_node[rr_node_id] = rt_node_id;
+		rt_node = &get_vertex(rt.graph, rt_node_id);
+		rt_node->properties.rr_node = rr_node_id;
 	} else {
-		v = &get_vertex(rt.graph, iter->second);
-		assert(v->properties.rr_node == rr_node_id);
-		if (v->properties.valid) {
-			v = nullptr;
+		rt_node = &get_vertex(rt.graph, iter->second);
+		assert(rt_node->properties.rr_node == rr_node_id);
+		if (rt_node->properties.valid) {
+			rt_node = nullptr;
 		}
 	}
 
-	if (v) {
-		assert(!v->properties.valid);
-		v->properties.valid = true;
-		v->properties.rt_edge_to_parent = -1;
-		v->properties.pending_rip_up = false;
-		v->properties.num_iterations_fixed = 0;
+	if (rt_node) {
+		assert(!rt_node->properties.valid);
+		rt_node->properties.valid = true;
+		rt_node->properties.pending_rip_up = false;
+		rt_node->properties.rt_edge_to_parent = -1;
+		rt_node->properties.num_iterations_fixed = 0;
 
-		route_tree_t::segment seg(route_tree_t::point(rr_node.properties.xlow, rr_node.properties.ylow), route_tree_t::point(rr_node.properties.xhigh, rr_node.properties.yhigh));
+		segment seg(point(rr_node.properties.xlow, rr_node.properties.ylow), point(rr_node.properties.xhigh, rr_node.properties.yhigh));
 
-		/*assert(rt.point_tree.count(seg) == 0);*/
+		assert(rt.point_tree.count(make_pair(seg, id(*rt_node))) == 0);
 
-		rt.point_tree.insert(make_pair(seg, id(*v)));
+		rt.point_tree.insert(make_pair(seg, id(*rt_node)));
 
 		++rt.num_nodes;
+
+		assert(rt.num_nodes == rt.point_tree.size());
 	}
 
-	return v;
+	return rt_node;
 }
 
 void route_tree_remove_node(route_tree_t &rt, const RRNode &rr_node)
@@ -89,9 +92,9 @@ void route_tree_remove_node(route_tree_t &rt, const RRNode &rr_node)
 	}
 
 	assert(rt.point_tree.remove(make_pair(
-					route_tree_t::segment(
-						route_tree_t::point(rr_node.properties.xlow, rr_node.properties.ylow),
-						route_tree_t::point(rr_node.properties.xhigh, rr_node.properties.yhigh)
+					segment(
+						point(rr_node.properties.xlow, rr_node.properties.ylow),
+						point(rr_node.properties.xhigh, rr_node.properties.yhigh)
 						),
 					id(*rt_node)
 					)
@@ -99,6 +102,8 @@ void route_tree_remove_node(route_tree_t &rt, const RRNode &rr_node)
 		  );
 
 	--rt.num_nodes;
+	
+	assert(rt.num_nodes == rt.point_tree.size());
 }
 
 int route_tree_num_nodes(const route_tree_t &rt)
@@ -236,6 +241,50 @@ route_tree_get_branches(const route_tree_t &rt, const RouteTreeNode &rt_node)
 			route_tree_t::branch_const_iterator(begin(out_edges)), route_tree_t::branch_const_iterator(end(out_edges)));
 }
 
+RouteTreeNode *route_tree_get_nearest_node(route_tree_t &rt, const point &p, const RRGraph &g)
+{
+	int num_nodes = route_tree_num_nodes(rt);
+	if (!num_nodes) {
+		return nullptr;
+	}
+
+	RouteTreeNode *res = nullptr;
+
+	if (num_nodes != rt.point_tree.size()) {
+		vector<route_tree_t::rtree_value> in_rtree;
+		assert(false);
+	}
+
+	extern zlog_category_t *scheduler_log;
+	zlog_level(scheduler_log, ROUTER_V2, "Route tree has %d nodes\n", num_nodes);
+
+	auto it = rt.point_tree.qbegin(bgi::nearest(p, num_nodes));
+	while (it != rt.point_tree.qend()/* && !res*/) {
+		RouteTreeNode *rt_node = &get_vertex(rt.graph, it->second);
+		const auto &rr_node = get_vertex(g, rt_node->properties.rr_node);
+
+		auto bounding_box = bg::make_inverse<box>();
+
+		bg::expand(bounding_box, p);
+
+		int area = bg::area(bounding_box);
+
+		char buffer[256];
+		sprintf_rr_node(id(rr_node), buffer);
+		zlog_level(scheduler_log, ROUTER_V2, "Current nearest to (%d,%d): %s BB: %d-%d %d-%d Area: %d Pending rip up: %d\n", p.get<0>(), p.get<1>(), buffer, bounding_box.min_corner().get<0>(), bounding_box.max_corner().get<0>(), bounding_box.max_corner().get<1>(), bounding_box.max_corner().get<1>(), area, rt_node->properties.pending_rip_up ? 1 : 0);
+
+		if (!rt_node->properties.pending_rip_up && rr_node.properties.type != IPIN && rr_node.properties.type != SINK) {
+			if (!res) {
+				res = rt_node;
+			}
+		}
+
+		++it;
+	}
+
+	return res;
+}
+
 void route_tree_rip_up_marked(route_tree_t &rt, RRGraph &g, float pres_fac)
 {
 	char buffer[256];
@@ -280,27 +329,29 @@ bool route_tree_node_check_and_mark_for_rip_up(route_tree_t &rt, RouteTreeNode &
 	return rt_node.properties.pending_rip_up;
 }
 
-void route_tree_mark_nodes_to_be_ripped_internal(route_tree_t &rt, const RRGraph &g, RouteTreeNode &rt_node, int num_iterations_fixed_threshold)
+bool route_tree_mark_nodes_to_be_ripped_internal(route_tree_t &rt, const RRGraph &g, RouteTreeNode &rt_node, int num_iterations_fixed_threshold)
 {
 	assert(rt_node.properties.valid);
 
-	route_tree_node_check_and_mark_for_rip_up(rt, rt_node, g, num_iterations_fixed_threshold);
+	bool marked = route_tree_node_check_and_mark_for_rip_up(rt, rt_node, g, num_iterations_fixed_threshold);
 
 	for (auto &branch : route_tree_get_branches(rt, rt_node)) {
 		auto &child = get_target(rt.graph, branch);
 
-		route_tree_mark_nodes_to_be_ripped_internal(rt, g, child, num_iterations_fixed_threshold);
+		marked |= route_tree_mark_nodes_to_be_ripped_internal(rt, g, child, num_iterations_fixed_threshold);
 	}
+
+	return marked;
 }
 
-void route_tree_mark_nodes_to_be_ripped(route_tree_t &rt, const RRGraph &g, int num_iterations_fixed_threshold)
+bool route_tree_mark_nodes_to_be_ripped(route_tree_t &rt, const RRGraph &g, int num_iterations_fixed_threshold)
 {
 	if (rt.root_rt_node_id == -1) {
-		return;
+		return false;
 	}
 
 	auto &root_rt_node = get_vertex(rt.graph, rt.root_rt_node_id);
-	route_tree_mark_nodes_to_be_ripped_internal(rt, g, root_rt_node, num_iterations_fixed_threshold);
+	return route_tree_mark_nodes_to_be_ripped_internal(rt, g, root_rt_node, num_iterations_fixed_threshold);
 }
 
 void route_tree_rip_up_segment_2(route_tree_t &rt, int sink_rr_node, RRGraph &g, float pres_fac)

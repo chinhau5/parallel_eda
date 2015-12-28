@@ -3,7 +3,8 @@
 
 #include <assert.h>
 #include <boost/numeric/interval.hpp>
-#include <tbb/tbb.h>
+#include <boost/geometry.hpp>
+//#include <tbb/tbb.h>
 #include <zlog.h>
 #include "vpr_types.h"
 #include "graph.h"
@@ -81,6 +82,8 @@ typedef struct net_t {
 	int current_sink_index;
 	sink_t *current_sink;
 	vector<bool> sink_routed;
+
+	vector<struct virtual_net_t *> virtual_nets;
 	//int previous_sink_index;
 	/*bool previous_sink_valid;*/
 	//bounding_box_t current_bounding_box;
@@ -100,11 +103,15 @@ typedef struct net_t {
 typedef struct virtual_net_t {
 	//tbb::spin_mutex lock;
 	int id;
-	bool valid;
+	bool routed;
 	source_t *source;
 	vector<sink_t *> sinks;
-	point_t<int> centroid;
+	vector<sink_t *> current_sinks;
+	//point centroid;
 	int nearest_rr_node;
+	box current_bounding_box;
+	box scheduler_bounding_box;
+	box saved_scheduler_bounding_box;
 } virtual_net_t;
 
 //typedef struct simple_net_t {

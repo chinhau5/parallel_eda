@@ -68,6 +68,19 @@ void cluster(const std::vector<sink_t> &sinks, int num_clusters, arma::Col<size_
 		data(1, i) = sinks[i].y;
 	}
 
+	point_t<int> bl, tr;
+	bl.x = sinks[0].x;
+	bl.y = sinks[0].y;
+	tr.x = sinks[0].x;
+	tr.y = sinks[0].y;
+
+	for (int i = 1; i < sinks.size(); ++i) {
+		bl.x = std::min(bl.x, sinks[i].x);
+		bl.y = std::min(bl.y, sinks[i].y);
+		tr.x = std::max(tr.x, sinks[i].x);
+		tr.y = std::max(tr.y, sinks[i].y);
+	}
+
 	const int max_tries = 100;
 	const int max_iters = 1000;
 	const double overclustering = 1;
@@ -80,16 +93,27 @@ void cluster(const std::vector<sink_t> &sinks, int num_clusters, arma::Col<size_
 
 	std::mt19937 mt(0);
 	std::uniform_int_distribution<int> uni(0, num_clusters-1);
+	assert(tr.x >= bl.x);
+	assert(tr.y >= bl.y);
+	std::uniform_int_distribution<int> uni_x(bl.x, tr.x);
+	std::uniform_int_distribution<int> uni_y(bl.y, tr.y);
 
 	assignments.set_size(sinks.size());
-	arma::mat centroids(2, sinks.size());
+	arma::mat centroids(2, num_clusters);
+
+	/*printf("sink bb %d-%d %d-%d\n", bl.x, tr.x, bl.y, tr.y);*/
 
 	for (int i = 0; i < max_tries; ++i) {
-		for (int j = 0; j < sinks.size(); ++j) {
-			assignments[j] = uni(mt);
-			assert(assignments[j] >= 0 && assignments[j] < num_clusters);
+		/*for (int j = 0; j < sinks.size(); ++j) {*/
+			/*assignments[j] = uni(mt);*/
+			/*assert(assignments[j] >= 0 && assignments[j] < num_clusters);*/
+		/*}*/
+		for (int j = 0; j < num_clusters; ++j) {
+			centroids(0, j) = uni_x(mt);
+			centroids(1, j) = uni_y(mt);
+			/*printf("centroid %d: %g,%g\n", j, centroids(0, j), centroids(1, j));*/
 		}
-		k.Cluster(data, num_clusters, assignments, centroids, true);
+		k.Cluster(data, num_clusters, assignments, centroids, false, true);
 
 		double total_d = 0;
 		for (int j = 0; j < sinks.size(); ++j) {
@@ -124,7 +148,7 @@ void print_cluster(const char *filename, const vector<sink_t> &sinks, const arma
 	fclose(file);
 }
 
-void create_clustered_virtual_nets(vector<net_t> &nets, int num_clusters, vector<vector<virtual_net_t>> &virtual_nets)
+void create_clustered_virtual_nets(vector<net_t> &nets, int num_nodes_per_cluster, vector<vector<virtual_net_t>> &virtual_nets)
 {
 	virtual_nets.resize(nets.size());
 
@@ -132,7 +156,8 @@ void create_clustered_virtual_nets(vector<net_t> &nets, int num_clusters, vector
 
 	for (auto &net : nets) {
 		vector<virtual_net_t> current_virtual_nets;
-		if (num_clusters < net.sinks.size()) {
+		int num_clusters = net.sinks.size()/num_nodes_per_cluster;
+		if (num_clusters > 2) {
 			arma::Col<size_t> assignments;
 			cluster(net.sinks, num_clusters, assignments);
 
@@ -141,25 +166,32 @@ void create_clustered_virtual_nets(vector<net_t> &nets, int num_clusters, vector
 				virtual_net_t virtual_net;
 
 				virtual_net.id = clus;
-				virtual_net.valid = true;
+				virtual_net.routed = false;
 				virtual_net.source = &net.source;
 
-				virtual_net.centroid.x = 0;
-				virtual_net.centroid.y = 0;
-				int num_sinks_in_cluster = 0;
+				/*virtual_net.centroid.x = 0;*/
+				/*virtual_net.centroid.y = 0;*/
+				multi_point mp;
+				bg::append(mp, point(net.source.x, net.source.y));
+
+				/*int num_sinks_in_cluster = 0;*/
 				for (int sink = 0; sink < net.sinks.size(); ++sink) {
 					if (assignments[sink] == clus) {
-						virtual_net.centroid.x += net.sinks[sink].x;
-						virtual_net.centroid.y += net.sinks[sink].y;
+						/*virtual_net.centroid.x += net.sinks[sink].x;*/
+						/*virtual_net.centroid.y += net.sinks[sink].y;*/
 						virtual_net.sinks.push_back(&net.sinks[sink]);
-						++num_sinks_in_cluster;
+						/*++num_sinks_in_cluster;*/
 						++num_virtual_nets;
 						zlog_level(delta_log, ROUTER_V3, "Net %d cluster %d sink %d %d,%d\n", net.vpr_id, clus, sink, net.sinks[sink].x, net.sinks[sink].y);
+
+						bg::append(mp, point(net.sinks[sink].x, net.sinks[sink].y));
 					}
 				}
-				virtual_net.centroid.x /= num_sinks_in_cluster;
-				virtual_net.centroid.y /= num_sinks_in_cluster;
-				zlog_level(delta_log, ROUTER_V3, "Net %d cluster %d centroid %d,%d\n", net.vpr_id, clus, virtual_net.centroid.x, virtual_net.centroid.y);
+				/*virtual_net.centroid.x /= num_sinks_in_cluster;*/
+				/*virtual_net.centroid.y /= num_sinks_in_cluster;*/
+				/*bg::centroid(mp, virtual_net.centroid);*/
+				bg::envelope(mp, virtual_net.current_bounding_box);
+				/*zlog_level(delta_log, ROUTER_V3, "Net %d cluster %d centroid %d,%d\n", net.vpr_id, clus, virtual_net.centroid.get<0>(), virtual_net.centroid.get<1>());*/
 				virtual_net.nearest_rr_node = -1;
 
 				current_virtual_nets.push_back(virtual_net);
@@ -173,11 +205,11 @@ void create_clustered_virtual_nets(vector<net_t> &nets, int num_clusters, vector
 				virtual_net_t virtual_net;
 
 				virtual_net.id = sink;
-				virtual_net.valid = true;
+				virtual_net.routed = false;
 				virtual_net.source = &net.source;
 				virtual_net.sinks.push_back(&net.sinks[sink]);
-				virtual_net.centroid.x = net.sinks[sink].x;
-				virtual_net.centroid.y = net.sinks[sink].y;
+				/*virtual_net.centroid.set<0>(net.sinks[sink].x);*/
+				/*virtual_net.centroid.set<1>(net.sinks[sink].y);*/
 				virtual_net.nearest_rr_node = -1;
 
 				current_virtual_nets.push_back(virtual_net);
@@ -186,6 +218,12 @@ void create_clustered_virtual_nets(vector<net_t> &nets, int num_clusters, vector
 
 		virtual_nets[net.local_id] = std::move(current_virtual_nets);
 	}	
+
+	for (int i = 0; i < nets.size(); ++i) {
+		for (auto &virtual_net : virtual_nets[i]) {
+			nets[i].virtual_nets.push_back(&virtual_net);
+		}
+	}
 }
 
 /*void */
