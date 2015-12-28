@@ -13,6 +13,6 @@ enum {
 	zlog(cat, __FILE__, sizeof(__FILE__)-1, __func__, sizeof(__func__)-1, __LINE__, \
 	level, __VA_ARGS__)
 
-#define zlog_level(cat, level, ...)
+//#define zlog_level(cat, level, ...)
 
 #endif

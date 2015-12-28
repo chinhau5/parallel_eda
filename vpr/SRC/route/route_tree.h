@@ -40,6 +40,7 @@ typedef struct route_tree_t {
 	std::map<int, int> rr_node_to_rt_node;
 	/*map<int, vector<int>> sink_rr_node_to_path;*/
 	bgi::rtree<rtree_value, bgi::rstar<16>> point_tree;
+	box scheduler_bounding_box;
 	map<int, vector<int>> sink_edges;
 
 	template<typename Value, typename Base>

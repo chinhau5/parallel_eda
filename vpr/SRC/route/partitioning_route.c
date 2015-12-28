@@ -11,7 +11,7 @@
 /*#include <boost/numeric/interval.hpp>*/
 #include <boost/timer/timer.hpp>
 #include <zlog.h>
-/*#define TBB_USE_DEBUG 1*/
+#define TBB_USE_DEBUG 1
 #include <tbb/task_scheduler_init.h>
 #include <tbb/concurrent_queue.h>
 #include <tbb/tbb.h>
@@ -974,7 +974,7 @@ void route_net_2(RRGraph &g, int vpr_id, const source_t *source, const vector<si
 
 	vector<int> modified;
 
-	zlog_level(delta_log, ROUTER_V1, "Routing VPR net id %d (%lu sinks)\n", vpr_id, sinks.size());
+	zlog_level(delta_log, ROUTER_V1, "Routing net %d (%lu sinks)\n", vpr_id, sinks.size());
 
 	vector<sink_t *> sorted_sinks = sinks;
 	std::sort(sorted_sinks.begin(), sorted_sinks.end());
@@ -2390,6 +2390,7 @@ void analyze_timing(t_net_timing *net_timing)
 
 	float critical_path_delay = get_critical_path_delay();
 	zlog_info(delta_log, "Critical path: %g ns\n", critical_path_delay);
+	printf("Critical path: %g ns\n", critical_path_delay);
 }
 
 bool feasible_routing(const RRGraph &g)
@@ -2602,42 +2603,51 @@ void update_virtual_net_current_sinks(virtual_net_t &virtual_net, const route_tr
 {
 	virtual_net.current_sinks.clear();
 	for (const auto &sink : virtual_net.sinks) {
+		char buffer[256];
+		sprintf_rr_node(sink->rr_node, buffer);
+
 		const RouteTreeNode *sink_rt_node = route_tree_get_rt_node(rt, sink->rr_node);
 		if (!sink_rt_node || sink_rt_node->properties.pending_rip_up) {
-			char buffer[256];
-			sprintf_rr_node(sink->rr_node, buffer);
 			zlog_level(scheduler_log, ROUTER_V3, "Adding sink %s to net %d virtual net %d\n", buffer, virtual_net.sinks[0]->net->vpr_id, virtual_net.id);
 			virtual_net.current_sinks.push_back(sink);
+		} else {
+			zlog_level(scheduler_log, ROUTER_V3, "NOT adding sink %s to net %d virtual net %d because it's already routed\n", buffer, virtual_net.sinks[0]->net->vpr_id, virtual_net.id);
 		}
 	}
 }
 
-void update_virtual_net_scheduler_bounding_box(virtual_net_t &virtual_net, const route_tree_t &rt, const RRGraph &g, bool was_ripped_up)
+void update_virtual_net_scheduler_bounding_box(virtual_net_t &virtual_net, const route_tree_t &rt, const RRGraph &g, bool pending_rip_up)
 {
-	virtual_net.scheduler_bounding_box = bg::make_inverse<box>();
+	if (pending_rip_up) {
+		zlog_level(delta_log, ROUTER_V3, "Expanding scheduler bounding box to cover marked rt nodes\n");
 
-	if (was_ripped_up) {
-		zlog_level(scheduler_log, ROUTER_V3, "Expanding scheduler bounding box to cover marked rt nodes\n");
+		/*for (const auto &rt_node : route_tree_get_nodes(rt)) {*/
+			/*if (rt_node.properties.pending_rip_up) {*/
+				/*auto &rr_node = get_vertex(g, rt_node.properties.rr_node);*/
 
-		for (const auto &rt_node : route_tree_get_nodes(rt)) {
-			if (rt_node.properties.pending_rip_up) {
-				auto &rr_node = get_vertex(g, rt_node.properties.rr_node);
+				/*char buffer[256];*/
+				/*sprintf_rr_node(id(rr_node), buffer);*/
+				/*zlog_level(delta_log, ROUTER_V3, "\t%s\n", buffer);*/
 
-				char buffer[256];
-				sprintf_rr_node(id(rr_node), buffer);
-				zlog_level(scheduler_log, ROUTER_V3, "\t%s\n", buffer);
+				/*bg::expand(virtual_net.scheduler_bounding_box, segment(point(rr_node.properties.xlow, rr_node.properties.ylow), point(rr_node.properties.xhigh, rr_node.properties.yhigh)));*/
 
-				bg::expand(virtual_net.scheduler_bounding_box, segment(point(rr_node.properties.xlow, rr_node.properties.ylow), point(rr_node.properties.xhigh, rr_node.properties.yhigh)));
-			}
-		}
+				/*zlog_level(delta_log, ROUTER_V3, "Scheduler bounding box after expanding %s\n", */
+						/*static_cast<const std::ostringstream &>(std::ostringstream() << bg::dsv(virtual_net.scheduler_bounding_box)).str().c_str());*/
+			/*}*/
+		/*}*/
+		virtual_net.scheduler_bounding_box = rt.scheduler_bounding_box;
+		zlog_level(delta_log, ROUTER_V3, "Scheduler bounding box after expanding %s\n", 
+				static_cast<const std::ostringstream &>(std::ostringstream() << bg::dsv(virtual_net.scheduler_bounding_box)).str().c_str());
+	} else {
+		virtual_net.scheduler_bounding_box = bg::make_inverse<box>();
 	}
 
-	zlog_level(scheduler_log, ROUTER_V3, "Scheduler bounding box before expanding with sink bounding box: %s\n",
+	zlog_level(delta_log, ROUTER_V3, "Scheduler bounding box before expanding with virtual net bounding box: %s\n",
 			static_cast<const std::ostringstream &>(std::ostringstream() << bg::dsv(virtual_net.scheduler_bounding_box)).str().c_str());
 
 	bg::expand(virtual_net.scheduler_bounding_box, virtual_net.current_bounding_box);
 
-	zlog_level(scheduler_log, ROUTER_V3, "Scheduler bounding box after expanding with sink bounding box %s: %s\n",
+	zlog_level(delta_log, ROUTER_V3, "Scheduler bounding box after expanding with virtual net bounding box %s: %s\n",
 			static_cast<const std::ostringstream &>(std::ostringstream() << bg::dsv(virtual_net.current_bounding_box)).str().c_str(),
 			static_cast<const std::ostringstream &>(std::ostringstream() << bg::dsv(virtual_net.scheduler_bounding_box)).str().c_str());
 }
@@ -2654,8 +2664,13 @@ void update_virtual_net_sink_bounding_boxes(virtual_net_t &virtual_net, route_tr
 	int min_area = std::numeric_limits<int>::max();
 	const RRNode *new_from = nullptr;
 
+	char buffer[256];
+
 	box sink_bounding_box = bg::make_inverse<box>();
 	for (const auto &sink : virtual_net.current_sinks) {
+		sprintf_rr_node(sink->rr_node, buffer);
+		zlog_level(delta_log, ROUTER_V3, "Current sink %s\n", buffer);
+
 		bg::expand(sink_bounding_box, point(sink->x, sink->y));
 	}
 	point c;
@@ -2663,18 +2678,16 @@ void update_virtual_net_sink_bounding_boxes(virtual_net_t &virtual_net, route_tr
 
 	const net_t &net = *virtual_net.current_sinks[0]->net;
 
-	zlog_level(scheduler_log, ROUTER_V2, "Getting nearest node from route tree to centroid %d,%d\n", c.get<0>(), c.get<1>());  
+	zlog_level(delta_log, ROUTER_V2, "Getting nearest node from route tree to centroid %d,%d\n", c.get<0>(), c.get<1>());  
 	RouteTreeNode *nearest_rt_node = route_tree_get_nearest_node(rt, c, g);
-
-	char buffer[256];
 
 	if (nearest_rt_node == nullptr) {
 		const auto &nodes = route_tree_get_nodes(rt);
 		if (route_tree_empty(rt) || all_of(begin(nodes), end(nodes), [] (const RouteTreeNode &node) -> bool { return node.properties.pending_rip_up; })) {
 			virtual_net.nearest_rr_node = net.source.rr_node;
-			zlog_level(scheduler_log, ROUTER_V2, "Net %d empty route tree. Setting virtual net %d bounding box to start from source\n", net.vpr_id, virtual_net.id);
+			zlog_level(delta_log, ROUTER_V2, "Net %d empty route tree. Setting virtual net %d bounding box to start from source\n", net.vpr_id, virtual_net.id);
 		} else {
-			zlog_error(scheduler_log, "Error: Unable to find node in route tree that is closest to virtual net %d centroid %d,%d\n", virtual_net.id, c.get<0>(), c.get<1>());
+			zlog_error(delta_log, "Error: Unable to find node in route tree that is closest to virtual net %d centroid %d,%d\n", virtual_net.id, c.get<0>(), c.get<1>());
 			assert(false);
 		}
 	} else {
@@ -2682,7 +2695,7 @@ void update_virtual_net_sink_bounding_boxes(virtual_net_t &virtual_net, route_tr
 	}
 
 	sprintf_rr_node(virtual_net.nearest_rr_node, buffer);
-	zlog_level(scheduler_log, ROUTER_V2, "Net %d virtual net %d new source %s\n", net.vpr_id, virtual_net.id, buffer);
+	zlog_level(delta_log, ROUTER_V2, "Net %d virtual net %d new source %s\n", net.vpr_id, virtual_net.id, buffer);
 
 	virtual_net.current_bounding_box = bg::make_inverse<box>();
 	auto &rr_node = get_vertex(g, virtual_net.nearest_rr_node);
@@ -2695,6 +2708,7 @@ void update_virtual_net_sink_bounding_boxes(virtual_net_t &virtual_net, route_tr
 	}
 	bb_factor /= virtual_net.current_sinks.size();
 
+	/* expand bounding box in VPR style */
 	int xmin = virtual_net.current_bounding_box.min_corner().get<0>();
 	int ymin = virtual_net.current_bounding_box.min_corner().get<1>();
 	int xmax = virtual_net.current_bounding_box.max_corner().get<0>();
@@ -2713,6 +2727,7 @@ void update_virtual_net_sink_bounding_boxes(virtual_net_t &virtual_net, route_tr
 	virtual_net.current_bounding_box.max_corner().set<0>(xmax);
 	virtual_net.current_bounding_box.max_corner().set<1>(ymax);
 
+	/* assign all sinks to have the same bounding box as the virtual net */
 	for (const auto &sink : virtual_net.current_sinks) {
 		sink->current_bounding_box.xmin = virtual_net.current_bounding_box.min_corner().get<0>();
 		sink->current_bounding_box.ymin = virtual_net.current_bounding_box.min_corner().get<1>();
@@ -2720,7 +2735,7 @@ void update_virtual_net_sink_bounding_boxes(virtual_net_t &virtual_net, route_tr
 		sink->current_bounding_box.ymax = virtual_net.current_bounding_box.max_corner().get<1>();
 	}
 
-	zlog_level(scheduler_log, ROUTER_V2, "Net %d virtual net %d sink bounding box %s current bounding box %s\n", net.vpr_id, virtual_net.id, 
+	zlog_level(delta_log, ROUTER_V2, "Net %d virtual net %d sink bounding box %s current bounding box %s\n", net.vpr_id, virtual_net.id, 
 			static_cast<const std::ostringstream &>(std::ostringstream() << bg::dsv(sink_bounding_box)).str().c_str(),
 			static_cast<const std::ostringstream &>(std::ostringstream() << bg::dsv(virtual_net.current_bounding_box)).str().c_str());
 }
@@ -2846,7 +2861,7 @@ void update_sink_bounding_boxes_4(net_t &net, route_tree_t &rt, const RRGraph &g
 					zlog_level(scheduler_log, ROUTER_V2, "Net %d empty route tree. Setting sink %d bounding box to start from source\n", net.vpr_id, sink.id);
 				} else {
 					sprintf_rr_node(sink.rr_node, buffer);
-					zlog_error(schedule_log, "Error: Unable to find node in route tree that is closest to %s\n", buffer);
+					zlog_error(scheduler_log, "Error: Unable to find node in route tree that is closest to %s\n", buffer);
 					assert(false);
 				}
 			}
@@ -3827,6 +3842,7 @@ struct SchedulerArgs {
 	route_parameters_t *params;
 	vector<route_tree_t> *route_trees;
 	int num_nets;
+	t_router_opts *opts;
 
 	vector<std::mutex> *net_locks;
 };
@@ -3928,7 +3944,7 @@ static void *scheduler_thread_2(void *args)
 	zlog_level(scheduler_log, ROUTER_V1, "Scheduler thread iter %d\n", *sargs->iteration);
 
 	int num_routed_virtual_nets = 0;
-	int num_virtual_nets = 0;
+	tbb::atomic<int> num_virtual_nets = 0;
 
 	using value = pair<box, virtual_net_t *>;
 	struct equal {
@@ -3937,15 +3953,22 @@ static void *scheduler_thread_2(void *args)
 			return bg::equals(a.first, b.first) && a.second == b.second;
 		}
 	};
-	bg::index::rtree<value, bgi::rstar<16>, bgi::indexable<value>, equal> pending_rtree;
 
 	vector<virtual_net_t *> in_flight_virtual_nets;
 
 #ifdef __linux__
-		__itt_frame_begin_v3(pD, NULL);
+	__itt_frame_begin_v3(pD, NULL);
 #endif
 
-	for (const auto &net : *sargs->nets) {
+	auto rtree_time = std::chrono::high_resolution_clock::now();
+
+	vector<value> bulk;
+	std::mutex bulk_lock;
+
+	tbb::parallel_for(tbb::blocked_range<size_t>(0, sargs->nets->size(), sargs->opts->grain_size),
+			[&sargs, &num_virtual_nets, &bulk, &bulk_lock] (const tbb::blocked_range<size_t> &r) -> void {
+	for (auto inet = r.begin(); inet != r.end(); ++inet) {
+		const net_t &net = (*sargs->nets)[inet];
 		route_tree_mark_nodes_to_be_ripped((*sargs->route_trees)[net.local_id], *sargs->g, 1000);
 
 		for (const auto &virtual_net : net.virtual_nets) {
@@ -3954,25 +3977,37 @@ static void *scheduler_thread_2(void *args)
 			if (!virtual_net->routed) {
 				/* the sequence of this 2 calls are important */
 				update_virtual_net_sink_bounding_boxes(*virtual_net, (*sargs->route_trees)[net.local_id], *sargs->g, sargs->params->astar_fac);
-				update_virtual_net_scheduler_bounding_box(*virtual_net, (*sargs->route_trees)[net.local_id], *sargs->g, false);
+				update_virtual_net_scheduler_bounding_box(*virtual_net, (*sargs->route_trees)[net.local_id], *sargs->g, true);
+
+				zlog_level(delta_log, ROUTER_V2, "\n");
 
 				zlog_level(scheduler_log, ROUTER_V2, "Adding net %d virtual net %d bb %s\n", virtual_net->sinks[0]->net->vpr_id, virtual_net->id, static_cast<const std::ostringstream &>(std::ostringstream() << bg::dsv(virtual_net->scheduler_bounding_box)).str().c_str());
 
 				virtual_net->saved_scheduler_bounding_box = virtual_net->scheduler_bounding_box;
-				pending_rtree.insert(make_pair(virtual_net->scheduler_bounding_box, virtual_net));
+				/*pending_rtree.insert(make_pair(virtual_net->scheduler_bounding_box, virtual_net));*/
+				bulk_lock.lock();
+				bulk.push_back(make_pair(virtual_net->scheduler_bounding_box, virtual_net));
+				bulk_lock.unlock();
 
 				++num_virtual_nets;
 			} else {
-				zlog_level(scheduler_log, ROUTER_V2, "Routed net %d virtual net %d\n", virtual_net->sinks[0]->net->vpr_id, virtual_net->id);
+				zlog_level(scheduler_log, ROUTER_V2, "NOT adding net %d virtual net %d because it is routed\n", virtual_net->sinks[0]->net->vpr_id, virtual_net->id);
 			}
+
+			zlog_level(scheduler_log, ROUTER_V2, "\n");
 		}
 	}
+			});
 
 #ifdef __linux__ 
 		__itt_frame_end_v3(pD, NULL);
 #endif
 
-	zlog_level(scheduler_log, ROUTER_V1, "Number of virtual nets: %d\n", num_virtual_nets);
+	bg::index::rtree<value, bgi::rstar<16>, bgi::indexable<value>, equal> pending_rtree(bulk);
+
+	auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::high_resolution_clock::now()-rtree_time);
+	zlog_info(scheduler_log, "Number of virtual nets: %d\n", num_virtual_nets);
+	zlog_info(scheduler_log, "Building pending rtree took %lld ms\n", elapsed.count());
 
 	/*vector<bool> ripped_up(sargs->nets->size(), false);*/
 
@@ -4066,12 +4101,12 @@ static void *scheduler_thread_2(void *args)
 
 			net_t *net = routed_vnet->sinks[0]->net;
 
-			/*bool locked;*/
-			/*if ((*sargs->net_locks)[net->local_id].try_lock()) {*/
-				/*locked = true;*/
-			/*} else {*/
-				/*assert(false);*/
-			/*}*/
+			bool locked;
+			if ((*sargs->net_locks)[net->local_id].try_lock()) {
+				locked = true;
+			} else {
+				assert(false);
+			}
 
 			for (const auto &virtual_net : net->virtual_nets) {
 				if (!virtual_net->routed) {
@@ -4084,13 +4119,14 @@ static void *scheduler_thread_2(void *args)
 
 					zlog_level(scheduler_log, ROUTER_V3, "Reinserting net %d virtual net %d bb %s\n", virtual_net->sinks[0]->net->vpr_id, virtual_net->id, static_cast<const std::ostringstream &>(std::ostringstream() << bg::dsv(virtual_net->scheduler_bounding_box)).str().c_str());
 					virtual_net->saved_scheduler_bounding_box = virtual_net->scheduler_bounding_box;
+
 					pending_rtree.insert(make_pair(virtual_net->scheduler_bounding_box, virtual_net));
 				}
 			}
 
-			/*if (locked) {*/
-				/*(*sargs->net_locks)[net->local_id].unlock();*/
-			/*}*/
+			if (locked) {
+				(*sargs->net_locks)[net->local_id].unlock();
+			}
 			/* do we need to remark all the unrouted virtual net's route tree again? */
 			/* need to remove the unrouted virtual nets from the pending rtree and reinsert because the bounding boxes have been update */
 			/*for (const auto &net : *sargs->nets) {*/
@@ -4237,7 +4273,9 @@ static void *worker_thread_3(void *args)
 				zlog_level(delta_log, ROUTER_V3, "Updating bounding boxes of net %d virtual net %d\n", virtual_net->sinks[0]->net->vpr_id, virtual_net->id);
 				/* remove unrouted virtual net from rtree and reinsert after updating it's scheduler bounding box */
 				update_virtual_net_sink_bounding_boxes(*virtual_net, wargs->route_trees[net->local_id], wargs->g, wargs->params.astar_fac);
-				update_virtual_net_scheduler_bounding_box(*virtual_net, wargs->route_trees[net->local_id], wargs->g, true);
+				update_virtual_net_scheduler_bounding_box(*virtual_net, wargs->route_trees[net->local_id], wargs->g, false);
+			} else {
+				zlog_level(delta_log, ROUTER_V3, "NOT updating bounding boxes of net %d virtual net %d because it is routed\n", virtual_net->sinks[0]->net->vpr_id, virtual_net->id);
 			}
 		}
 
@@ -4248,8 +4286,8 @@ static void *worker_thread_3(void *args)
 		}
 
 		wargs->routed_virtual_nets->push(current_virtual_net);
-		assert(!sem_post(wargs->produce_sem));
 		zlog_level(delta_log, ROUTER_V2, "Done routing net %d virtual_net %d\n", net->vpr_id, current_virtual_net->id);
+		assert(!sem_post(wargs->produce_sem));
 	}
 }
 
@@ -4802,6 +4840,7 @@ bool greedy_route(t_router_opts *opts)
 	sargs.num_nets = nets.size();
 	sargs.nets = &nets;
 	sargs.net_locks = &net_locks;
+	sargs.opts = opts;
 
 	for_all_vertices(g, [] (RRNode &v) -> void {
 			v.properties.acc_cost = 1;
@@ -4816,6 +4855,7 @@ bool greedy_route(t_router_opts *opts)
 	std::mt19937 mt(time(NULL));
 
 	bool routed = false;
+	nanosecond_type total_route_time = 0;
 	for (int iter = 0; iter < opts->max_router_iterations && !routed; ++iter) {
 		sprintf(buffer, "/Volumes/DATA/iter_%d.txt", iter);
 		current_output_log = fopen(buffer, "w");
@@ -4865,7 +4905,8 @@ bool greedy_route(t_router_opts *opts)
 
 		route_timer.stop();
 		cpu_times elapsed = route_timer.elapsed();
-		route_time += elapsed.wall;
+		route_time = elapsed.wall;
+		total_route_time += elapsed.wall;
 		/*zlog_info(delta_log, "Scheduling took %s\n", format(elapsed).c_str());*/
 		zlog_info(delta_log, "Routing took %g\n", elapsed.wall / 1e9);
 		zlog_info(delta_log, "Num heap pushes: %d\n", perf.num_heap_pushes);
@@ -4910,7 +4951,8 @@ bool greedy_route(t_router_opts *opts)
 		dump_congestion_map(g, filename);
 
 		if (feasible_routing(g)) {
-			zlog_info(delta_log, "Routed in %d iterations\n", iter+1);
+			zlog_info(delta_log, "Routed in %d iterations. Total route time: %g\n", iter+1, total_route_time / 1e9);
+			printf("Routed in %d iterations. Total route time: %g\n", iter+1, total_route_time / 1e9);
 			dump_route(*current_traces_ptr, "route.txt");
 			routed = true;
 		} else {

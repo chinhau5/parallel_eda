@@ -68,13 +68,15 @@ RouteTreeNode *route_tree_add_rr_node(route_tree_t &rt, const RRNode &rr_node)
 
 		segment seg(point(rr_node.properties.xlow, rr_node.properties.ylow), point(rr_node.properties.xhigh, rr_node.properties.yhigh));
 
-		assert(rt.point_tree.count(make_pair(seg, id(*rt_node))) == 0);
+		if (rr_node.properties.type != IPIN && rr_node.properties.type != SINK) {
+			assert(rt.point_tree.count(make_pair(seg, id(*rt_node))) == 0);
 
-		rt.point_tree.insert(make_pair(seg, id(*rt_node)));
+			rt.point_tree.insert(make_pair(seg, id(*rt_node)));
+		}
 
 		++rt.num_nodes;
 
-		assert(rt.num_nodes == rt.point_tree.size());
+		/*assert(rt.num_nodes == rt.point_tree.size());*/
 	}
 
 	return rt_node;
@@ -91,19 +93,21 @@ void route_tree_remove_node(route_tree_t &rt, const RRNode &rr_node)
 		rt.root_rt_node_id = -1;
 	}
 
-	assert(rt.point_tree.remove(make_pair(
-					segment(
-						point(rr_node.properties.xlow, rr_node.properties.ylow),
-						point(rr_node.properties.xhigh, rr_node.properties.yhigh)
-						),
-					id(*rt_node)
+	if (rr_node.properties.type != IPIN && rr_node.properties.type != SINK) {
+		assert(rt.point_tree.remove(make_pair(
+						segment(
+							point(rr_node.properties.xlow, rr_node.properties.ylow),
+							point(rr_node.properties.xhigh, rr_node.properties.yhigh)
+							),
+						id(*rt_node)
+						)
 					)
-				)
-		  );
+			  );
+	}
 
 	--rt.num_nodes;
 	
-	assert(rt.num_nodes == rt.point_tree.size());
+	/*assert(rt.num_nodes == rt.point_tree.size());*/
 }
 
 int route_tree_num_nodes(const route_tree_t &rt)
@@ -243,23 +247,22 @@ route_tree_get_branches(const route_tree_t &rt, const RouteTreeNode &rt_node)
 
 RouteTreeNode *route_tree_get_nearest_node(route_tree_t &rt, const point &p, const RRGraph &g)
 {
-	int num_nodes = route_tree_num_nodes(rt);
-	if (!num_nodes) {
+	if (!rt.point_tree.size()) {
 		return nullptr;
 	}
 
 	RouteTreeNode *res = nullptr;
 
-	if (num_nodes != rt.point_tree.size()) {
-		vector<route_tree_t::rtree_value> in_rtree;
-		assert(false);
-	}
+	/*if (num_nodes != rt.point_tree.size()) {*/
+		/*vector<route_tree_t::rtree_value> in_rtree;*/
+		/*assert(false);*/
+	/*}*/
 
-	extern zlog_category_t *scheduler_log;
-	zlog_level(scheduler_log, ROUTER_V2, "Route tree has %d nodes\n", num_nodes);
+	extern zlog_category_t *delta_log;
+	zlog_level(delta_log, ROUTER_V2, "Route tree has %d nodes\n", route_tree_num_nodes(rt));
 
-	auto it = rt.point_tree.qbegin(bgi::nearest(p, num_nodes));
-	while (it != rt.point_tree.qend()/* && !res*/) {
+	auto it = rt.point_tree.qbegin(bgi::nearest(p, rt.point_tree.size()));
+	while (it != rt.point_tree.qend() && !res) {
 		RouteTreeNode *rt_node = &get_vertex(rt.graph, it->second);
 		const auto &rr_node = get_vertex(g, rt_node->properties.rr_node);
 
@@ -271,7 +274,7 @@ RouteTreeNode *route_tree_get_nearest_node(route_tree_t &rt, const point &p, con
 
 		char buffer[256];
 		sprintf_rr_node(id(rr_node), buffer);
-		zlog_level(scheduler_log, ROUTER_V2, "Current nearest to (%d,%d): %s BB: %d-%d %d-%d Area: %d Pending rip up: %d\n", p.get<0>(), p.get<1>(), buffer, bounding_box.min_corner().get<0>(), bounding_box.max_corner().get<0>(), bounding_box.max_corner().get<1>(), bounding_box.max_corner().get<1>(), area, rt_node->properties.pending_rip_up ? 1 : 0);
+		zlog_level(delta_log, ROUTER_V2, "Current nearest to (%d,%d): %s BB: %d-%d %d-%d Area: %d Pending rip up: %d\n", p.get<0>(), p.get<1>(), buffer, bounding_box.min_corner().get<0>(), bounding_box.max_corner().get<0>(), bounding_box.max_corner().get<1>(), bounding_box.max_corner().get<1>(), area, rt_node->properties.pending_rip_up ? 1 : 0);
 
 		if (!rt_node->properties.pending_rip_up && rr_node.properties.type != IPIN && rr_node.properties.type != SINK) {
 			if (!res) {
@@ -294,7 +297,19 @@ void route_tree_rip_up_marked(route_tree_t &rt, RRGraph &g, float pres_fac)
 		if (rt_node.properties.pending_rip_up) {
 			zlog_level(delta_log, ROUTER_V2, "Ripping up node %s from route tree\n", buffer);
 
-			update_one_cost_internal(rr_node, -1, pres_fac);
+			if (rr_node.properties.type == SOURCE) {
+				if (rr_node.properties.capacity > 1) {
+					assert(false);
+					for (const auto &e : route_tree_get_branches(rt, rt_node)) {
+						/*auto &target = get_target(rt.graph, e);*/
+						update_one_cost_internal(rr_node, -1, pres_fac); 
+					}
+				} else {
+					update_one_cost_internal(rr_node, -1, pres_fac); 
+				}
+			} else {
+				update_one_cost_internal(rr_node, -1, pres_fac); 
+			}
 			route_tree_remove_node(rt, rr_node);
 			rt_node.properties.pending_rip_up = false;
 
@@ -324,6 +339,8 @@ bool route_tree_node_check_and_mark_for_rip_up(route_tree_t &rt, RouteTreeNode &
 
 	if (rt_node.properties.pending_rip_up) {
 		rt_node.properties.num_iterations_fixed = 0;
+
+		bg::expand(rt.scheduler_bounding_box, segment(point(rr_node.properties.xlow, rr_node.properties.ylow), point(rr_node.properties.xhigh, rr_node.properties.yhigh)));
 	}
 
 	return rt_node.properties.pending_rip_up;
@@ -349,6 +366,8 @@ bool route_tree_mark_nodes_to_be_ripped(route_tree_t &rt, const RRGraph &g, int 
 	if (rt.root_rt_node_id == -1) {
 		return false;
 	}
+
+	rt.scheduler_bounding_box = bg::make_inverse<box>();
 
 	auto &root_rt_node = get_vertex(rt.graph, rt.root_rt_node_id);
 	return route_tree_mark_nodes_to_be_ripped_internal(rt, g, root_rt_node, num_iterations_fixed_threshold);

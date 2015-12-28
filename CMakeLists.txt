@@ -19,7 +19,7 @@ add_compile_options(
 	#-D TBB_USE_DEBUG=1
 	-ferror-limit=0
 	-std=c++11
-	-g -O0
+	-g -O2
 	#-Bdynamic
 	-Wall
 	#	-H
