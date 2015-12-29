@@ -6,7 +6,7 @@ static const char *rr_types[] =  {
 	"SOURCE", "SINK", "IPIN", "OPIN", "CHANX", "CHANY", "INTRA_CLUSTER_EDGE"
 };
 
-#define PRINT_RR_NODE
+/*#define PRINT_RR_NODE*/
 
 void sprintf_rr_node(int inode, char *buffer)
 {

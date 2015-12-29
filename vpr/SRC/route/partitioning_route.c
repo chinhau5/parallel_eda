@@ -35,7 +35,9 @@
 #include "utility.h"
 
 #ifdef __linux__
-__itt_domain* pD = __itt_domain_create( "My Domain" );
+__itt_domain* pD = __itt_domain_create("Domain");
+__itt_domain* dispatch_domain = __itt_domain_create("Dispatch");
+__itt_domain* update_domain = __itt_domain_create("Update");
 __itt_string_handle *shMyTask = __itt_string_handle_create("My Task");
 __itt_string_handle *shMainTask = __itt_string_handle_create("Main Task");
 #endif
@@ -3933,6 +3935,8 @@ static void *test_scheduler_thread(void *args)
 	return nullptr;
 }
 
+std::chrono::high_resolution_clock::time_point start_time;
+
 static void *scheduler_thread_2(void *args)
 {
 	SchedulerArgs *sargs = (SchedulerArgs *)args;
@@ -4000,7 +4004,7 @@ static void *scheduler_thread_2(void *args)
 			});
 
 #ifdef __linux__ 
-		__itt_frame_end_v3(pD, NULL);
+	__itt_frame_end_v3(pD, NULL);
 #endif
 
 	bg::index::rtree<value, bgi::rstar<16>, bgi::indexable<value>, equal> pending_rtree(bulk);
@@ -4052,10 +4056,17 @@ static void *scheduler_thread_2(void *args)
 				);
 
 		vector<virtual_net_t *> dispatched_virtual_nets;
+		auto dispatch_start = std::chrono::high_resolution_clock::now();
 		for (auto iter = pending_rtree.qbegin(pred); iter != pending_rtree.qend(); ++iter) {
 			/* remove the iter from pending_rtree */
 			/* add the iter to in_flight_virtual_nets */
 			/* loop again */
+			/*auto elapsed = std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::high_resolution_clock::now() - dispatch_start);*/
+			/*zlog_info(scheduler_log, "Dispatch took %lld ns\n", elapsed.count());*/
+
+#ifdef __linux__
+			__itt_frame_begin_v3(dispatch_domain, NULL);
+#endif
 
 			in_flight_virtual_nets.push_back(iter->second);
 
@@ -4063,9 +4074,19 @@ static void *scheduler_thread_2(void *args)
 
 			sargs->pending_virtual_nets->push(iter->second);
 
-			zlog_level(scheduler_log, ROUTER_V3, "Dispatching net %d virtual net %d\n", iter->second->sinks[0]->net->vpr_id, iter->second->id);
+			/*zlog_level(scheduler_log, ROUTER_V3, "Dispatching net %d virtual net %d\n", iter->second->sinks[0]->net->vpr_id, iter->second->id);*/
 
+#ifdef __linux__
+			__itt_frame_end_v3(dispatch_domain, NULL);
+#endif
+
+			/*auto before_post = std::chrono::high_resolution_clock::now();*/
 			assert(!sem_post(sargs->consume_sem));
+			/*auto post_time = std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::high_resolution_clock::now()-before_post);*/
+
+			/*zlog_info(scheduler_log, "Posted at %lld ns in %lld\n", std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::high_resolution_clock::now()-start_time).count(), post_time.count());*/
+
+			/*dispatch_start = std::chrono::high_resolution_clock::now();*/
 		}
 
 		/*for (const auto &virtual_net : dispatched_virtual_nets) {*/
@@ -4079,6 +4100,10 @@ static void *scheduler_thread_2(void *args)
 				assert(!bg::intersects(in_flight_virtual_nets[i]->scheduler_bounding_box, in_flight_virtual_nets[j]->scheduler_bounding_box));
 			}
 		}
+
+#ifdef __linux__
+	__itt_frame_begin_v3(update_domain, NULL);
+#endif
 
 		do {
 			zlog_level(scheduler_log, ROUTER_V3, "Going to wait for net to finish routing\n");
@@ -4138,6 +4163,10 @@ static void *scheduler_thread_2(void *args)
 
 			++num_routed_virtual_nets;
 		} while (sargs->routed_virtual_nets->unsafe_size() > 0);
+
+#ifdef __linux__ 
+		__itt_frame_end_v3(update_domain, NULL);
+#endif
 	}
 
 	return nullptr;
@@ -4238,7 +4267,12 @@ static void *worker_thread_3(void *args)
 	assert(!zlog_put_mdc("tid", tid));
 
 	while (true) {
-		while (sem_wait(wargs->consume_sem) == -1 && errno == EINTR);
+		/*while (sem_wait(wargs->consume_sem) == -1 && errno == EINTR);*/
+		assert(!sem_wait(wargs->consume_sem));
+
+		auto route_start_time = std::chrono::high_resolution_clock::now();
+
+		zlog_info(scheduler_log, "Started at %lld ns\n", std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::high_resolution_clock::now()-start_time).count());
 
 		virtual_net_t *current_virtual_net = nullptr;	
 		assert(wargs->pending_virtual_nets->try_pop(current_virtual_net));
@@ -4286,8 +4320,10 @@ static void *worker_thread_3(void *args)
 		}
 
 		wargs->routed_virtual_nets->push(current_virtual_net);
-		zlog_level(delta_log, ROUTER_V2, "Done routing net %d virtual_net %d\n", net->vpr_id, current_virtual_net->id);
+		zlog_level(delta_log, ROUTER_V2, "Done routing net %d virtual_net %d in %lld\n", net->vpr_id, current_virtual_net->id,
+				std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::high_resolution_clock::now()-route_start_time).count());
 		assert(!sem_post(wargs->produce_sem));
+		zlog_info(scheduler_log, "Done routing in %lld ns\n", std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::high_resolution_clock::now()-route_start_time).count());
 	}
 }
 
@@ -4591,6 +4627,8 @@ bool greedy_route(t_router_opts *opts)
 {
 	tbb::task_scheduler_init init(opts->num_threads);
 
+	start_time = std::chrono::high_resolution_clock::now();
+
 /*#ifdef __linux__*/
 	/*printf("domain flags: %d\n", pD->flags);*/
 	/*pD->flags = 1;*/
@@ -4782,8 +4820,17 @@ bool greedy_route(t_router_opts *opts)
 
 	WorkerArgs **args = new WorkerArgs*[opts->num_threads];
 
+#ifdef __linux
+	sem_t produce_sem_instance;
+	sem_t consume_sem_instance;
+	sem_init(&produce_sem_instance, 0, 0);
+	sem_init(&consume_sem_instance, 0, 0);
+	sem_t *produce_sem = &produce_sem_instance;
+	sem_t *consume_sem = &consume_sem_instance;
+#else
 	sem_t *produce_sem = create_sem("produce_sem");
 	sem_t *consume_sem = create_sem("consume_sem");
+#endif
 
 	tbb::concurrent_queue<virtual_net_t *> pending_virtual_nets;
 	tbb::concurrent_queue<virtual_net_t *> routed_virtual_nets;

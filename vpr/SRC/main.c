@@ -67,9 +67,9 @@ int main(int argc, char **argv) {
 	/* Read options, architecture, and circuit netlist */
 	vpr_init(argc, argv, &Options, &vpr_setup, &Arch);
 
-	if (setvbuf(stdout, NULL, _IONBF, 0)) {
-		exit(-1);
-	}
+	/*if (setvbuf(stdout, NULL, _IONBF, 0)) {*/
+		/*exit(-1);*/
+	/*}*/
 
 	/* If the user requests packing, do packing */
 	if (vpr_setup.PackerOpts.doPacking) {
