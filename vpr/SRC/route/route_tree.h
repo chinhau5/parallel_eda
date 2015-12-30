@@ -9,8 +9,10 @@ typedef struct rt_node_property_t {
 	int rr_node;
 	bool valid;
 	bool pending_rip_up;
+	bool ripped_up;
 	int rt_edge_to_parent;
 	int num_iterations_fixed;
+	int saved_num_out_edges; /* only valid for SOURCE */
 
 	int owner;
 

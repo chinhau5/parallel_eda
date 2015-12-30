@@ -259,7 +259,7 @@ RouteTreeNode *route_tree_get_nearest_node(route_tree_t &rt, const point &p, con
 	/*}*/
 
 	extern zlog_category_t *delta_log;
-	zlog_level(delta_log, ROUTER_V2, "Route tree has %d nodes\n", route_tree_num_nodes(rt));
+	zlog_level(delta_log, ROUTER_V3, "Route tree has %d nodes\n", route_tree_num_nodes(rt));
 
 	auto it = rt.point_tree.qbegin(bgi::nearest(p, rt.point_tree.size()));
 	while (it != rt.point_tree.qend() && !res) {
@@ -274,7 +274,7 @@ RouteTreeNode *route_tree_get_nearest_node(route_tree_t &rt, const point &p, con
 
 		char buffer[256];
 		sprintf_rr_node(id(rr_node), buffer);
-		zlog_level(delta_log, ROUTER_V2, "Current nearest to (%d,%d): %s BB: %d-%d %d-%d Area: %d Pending rip up: %d\n", p.get<0>(), p.get<1>(), buffer, bounding_box.min_corner().get<0>(), bounding_box.max_corner().get<0>(), bounding_box.max_corner().get<1>(), bounding_box.max_corner().get<1>(), area, rt_node->properties.pending_rip_up ? 1 : 0);
+		zlog_level(delta_log, ROUTER_V3, "Current nearest to (%d,%d): %s BB: %d-%d %d-%d Area: %d Pending rip up: %d\n", p.get<0>(), p.get<1>(), buffer, bounding_box.min_corner().get<0>(), bounding_box.max_corner().get<0>(), bounding_box.max_corner().get<1>(), bounding_box.max_corner().get<1>(), area, rt_node->properties.pending_rip_up ? 1 : 0);
 
 		if (!rt_node->properties.pending_rip_up && rr_node.properties.type != IPIN && rr_node.properties.type != SINK) {
 			if (!res) {
@@ -288,7 +288,51 @@ RouteTreeNode *route_tree_get_nearest_node(route_tree_t &rt, const point &p, con
 	return res;
 }
 
+/*void route_tree_rip_up_marked_internal(route_tree_t &rt, RouteTreeNode &rt_node, RRGraph &g, float pres_fac)*/
+/*{*/
+/*}*/
+
 void route_tree_rip_up_marked(route_tree_t &rt, RRGraph &g, float pres_fac)
+{
+	char buffer[256];
+	for (auto &rt_node : route_tree_get_nodes(rt)) {
+		auto &rr_node = get_vertex(g, rt_node.properties.rr_node);
+		sprintf_rr_node(id(rr_node), buffer);
+
+		if (rt_node.properties.pending_rip_up) {
+			zlog_level(delta_log, ROUTER_V2, "Ripping up node %s from route tree. Occ: %d Cap: %d\n", buffer, rr_node.properties.occ, rr_node.properties.capacity);
+
+			if (rr_node.properties.type == SOURCE) {
+				/*assert(rt_node.properties.saved_num_out_edges > 0);*/
+				update_one_cost_internal(rr_node, -num_out_edges(rt.graph, rt_node), pres_fac); 
+			} else {
+				update_one_cost_internal(rr_node, -1, pres_fac); 
+			}
+			route_tree_remove_node(rt, rr_node);
+			rt_node.properties.pending_rip_up = false;
+			rt_node.properties.ripped_up = true;
+
+			if (rt_node.properties.rt_edge_to_parent != -1) {
+				auto &edge = get_edge(rt.graph, rt_node.properties.rt_edge_to_parent);
+				const auto &parent_rt_node = get_source(rt.graph, edge);
+				auto &parent_rr_node = get_vertex(g, parent_rt_node.properties.rr_node);
+				/* since reconnection back to SOURCE always causes cost to be updated, we need to
+				 * update the cost when ripping up also.
+				 * if parent is pending rip up, cost will be updated that time. so dont handle it here */
+				if (parent_rr_node.properties.type == SOURCE && !parent_rt_node.properties.pending_rip_up && !parent_rt_node.properties.ripped_up) {
+					update_one_cost_internal(parent_rr_node, -1, pres_fac); 
+				}
+				route_tree_remove_edge(rt, edge);
+			} 
+		} else {
+			zlog_level(delta_log, ROUTER_V2, "NOT ripping up node %s from route tree\n", buffer);
+			/* invalid assertion because we might have ripped this up from another virtual net */
+			/*assert(rt_node.properties.ripped_up == false);*/
+		}
+	}
+}
+
+void route_tree_rip_up_marked_2(route_tree_t &rt, RRGraph &g, float pres_fac)
 {
 	char buffer[256];
 	for (auto &rt_node : route_tree_get_nodes(rt)) {
@@ -327,6 +371,11 @@ bool route_tree_node_check_and_mark_for_rip_up(route_tree_t &rt, RouteTreeNode &
 {
 	const auto &rr_node = get_vertex(g, rt_node.properties.rr_node);
 
+	/* just a fast hack to handle the case for titan benchmark where SOURCE has capacity > 1 */
+	if (rr_node.properties.type == SOURCE) {
+		rt_node.properties.saved_num_out_edges = num_out_edges(rt.graph, rt_node);
+	}
+
 	++rt_node.properties.num_iterations_fixed;
 
 	if (rt_node.properties.rt_edge_to_parent != -1) {
@@ -342,6 +391,8 @@ bool route_tree_node_check_and_mark_for_rip_up(route_tree_t &rt, RouteTreeNode &
 
 		bg::expand(rt.scheduler_bounding_box, segment(point(rr_node.properties.xlow, rr_node.properties.ylow), point(rr_node.properties.xhigh, rr_node.properties.yhigh)));
 	}
+
+	rt_node.properties.ripped_up = false;
 
 	return rt_node.properties.pending_rip_up;
 }
@@ -363,11 +414,11 @@ bool route_tree_mark_nodes_to_be_ripped_internal(route_tree_t &rt, const RRGraph
 
 bool route_tree_mark_nodes_to_be_ripped(route_tree_t &rt, const RRGraph &g, int num_iterations_fixed_threshold)
 {
+	rt.scheduler_bounding_box = bg::make_inverse<box>();
+
 	if (rt.root_rt_node_id == -1) {
 		return false;
 	}
-
-	rt.scheduler_bounding_box = bg::make_inverse<box>();
 
 	auto &root_rt_node = get_vertex(rt.graph, rt.root_rt_node_id);
 	return route_tree_mark_nodes_to_be_ripped_internal(rt, g, root_rt_node, num_iterations_fixed_threshold);
@@ -740,10 +791,10 @@ RouteTreeNode *route_tree_add_or_get_rr_node(route_tree_t &rt, int rr_node_id, c
 			if (rr_node.properties.type == SOURCE) {
 				if (rr_node.properties.capacity > 1) {
 					zlog_level(delta_log, ROUTER_V2, "with capacity %d (> 1)", rr_node.properties.capacity);
-					update_cost = true;
 				} else {
 					zlog_level(delta_log, ROUTER_V2, "with capacity %d", rr_node.properties.capacity);
 				}
+				update_cost = true;
 			} else {
 				assert(rr_node.properties.type == CHANX || rr_node.properties.type == CHANY || rr_node.properties.type == OPIN);
 			}
