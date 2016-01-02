@@ -9,7 +9,6 @@
 #include <chrono>
 #include <mutex>
 /*#include <boost/numeric/interval.hpp>*/
-#include <zlog.h>
 /*#define TBB_USE_DEBUG 1*/
 #include <tbb/task_scheduler_init.h>
 #include <tbb/concurrent_queue.h>
@@ -1079,7 +1078,7 @@ void route_net_2(RRGraph &g, int vpr_id, const source_t *source, const vector<si
 		}
 
 		if (!found_sink) {
-			zlog_error(delta_log, "Failed to find sink\n");
+			zlog_error(delta_log, "Error: Failed to find sink\n");
 			assert(false);
 		}
 
@@ -3647,7 +3646,6 @@ struct WorkerArgs {
 	vector<trace_t> **prev_traces_ptr;
 	vector<trace_t> **current_traces_ptr;
 	t_net_timing *net_timing;
-	perf_t &perf;
 
 /*#if __linux__*/
 	sem_t *consume_sem;
@@ -3660,6 +3658,8 @@ struct WorkerArgs {
 
 	tbb::concurrent_queue<virtual_net_t *> *pending_virtual_nets;
 	tbb::concurrent_queue<virtual_net_t *> *routed_virtual_nets;
+
+	perf_t perf;
 
 	WorkerArgs(
 			int tid,
@@ -3683,7 +3683,6 @@ struct WorkerArgs {
 			vector<trace_t> **prev_traces_ptr,
 			vector<trace_t> **current_traces_ptr,
 			t_net_timing *net_timing,
-			perf_t &perf,
 
 			sem_t *consume_sem,
 			sem_t *produce_sem,
@@ -3712,7 +3711,6 @@ struct WorkerArgs {
 					prev_traces_ptr(prev_traces_ptr),
 					current_traces_ptr(current_traces_ptr),
 					net_timing(net_timing),
-					perf(perf),
 
 					consume_sem(consume_sem),
 					produce_sem(produce_sem),
@@ -3834,6 +3832,8 @@ struct SchedulerArgs {
 	int num_nets;
 	t_router_opts *opts;
 
+	sched_perf_t perf;
+
 	vector<std::mutex> *net_locks;
 };
 
@@ -3923,6 +3923,31 @@ static void *test_scheduler_thread(void *args)
 	return nullptr;
 }
 
+int num_pred_calls;
+
+namespace boost {
+	namespace geometry {
+		template <>
+			inline bool disjoint(const boost::geometry::model::box<boost::geometry::model::point<int, 2, boost::geometry::cs::cartesian>> &new_box,
+					std::vector<virtual_net_t *> * const &in_flight_virtual_nets)
+			{
+				++num_pred_calls;
+				return std::all_of(std::begin(*in_flight_virtual_nets), std::end(*in_flight_virtual_nets), [&new_box] (virtual_net_t *in_flight_virtual_net) -> bool {
+						return bg::disjoint(new_box, in_flight_virtual_net->scheduler_bounding_box);
+						});
+			}
+
+		template<>
+			inline bool covered_by(const boost::geometry::model::box<boost::geometry::model::point<int, 2, boost::geometry::cs::cartesian>> &node_bounding_box,
+					std::vector<virtual_net_t *> * const &in_flight_virtual_nets)
+			{
+				return std::any_of(std::begin(*in_flight_virtual_nets), std::end(*in_flight_virtual_nets), [&node_bounding_box] (virtual_net_t *in_flight_virtual_net) -> bool {
+						return bg::covered_by(node_bounding_box, in_flight_virtual_net->scheduler_bounding_box);
+						});
+			}
+	}
+}
+
 std::chrono::high_resolution_clock::time_point start_time;
 
 static void *scheduler_thread_2(void *args)
@@ -3934,6 +3959,11 @@ static void *scheduler_thread_2(void *args)
 	sched_output_log = fopen(filename, "w");
 
 	zlog_level(scheduler_log, ROUTER_V1, "Scheduler thread iter %d\n", *sargs->iteration);
+
+	sargs->perf.total_rtree_build_time = std::chrono::high_resolution_clock::duration::zero();
+	sargs->perf.total_dispatch_time = std::chrono::high_resolution_clock::duration::zero();
+	sargs->perf.total_rtree_update_time = std::chrono::high_resolution_clock::duration::zero();
+	sargs->perf.total_wait_time = std::chrono::high_resolution_clock::duration::zero();
 
 	int num_routed_virtual_nets = 0;
 	tbb::atomic<int> num_virtual_nets = 0;
@@ -3949,10 +3979,10 @@ static void *scheduler_thread_2(void *args)
 	vector<virtual_net_t *> in_flight_virtual_nets;
 
 #ifdef __linux__
-	__itt_frame_begin_v3(pD, NULL);
+	/*__itt_frame_begin_v3(pD, NULL);*/
 #endif
 
-	auto rtree_time = std::chrono::high_resolution_clock::now();
+	auto rtree_build_start = std::chrono::high_resolution_clock::now();
 
 	vector<value> bulk;
 	std::mutex bulk_lock;
@@ -3965,7 +3995,7 @@ static void *scheduler_thread_2(void *args)
 		/*const net_t &net = (*sargs->nets)[inet];*/
 
 	for (const auto &net : *sargs->nets) {
-		route_tree_mark_nodes_to_be_ripped((*sargs->route_trees)[net.local_id], *sargs->g, 1000);
+		route_tree_mark_nodes_to_be_ripped((*sargs->route_trees)[net.local_id], *sargs->g, 10000);
 
 		for (const auto &virtual_net : net.virtual_nets) {
 			update_virtual_net_current_sinks(*virtual_net, (*sargs->route_trees)[net.local_id]);
@@ -4004,14 +4034,16 @@ static void *scheduler_thread_2(void *args)
 	/*fclose(sbb);*/
 
 #ifdef __linux__ 
-	__itt_frame_end_v3(pD, NULL);
+	/*__itt_frame_end_v3(pD, NULL);*/
 #endif
 
 	/*bg::index::rtree<value, bgi::rstar<16>, bgi::indexable<value>, equal> pending_rtree(bulk);*/
 
-	auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::high_resolution_clock::now()-rtree_time);
+	/*auto elapsed = std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::high_resolution_clock::now()-rtree_build_start);*/
+	sargs->perf.total_rtree_build_time += std::chrono::high_resolution_clock::now()-rtree_build_start;
 	/*zlog_info(scheduler_log, "Number of virtual nets: %d\n", num_virtual_nets);*/
-	zlog_info(scheduler_log, "Building pending rtree took %lld ms\n", elapsed.count());
+	/*zlog_info(scheduler_log, "Building pending rtree took %g s\n", elapsed.count() / 1e9);*/
+	/*printf("Building pending rtree took %g s\n", elapsed.count() / 1e9);*/
 
 	/*vector<bool> ripped_up(sargs->nets->size(), false);*/
 
@@ -4048,19 +4080,22 @@ static void *scheduler_thread_2(void *args)
 		/*}*/
 		zlog_level(scheduler_log, ROUTER_V3, "Going to dispatching virtual net. Pending rtree size: %lu\n", pending_rtree.size());
 
-		const auto &pred = bgi::satisfies([&in_flight_virtual_nets] (const pair<box, virtual_net_t *> &v) -> bool {
+		/*const auto &pred = bgi::satisfies([&in_flight_virtual_nets] (const pair<box, virtual_net_t *> &v) -> bool {*/
 				/*bool dis = std::find_if(begin(in_flight_virtual_nets), end(in_flight_virtual_nets), [&v] (virtual_net_t *in_flight) -> bool { return in_flight->sinks[0]->net == v.second->sinks[0]->net; }) == end(in_flight_virtual_nets);*/
-				bool dis = true;
-				for (int i = 0; i < in_flight_virtual_nets.size() && dis; ++i) {
-					dis &= bg::disjoint(v.first, in_flight_virtual_nets[i]->scheduler_bounding_box);
-				}
-				return dis;
-				}
-				);
+				/*[>bool dis = true;<]*/
+				/*++num_pred_calls;*/
+				/*for (int i = 0; i < in_flight_virtual_nets.size() && dis; ++i) {*/
+					/*dis &= bg::disjoint(v.first, in_flight_virtual_nets[i]->scheduler_bounding_box);*/
+				/*}*/
+				/*return dis;*/
+				/*}*/
+				/*);*/
 
-		vector<virtual_net_t *> dispatched_virtual_nets;
+		/*vector<virtual_net_t *> dispatched_virtual_nets;*/
 		auto dispatch_start = std::chrono::high_resolution_clock::now();
-		for (auto iter = pending_rtree.qbegin(pred); iter != pending_rtree.qend(); ++iter) {
+		num_pred_calls = 0;
+		/*vector<box> boxes;*/
+		for (auto iter = pending_rtree.qbegin(bgi::disjoint(&in_flight_virtual_nets)); iter != pending_rtree.qend(); ++iter) {
 			/* remove the iter from pending_rtree */
 			/* add the iter to in_flight_virtual_nets */
 			/* loop again */
@@ -4068,25 +4103,26 @@ static void *scheduler_thread_2(void *args)
 			/*zlog_info(scheduler_log, "Dispatch took %lld ns\n", elapsed.count());*/
 
 #ifdef __linux__
-			__itt_frame_begin_v3(dispatch_domain, NULL);
+			/*__itt_frame_begin_v3(dispatch_domain, NULL);*/
 #endif
 			bool not_in_flight = std::find_if(begin(in_flight_virtual_nets), end(in_flight_virtual_nets), [&iter] (virtual_net_t *in_flight) -> bool { return in_flight->sinks[0]->net == iter->second->sinks[0]->net; }) == end(in_flight_virtual_nets);
 
 			if (not_in_flight) {
-
-				in_flight_virtual_nets.push_back(iter->second);
-
-				dispatched_virtual_nets.push_back(iter->second);
-
 				sargs->pending_virtual_nets->push(iter->second);
 
 				assert(!sem_post(sargs->consume_sem));
+
+				in_flight_virtual_nets.push_back(iter->second);
+
+				/*dispatched_virtual_nets.push_back(iter->second);*/
+
+				/*iter = pending_rtree.qbegin(bgi::disjoint(&in_flight_virtual_nets));*/
 			}
 
 			/*zlog_level(scheduler_log, ROUTER_V3, "Dispatching net %d virtual net %d\n", iter->second->sinks[0]->net->vpr_id, iter->second->id);*/
 
 #ifdef __linux__
-			__itt_frame_end_v3(dispatch_domain, NULL);
+			/*__itt_frame_end_v3(dispatch_domain, NULL);*/
 #endif
 
 			/*auto before_post = std::chrono::high_resolution_clock::now();*/
@@ -4096,6 +4132,8 @@ static void *scheduler_thread_2(void *args)
 
 			/*dispatch_start = std::chrono::high_resolution_clock::now();*/
 		}
+		/*printf("Num virtual nets: %d Num pred calls: %d\n", num_virtual_nets, num_pred_calls);*/
+		sargs->perf.total_dispatch_time += std::chrono::high_resolution_clock::now()-dispatch_start;
 
 		++num_dispatch_rounds;
 
@@ -4112,14 +4150,19 @@ static void *scheduler_thread_2(void *args)
 		}
 
 #ifdef __linux__
-	__itt_frame_begin_v3(update_domain, NULL);
+		/*__itt_frame_begin_v3(update_domain, NULL);*/
 #endif
 
 		do {
 			zlog_level(scheduler_log, ROUTER_V3, "Going to wait for net to finish routing\n");
 			/* we need to wait for existing in flight nets to complete */
+			auto wait_start = std::chrono::high_resolution_clock::now();
 			while (sem_wait(sargs->produce_sem) == -1 && errno == EINTR);
+			sargs->perf.total_wait_time += std::chrono::high_resolution_clock::now()-wait_start;
 			/* remove the completed net from in_flight_virtual_net */
+
+			auto update_start = std::chrono::high_resolution_clock::now();
+
 			virtual_net_t *routed_vnet;
 			assert(sargs->routed_virtual_nets->try_pop(routed_vnet));
 
@@ -4136,12 +4179,12 @@ static void *scheduler_thread_2(void *args)
 
 			net_t *net = routed_vnet->sinks[0]->net;
 
-			/*bool locked;*/
-			/*if ((*sargs->net_locks)[net->local_id].try_lock()) {*/
-				/*locked = true;*/
-			/*} else {*/
-				/*assert(false);*/
-			/*}*/
+			bool locked;
+			if ((*sargs->net_locks)[net->local_id].try_lock()) {
+				locked = true;
+			} else {
+				assert(false);
+			}
 
 			for (const auto &virtual_net : net->virtual_nets) {
 				if (!virtual_net->routed) {
@@ -4159,9 +4202,9 @@ static void *scheduler_thread_2(void *args)
 				}
 			}
 
-			/*if (locked) {*/
-				/*(*sargs->net_locks)[net->local_id].unlock();*/
-			/*}*/
+			if (locked) {
+				(*sargs->net_locks)[net->local_id].unlock();
+			}
 			/* do we need to remark all the unrouted virtual net's route tree again? */
 			/* need to remove the unrouted virtual nets from the pending rtree and reinsert because the bounding boxes have been update */
 			/*for (const auto &net : *sargs->nets) {*/
@@ -4172,10 +4215,12 @@ static void *scheduler_thread_2(void *args)
 			/*}*/
 
 			++num_routed_virtual_nets;
+
+			sargs->perf.total_rtree_update_time += std::chrono::high_resolution_clock::now()-update_start;
 		} while (sargs->routed_virtual_nets->unsafe_size() > 0);
 
 #ifdef __linux__ 
-		__itt_frame_end_v3(update_domain, NULL);
+		/*__itt_frame_end_v3(update_domain, NULL);*/
 #endif
 	}
 
@@ -4278,13 +4323,17 @@ static void *worker_thread_3(void *args)
 	sprintf(tid, "%d", wargs->tid);
 	assert(!zlog_put_mdc("tid", tid));
 
+	using clock = std::chrono::high_resolution_clock;
+
 	while (true) {
 		/*while (sem_wait(wargs->consume_sem) == -1 && errno == EINTR);*/
+		auto wait_start = clock::now();
 		assert(!sem_wait(wargs->consume_sem));
+		wargs->perf.total_wait_time += clock::now()-wait_start;
 
-		auto route_start_time = std::chrono::high_resolution_clock::now();
+		auto route_start_time = clock::now();
 
-		zlog_info(scheduler_log, "Started at %lld ns\n", std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::high_resolution_clock::now()-start_time).count());
+		/*zlog_info(scheduler_log, "Started at %lld ns\n", std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::high_resolution_clock::now()-start_time).count());*/
 
 		virtual_net_t *current_virtual_net = nullptr;	
 		assert(wargs->pending_virtual_nets->try_pop(current_virtual_net));
@@ -4299,6 +4348,7 @@ static void *worker_thread_3(void *args)
 		if (wargs->net_locks[net->local_id].try_lock()) {
 			locked = true;
 		} else {
+			zlog_error(delta_log, "Error: Multiple threads are trying to route virtual nets that belong to the same net\n");
 			assert(false);
 		}
 
@@ -4307,11 +4357,11 @@ static void *worker_thread_3(void *args)
 		/*route_tree_rip_up_segment_2(wargs->route_trees[net->local_id], current_virtual_net->sinks[0]->rr_node, wargs->g, wargs->params.pres_fac);*/
 		route_tree_rip_up_marked(wargs->route_trees[net->local_id], wargs->g, wargs->params.pres_fac);
 
-		route_net_2(wargs->g, net->vpr_id, current_virtual_net->source, current_virtual_net->current_sinks, wargs->params, wargs->state, wargs->route_trees[net->local_id], (**wargs->current_traces_ptr)[net->local_id], (**wargs->prev_traces_ptr)[net->local_id], wargs->net_timing[net->vpr_id], nullptr);
+		route_net_2(wargs->g, net->vpr_id, current_virtual_net->source, current_virtual_net->current_sinks, wargs->params, wargs->state, wargs->route_trees[net->local_id], (**wargs->current_traces_ptr)[net->local_id], (**wargs->prev_traces_ptr)[net->local_id], wargs->net_timing[net->vpr_id], &wargs->perf);
 
-		for (const auto &sink : current_virtual_net->sinks) {
-			net->sink_routed[sink->id] = true;
-		}
+		/*for (const auto &sink : current_virtual_net->sinks) {*/
+			/*net->sink_routed[sink->id] = true;*/
+		/*}*/
 		current_virtual_net->routed = true;
 
 		for (const auto &virtual_net : net->virtual_nets) {
@@ -4334,8 +4384,9 @@ static void *worker_thread_3(void *args)
 		wargs->routed_virtual_nets->push(current_virtual_net);
 		zlog_level(delta_log, ROUTER_V3, "Done routing net %d virtual_net %d in %lld\n", net->vpr_id, current_virtual_net->id,
 				std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::high_resolution_clock::now()-route_start_time).count());
+		wargs->perf.total_route_time += clock::now()-route_start_time;
 		assert(!sem_post(wargs->produce_sem));
-		zlog_info(scheduler_log, "Done routing in %lld ns\n", std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::high_resolution_clock::now()-route_start_time).count());
+		/*zlog_info(scheduler_log, "Done routing in %lld ns\n", std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::high_resolution_clock::now()-route_start_time).count());*/
 	}
 }
 
@@ -4635,6 +4686,60 @@ void test_clustering(int, int);
 
 void create_clustered_virtual_nets(vector<net_t> &nets, int num_clusters, vector<vector<virtual_net_t>> &virtual_nets);
 
+namespace boost {
+	namespace geometry {
+		namespace detail {
+			namespace dispatch {
+
+				/*template <typename Point, typename Box>*/
+					/*struct covered_by<Point, Box, point_tag, box_tag>*/
+					/*{*/
+						/*template <typename Strategy>*/
+							/*static inline bool apply(Point const& point, Box const& box, Strategy const& strategy)*/
+							/*{*/
+
+								/*return true;*/
+							/*}*/
+					/*}*/
+				/*bool covered_by(const box &b, const vector<box> &boxes)*/
+				/*{*/
+				/*return true;*/
+				/*}*/
+			}
+		}
+	}
+}
+
+void test_geometry()
+{
+	using polygon = bg::model::polygon<point>;
+	using multi_polygon = bg::model::multi_polygon<polygon>;
+
+	polygon poly;
+	bg::append(poly.outer(), point(0, 0));
+	bg::append(poly.outer(), point(0, 5));
+	bg::append(poly.outer(), point(5, 5));
+	bg::append(poly.outer(), point(5, 0));
+	bg::append(poly.outer(), point(0, 0));
+
+	polygon poly2;
+	bg::append(poly2.outer(), point(0, 0));
+	bg::append(poly2.outer(), point(0, 2));
+	bg::append(poly2.outer(), point(2, 2));
+	bg::append(poly2.outer(), point(2, 0));
+	bg::append(poly2.outer(), point(0, 0));
+
+	multi_polygon mpoly;
+	mpoly.push_back(poly);
+
+	/*covered_by*/
+
+	point p(3, 3);
+	/*box */
+		/*vector<*/
+	/*bg::covered_by(poly2, m);*/
+}
+
 bool greedy_route(t_router_opts *opts)
 {
 	tbb::task_scheduler_init init(opts->num_threads);
@@ -4657,9 +4762,11 @@ bool greedy_route(t_router_opts *opts)
 	zlog_warn(delta_log, "Using debug version of TBB\n");
 #endif
 
-	test_rtree();
+	/*test_rtree();*/
 
-	test_route_tree();
+	/*test_route_tree();*/
+
+	/*test_geometry();*/
 
 	/*test_clustering(opts->num_threads, opts->bb_factor);*/
 	/*return;*/
@@ -4684,7 +4791,7 @@ bool greedy_route(t_router_opts *opts)
 
 	/*test_rtree();*/
 
-	test_graph();
+	/*test_graph();*/
 
 	RRGraph g;
 	init_graph(g);
@@ -4835,13 +4942,15 @@ bool greedy_route(t_router_opts *opts)
 #ifdef __linux__
 	sem_t produce_sem_instance;
 	sem_t consume_sem_instance;
-	sem_init(&produce_sem_instance, 0, 0);
-	sem_init(&consume_sem_instance, 0, 0);
+	assert(!sem_init(&produce_sem_instance, 0, 0));
+	assert(!sem_init(&consume_sem_instance, 0, 0));
 	sem_t *produce_sem = &produce_sem_instance;
 	sem_t *consume_sem = &consume_sem_instance;
+	printf("Using sem_init\n");
 #else
 	sem_t *produce_sem = create_sem("produce_sem");
 	sem_t *consume_sem = create_sem("consume_sem");
+	printf("Using sem_open\n");
 #endif
 
 	tbb::concurrent_queue<virtual_net_t *> pending_virtual_nets;
@@ -4872,7 +4981,6 @@ bool greedy_route(t_router_opts *opts)
 				&prev_traces_ptr,
 				&current_traces_ptr,
 				net_timing,
-				perf,
 
 				consume_sem,
 				produce_sem,
@@ -4909,7 +5017,9 @@ bool greedy_route(t_router_opts *opts)
 
 	char buffer[256];
 
-	fclose(current_output_log);
+	if (current_output_log) {
+		fclose(current_output_log);
+	}
 
 	std::mt19937 mt(time(NULL));
 
@@ -4918,12 +5028,14 @@ bool greedy_route(t_router_opts *opts)
 	for (int iter = 0; iter < opts->max_router_iterations && !routed; ++iter) {
 		sprintf(buffer, "/Volumes/DATA/iter_%d.txt", iter);
 		current_output_log = fopen(buffer, "w");
-		assert(current_output_log);
 
 		zlog_info(delta_log, "Routing iteration: %d\n", iter);
 
 		for (int i = 0; i < opts->num_threads; ++i) {
 			args[i]->iteration = &iter;
+			args[i]->perf.num_heap_pushes = 0;
+			args[i]->perf.total_route_time = std::chrono::high_resolution_clock::duration::zero();
+			args[i]->perf.total_wait_time = std::chrono::high_resolution_clock::duration::zero();
 		}
 		sargs.iteration = &iter;
 
@@ -4936,16 +5048,16 @@ bool greedy_route(t_router_opts *opts)
 			update_sink_criticalities(net, net_timing[net.vpr_id], params);
 		}
 
-		for (auto &net : nets) {
-			/*reset_current_source_sink_3(net);*/
-			fill(begin(net.sink_routed), end(net.sink_routed), false);
-		}
-		for (auto &virtual_nets : virtual_nets_by_net) {
-			for (auto &vnet : virtual_nets) {
-				vnet.routed = false;
-			}
-		}
-		num_routed_virtual_nets = 0;
+		/*for (auto &net : nets) {*/
+			/*[>reset_current_source_sink_3(net);<]*/
+			/*fill(begin(net.sink_routed), end(net.sink_routed), false);*/
+		/*}*/
+		/*for (auto &virtual_nets : virtual_nets_by_net) {*/
+			/*for (auto &vnet : virtual_nets) {*/
+				/*vnet.routed = false;*/
+			/*}*/
+		/*}*/
+		/*num_routed_virtual_nets = 0;*/
 		if (!in_flight_qt.empty()) {
 			in_flight_qt.print_items([] (const pair<bounding_box_t, virtual_net_t *> &item) -> void {
 					printf("Net %d sink %d in in_flight_qt\n", item.second->sinks[0]->net->vpr_id, item.second->sinks[0]->id);
@@ -4969,9 +5081,21 @@ bool greedy_route(t_router_opts *opts)
 		/*zlog_info(delta_log, "Scheduling took %s\n", format(elapsed).c_str());*/
 		zlog_info(delta_log, "Routing took %g\n", elapsed.wall / 1e9);
 		printf("Routing took %g\n", elapsed.wall / 1e9);
-		zlog_info(delta_log, "Num heap pushes: %d\n", perf.num_heap_pushes);
+		/*zlog_info(delta_log, "Num heap pushes: %d\n", perf.num_heap_pushes);*/
+		for (int i = 0; i < opts->num_threads; ++i) {
+			printf("Thread %d num heap pushes: %lu\n", i, args[i]->perf.num_heap_pushes);
+			printf("Thread %d total wait time: %g s\n", i, std::chrono::duration_cast<std::chrono::nanoseconds>(args[i]->perf.total_wait_time).count() / 1e9);
+			printf("Thread %d total route time: %g s\n", i, std::chrono::duration_cast<std::chrono::nanoseconds>(args[i]->perf.total_route_time).count() / 1e9);
+		}
+		printf("Scheduler total rtree build time: %g s\n", std::chrono::duration_cast<std::chrono::nanoseconds>(sargs.perf.total_rtree_build_time).count() / 1e9);
+		printf("Scheduler total dispatch time: %g s\n", std::chrono::duration_cast<std::chrono::nanoseconds>(sargs.perf.total_dispatch_time).count() / 1e9);
+		printf("Scheduler total rtree update time: %g s\n", std::chrono::duration_cast<std::chrono::nanoseconds>(sargs.perf.total_rtree_update_time).count() / 1e9);
+		printf("Scheduler total wait time: %g s\n", std::chrono::duration_cast<std::chrono::nanoseconds>(sargs.perf.total_wait_time).count() / 1e9);
 
 		/* checking */
+		assert(pending_virtual_nets.empty());
+		assert(routed_virtual_nets.empty());
+
 		for_all_vertices(g, [] (RRNode &v) -> void { v.properties.recalc_occ = 0; });
 
 		for (const auto &net : nets) {
@@ -5059,17 +5183,22 @@ bool greedy_route(t_router_opts *opts)
 
 		zlog_info(delta_log, "Iteration time: %g s. Route time: %g s. \n", elapsed.wall / 1e9, route_time / 1e9);
 
-		if (fclose(current_output_log)) {
+		if (current_output_log && fclose(current_output_log)) {
 			char str[256];
 			strerror_r(errno, str, sizeof(str));
 			printf("failed to close file: %s\n", str);
 			assert(false);
 		}
 	}
+
+	if (!routed) {
+		printf("Failed to route in %d iterations. Total route time: %g\n", opts->max_router_iterations, total_route_time / 1e9);
+	}
+
 	return routed;
 }
 
-bool greedy_route_4(t_router_opts *opts)
+bool _old_greedy_route_4(t_router_opts *opts)
 {
 	tbb::task_scheduler_init init(opts->num_threads);
 
@@ -5278,7 +5407,6 @@ bool greedy_route_4(t_router_opts *opts)
 				&prev_traces_ptr,
 				&current_traces_ptr,
 				net_timing,
-				perf,
 
 				consume_sem,
 				produce_sem,
@@ -5465,7 +5593,7 @@ bool greedy_route_4(t_router_opts *opts)
 	return routed;
 }
 
-bool greedy_route_3(t_router_opts *opts)
+bool _old_greedy_route_3(t_router_opts *opts)
 {
 	tbb::task_scheduler_init init(opts->num_threads);
 
@@ -5812,7 +5940,7 @@ bool greedy_route_3(t_router_opts *opts)
 	return routed;
 }
 
-bool greedy_route_2(t_router_opts *opts)
+bool _old_greedy_route_2(t_router_opts *opts)
 {
 	tbb::task_scheduler_init init(opts->num_threads);
 

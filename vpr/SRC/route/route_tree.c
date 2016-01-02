@@ -1,6 +1,6 @@
-#include <zlog.h>
 #include "route.h"
 #include "route_tree.h"
+#include "log.h"
 
 extern zlog_category_t *delta_log;
 

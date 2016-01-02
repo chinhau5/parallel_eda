@@ -1,18 +1,27 @@
 #ifndef ROUTE_H
 #define ROUTE_H
 
+#include <chrono>
 #include <assert.h>
 #include <boost/numeric/interval.hpp>
 #include <boost/geometry.hpp>
-//#include <tbb/tbb.h>
-#include <zlog.h>
+#include <tbb/tbb.h>
 #include "vpr_types.h"
 #include "graph.h"
 #include "geometry.h"
 
 typedef struct perf_t {
-	int num_heap_pushes;
+	unsigned long num_heap_pushes;
+	std::chrono::high_resolution_clock::duration total_route_time;
+	std::chrono::high_resolution_clock::duration total_wait_time;
 } perf_t;
+
+typedef struct sched_perf_t {
+	std::chrono::high_resolution_clock::duration total_rtree_build_time;
+	std::chrono::high_resolution_clock::duration total_dispatch_time;
+	std::chrono::high_resolution_clock::duration total_rtree_update_time;
+	std::chrono::high_resolution_clock::duration total_wait_time;
+} sched_perf_t;
 
 typedef struct route_parameters_t {
 	float pres_fac;

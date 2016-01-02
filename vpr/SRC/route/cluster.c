@@ -198,8 +198,8 @@ void create_clustered_virtual_nets(vector<net_t> &nets, int num_nodes_per_cluste
 			}
 			assert(num_virtual_nets == net.sinks.size());
 			char filename[256];
-			sprintf(filename, "/Volumes/DATA/clusters/net_%d_cluster.txt", net.vpr_id);
-			print_cluster(filename, net.sinks, assignments);
+			/*sprintf(filename, "/Volumes/DATA/clusters/net_%d_cluster.txt", net.vpr_id);*/
+			/*print_cluster(filename, net.sinks, assignments);*/
 		} else {
 			for (int sink = 0; sink < net.sinks.size(); ++sink) {
 				virtual_net_t virtual_net;

@@ -17,7 +17,8 @@ link_directories(
 #generic compile options go here
 add_compile_options(
 	#-D TBB_USE_DEBUG=1
-	-ferror-limit=0
+	#-ferror-limit=0
+	-ftemplate-backtrace-limit=0
 	-std=c++11
 	-g -O2
 	#-Bdynamic
