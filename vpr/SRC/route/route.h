@@ -12,11 +12,20 @@
 
 typedef struct perf_t {
 	unsigned long num_heap_pushes;
-	std::chrono::high_resolution_clock::duration total_route_time;
+	unsigned long num_heap_pops;
+	unsigned long num_neighbor_visits;
 	std::chrono::high_resolution_clock::duration total_wait_time;
+	std::chrono::high_resolution_clock::duration total_rip_up_time;
+	std::chrono::high_resolution_clock::duration total_route_time;
+	std::chrono::high_resolution_clock::duration total_update_time;
+	std::chrono::high_resolution_clock::duration total_push_time;
+	std::chrono::high_resolution_clock::duration total_get_nearest_time;
 } perf_t;
 
 typedef struct sched_perf_t {
+	unsigned long num_updates;
+	unsigned long num_leaf_node_pred_calls;
+	unsigned long num_internal_node_pred_calls;
 	std::chrono::high_resolution_clock::duration total_rtree_build_time;
 	std::chrono::high_resolution_clock::duration total_dispatch_time;
 	std::chrono::high_resolution_clock::duration total_rtree_update_time;
@@ -78,25 +87,31 @@ typedef struct net_t {
 	//std::mutex lock;
 	int vpr_id;
 	int local_id;
-	int current_local_id;
-	int bb_area_rank;
 	/*bool global;*/
-	bool has_sink;
 	source_t source;
-	source_t current_source;
 	//source_t previous_source;
 	/*bool previous_source_valid;*/
 	std::vector<sink_t> sinks;
-	int num_sinks_routed;
-	int current_sink_index;
-	sink_t *current_sink;
-	vector<bool> sink_routed;
 
 	vector<struct virtual_net_t *> virtual_nets;
+
+	int bb_area_rank;
+	unsigned long num_bounding_box_updates;
+	unsigned long num_nearest_iters;
+	unsigned long total_point_tree_size;
+
 	//int previous_sink_index;
 	/*bool previous_sink_valid;*/
 	//bounding_box_t current_bounding_box;
 	/*bool previous_bounding_box_valid;*/
+	int current_local_id;
+	bool has_sink;
+	int num_sinks_routed;
+	int current_sink_index;
+	sink_t *current_sink;
+	vector<bool> sink_routed;
+	source_t current_source;
+
 	bounding_box_t bounding_box;
 	std::vector<bool> overlapping_nets;
 	std::vector<bool> non_overlapping_nets;

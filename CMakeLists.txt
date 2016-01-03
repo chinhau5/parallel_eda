@@ -63,7 +63,7 @@ else()
 		boost_timer-mt-d
 		boost_system-mt-d
 		igraph
-		tbb_debug
+		tbb
 		mlpack
 		)
 endif()

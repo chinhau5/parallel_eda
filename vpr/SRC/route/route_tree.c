@@ -245,7 +245,7 @@ route_tree_get_branches(const route_tree_t &rt, const RouteTreeNode &rt_node)
 			route_tree_t::branch_const_iterator(begin(out_edges)), route_tree_t::branch_const_iterator(end(out_edges)));
 }
 
-RouteTreeNode *route_tree_get_nearest_node(route_tree_t &rt, const point &p, const RRGraph &g)
+RouteTreeNode *route_tree_get_nearest_node(route_tree_t &rt, const point &p, const RRGraph &g, int *num_iters)
 {
 	if (!rt.point_tree.size()) {
 		return nullptr;
@@ -260,6 +260,10 @@ RouteTreeNode *route_tree_get_nearest_node(route_tree_t &rt, const point &p, con
 
 	extern zlog_category_t *delta_log;
 	zlog_level(delta_log, ROUTER_V3, "Route tree has %d nodes\n", route_tree_num_nodes(rt));
+
+	if (num_iters) {
+		*num_iters = 0;
+	}
 
 	auto it = rt.point_tree.qbegin(bgi::nearest(p, rt.point_tree.size()));
 	while (it != rt.point_tree.qend() && !res) {
@@ -283,6 +287,10 @@ RouteTreeNode *route_tree_get_nearest_node(route_tree_t &rt, const point &p, con
 		}
 
 		++it;
+
+		if (num_iters) {
+			++(*num_iters);
+		}
 	}
 
 	return res;

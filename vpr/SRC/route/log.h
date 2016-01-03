@@ -14,5 +14,8 @@ enum {
 	level, __VA_ARGS__)
 
 #define zlog_level(cat, level, ...)
+#define zlog_debug(cat, ...)
+#define zlog_info(cat, ...)
+#define zlog_warn(cat, ...)
 
 #endif

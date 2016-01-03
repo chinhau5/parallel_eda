@@ -41,7 +41,7 @@ typedef struct route_tree_t {
 	int num_nodes;
 	std::map<int, int> rr_node_to_rt_node;
 	/*map<int, vector<int>> sink_rr_node_to_path;*/
-	bgi::rtree<rtree_value, bgi::rstar<16>> point_tree;
+	bgi::rtree<rtree_value, bgi::rstar<64>> point_tree;
 	box scheduler_bounding_box;
 	map<int, vector<int>> sink_edges;
 
@@ -152,6 +152,6 @@ void route_tree_add_to_heap_internal(const route_tree_t &rt, const RouteTreeNode
 
 void route_tree_add_to_heap(const route_tree_t &rt, const RRGraph &g, const RRNode &target, float criticality_fac, float astar_fac, const bounding_box_t &current_bounding_box, std::priority_queue<route_state_t> &heap, perf_t *perf);
 
-RouteTreeNode *route_tree_get_nearest_node(route_tree_t &rt, const point &p, const RRGraph &g);
+RouteTreeNode *route_tree_get_nearest_node(route_tree_t &rt, const point &p, const RRGraph &g, int *num_iters);
 
 #endif

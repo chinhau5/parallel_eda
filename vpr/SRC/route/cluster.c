@@ -148,6 +148,22 @@ void print_cluster(const char *filename, const vector<sink_t> &sinks, const arma
 	fclose(file);
 }
 
+void print_virtual_nets(const vector<net_t> &nets)
+{
+	FILE *file = fopen("virtual_nets.txt", "w");
+	for (const auto &net : nets) {
+		fprintf(file, "Net %d \n", net.local_id);
+		for (const auto &virtual_net : net.virtual_nets) {
+			fprintf(file, "Virtual net %d Sinks: \n", virtual_net->id);
+			for (const auto &sink : virtual_net->sinks) {
+				fprintf(file, "%d \n", sink->rr_node);
+			}
+		}
+		fprintf(file, "\n");
+	}
+	fclose(file);
+}
+
 void create_clustered_virtual_nets(vector<net_t> &nets, int num_nodes_per_cluster, vector<vector<virtual_net_t>> &virtual_nets)
 {
 	virtual_nets.resize(nets.size());
