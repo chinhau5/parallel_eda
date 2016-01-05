@@ -22,6 +22,7 @@
 /*#include "route.h"*/
 
 bool partitioning_route(t_router_opts *opts);
+bool tbb_greedy_route(t_router_opts *opts);
 bool greedy_route(t_router_opts *opts);
 bool greedy_route_4(t_router_opts *opts);
 

@@ -471,6 +471,11 @@ static void SetupRouterOpts(INP t_options Options, INP boolean TimingEnabled,
 	if (Options.Count[OT_GRAIN_SIZE]) {
 		RouterOpts->grain_size = Options.grain_size;
 	}
+	
+	RouterOpts->max_sink_bb_area = 1000;
+	if (Options.Count[OT_MAX_SINK_BB_AREA]) {
+		RouterOpts->max_sink_bb_area = Options.max_sink_bb_area;
+	}
 
 	RouterOpts->bb_expand_threshold = RouterOpts->max_router_iterations+1; /* disable bb expansion by default */
 	if (Options.Count[OT_BB_EXPAND_THRESHOLD]) {

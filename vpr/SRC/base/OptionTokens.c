@@ -58,7 +58,7 @@ struct s_TokenPair OptionBaseTokenList[] = {
 		{ "power", OT_POWER }, /* Run power estimation? */
 		{ "tech_properties", OT_CMOS_TECH_BEHAVIOR_FILE }, /* Technology properties */
         { "num_threads", OT_NUM_THREADS }, { "bb_expand_threshold", OT_BB_EXPAND_THRESHOLD },
-		{ "scheduler", OT_SCHEDULER }, { "grain_size", OT_GRAIN_SIZE },
+	{ "scheduler", OT_SCHEDULER }, { "grain_size", OT_GRAIN_SIZE }, { "max_sink_bb_area", OT_MAX_SINK_BB_AREA },
 		{ NULL, OT_BASE_UNKNOWN } /* End of list marker */
 };
 

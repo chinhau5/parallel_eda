@@ -463,7 +463,9 @@ ProcessOption(INP char **Args, INOUTP t_options * Options) {
     	return ReadScheduler(Args, &Options->scheduler);
     case OT_GRAIN_SIZE:
     	return ReadInt(Args, &Options->grain_size);
-            
+	case OT_MAX_SINK_BB_AREA:
+		return ReadInt(Args, &Options->max_sink_bb_area);
+			
 		/* Routing options valid only for timing-driven routing */
 	case OT_ASTAR_FAC:
 		return ReadFloat(Args, &Options->astar_fac);

@@ -19,7 +19,11 @@ typedef struct perf_t {
 	std::chrono::high_resolution_clock::duration total_route_time;
 	std::chrono::high_resolution_clock::duration total_update_time;
 	std::chrono::high_resolution_clock::duration total_push_time;
+	std::chrono::high_resolution_clock::duration total_centroid_time;
 	std::chrono::high_resolution_clock::duration total_get_nearest_time;
+	std::chrono::high_resolution_clock::duration total_verificaion_time;
+	std::chrono::high_resolution_clock::duration total_expansion_time;
+	std::chrono::high_resolution_clock::duration total_scheduler_box_time;
 } perf_t;
 
 typedef struct sched_perf_t {
@@ -84,6 +88,8 @@ typedef struct sink_schedule_t {
 } sink_schedule_t;
 
 typedef struct net_t {
+	//net_t(const net_t &other) = delete;
+	//net_t &operator=(const net_t &other) = delete;
 	//std::mutex lock;
 	int vpr_id;
 	int local_id;

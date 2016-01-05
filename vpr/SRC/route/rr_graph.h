@@ -1,8 +1,6 @@
 #ifndef RR_GRAPH_H
 #define RR_GRAPH_H
 
-#include <zlog.h>
-
 enum e_graph_type {
 	GRAPH_GLOBAL, /* One node per channel with wire capacity > 1 and full connectivity */
 	GRAPH_BIDIR, /* Detailed bidirectional graph */

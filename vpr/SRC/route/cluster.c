@@ -4,6 +4,7 @@
 #include <mlpack/methods/kmeans/kmeans.hpp>
 #include <mlpack/methods/kmeans/refined_start.hpp>
 #include "route.h"
+#include "geometry.h"
 
 using namespace mlpack::kmeans;
 
@@ -56,7 +57,7 @@ class ManhattanDistance {
 		}
 };
 
-void cluster(const std::vector<sink_t> &sinks, int num_clusters, arma::Col<size_t> &assignments)
+void cluster(const std::vector<sink_t> &sinks, int &num_clusters, arma::Col<size_t> &assignments, int sink_bb_area_threshold)
 {
 	/*KMeans<mlpack::metric::EuclideanDistance, RefinedStart> k;*/
 
@@ -68,17 +69,10 @@ void cluster(const std::vector<sink_t> &sinks, int num_clusters, arma::Col<size_
 		data(1, i) = sinks[i].y;
 	}
 
-	point_t<int> bl, tr;
-	bl.x = sinks[0].x;
-	bl.y = sinks[0].y;
-	tr.x = sinks[0].x;
-	tr.y = sinks[0].y;
+	box bb = bg::make_inverse<box>();
 
-	for (int i = 1; i < sinks.size(); ++i) {
-		bl.x = std::min(bl.x, sinks[i].x);
-		bl.y = std::min(bl.y, sinks[i].y);
-		tr.x = std::max(tr.x, sinks[i].x);
-		tr.y = std::max(tr.y, sinks[i].y);
+	for (int i = 0; i < sinks.size(); ++i) {
+		bg::expand(bb, point(sinks[i].x, sinks[i].y));
 	}
 
 	const int max_tries = 100;
@@ -92,50 +86,80 @@ void cluster(const std::vector<sink_t> &sinks, int num_clusters, arma::Col<size_
 	arma::Col<size_t> best_assignment;
 
 	std::mt19937 mt(0);
-	std::uniform_int_distribution<int> uni(0, num_clusters-1);
-	assert(tr.x >= bl.x);
-	assert(tr.y >= bl.y);
-	std::uniform_int_distribution<int> uni_x(bl.x, tr.x);
-	std::uniform_int_distribution<int> uni_y(bl.y, tr.y);
+	/*std::uniform_int_distribution<int> uni(0, num_clusters-1);*/
+	assert(bb.max_corner().get<0>() >= bb.min_corner().get<0>());
+	assert(bb.max_corner().get<1>() >= bb.min_corner().get<1>());
+	std::uniform_int_distribution<int> uni_x(bb.min_corner().get<0>(), bb.max_corner().get<0>());
+	std::uniform_int_distribution<int> uni_y(bb.min_corner().get<1>(), bb.max_corner().get<1>());
 
 	assignments.set_size(sinks.size());
-	arma::mat centroids(2, num_clusters);
 
 	/*printf("sink bb %d-%d %d-%d\n", bl.x, tr.x, bl.y, tr.y);*/
 
-	for (int i = 0; i < max_tries; ++i) {
-		/*for (int j = 0; j < sinks.size(); ++j) {*/
+	int max_sink_bb_area = std::numeric_limits<int>::min();
+
+	do {
+		arma::mat centroids(2, num_clusters);
+
+		for (int i = 0; i < max_tries; ++i) {
+			/*for (int j = 0; j < sinks.size(); ++j) {*/
 			/*assignments[j] = uni(mt);*/
 			/*assert(assignments[j] >= 0 && assignments[j] < num_clusters);*/
-		/*}*/
-		for (int j = 0; j < num_clusters; ++j) {
-			centroids(0, j) = uni_x(mt);
-			centroids(1, j) = uni_y(mt);
-			/*printf("centroid %d: %g,%g\n", j, centroids(0, j), centroids(1, j));*/
-		}
-		k.Cluster(data, num_clusters, assignments, centroids, false, true);
+			/*}*/
+			for (int j = 0; j < num_clusters; ++j) {
+				centroids(0, j) = uni_x(mt);
+				centroids(1, j) = uni_y(mt);
+				/*printf("centroid %d: %g,%g\n", j, centroids(0, j), centroids(1, j));*/
+			}
+			k.Cluster(data, num_clusters, assignments, centroids, false, true);
 
-		double total_d = 0;
-		for (int j = 0; j < sinks.size(); ++j) {
-			int assign = assignments[j];
-			double d = k.Metric().Evaluate(centroids.col(assign), data.col(j));
-			total_d += d;
+			double total_d = 0;
+			for (int j = 0; j < sinks.size(); ++j) {
+				int assign = assignments[j];
+				double d = k.Metric().Evaluate(centroids.col(assign), data.col(j));
+				total_d += d;
+
+				/*printf("%g,%g <-> %g,%g is %g\n", data(0, j), data(1, j), centroids(0, assign), centroids(1, assign), d);*/
+			}
+
+			/*printf("total distance %g ", total_d);*/
+
+			if (total_d < min_metric) {
+				/*printf("is < %g", min_metric);*/
+
+				min_metric = total_d;
+				best_assignment = assignments;
+			}
+
+			/*printf("\n");*/
+		}
+		assignments = best_assignment;
+		/*double total_d = 0;*/
+		/*for (int j = 0; j < sinks.size(); ++j) {*/
+			/*int assign = assignments[j];*/
+			/*double d = k.Metric().Evaluate(centroids.col(assign), data.col(j));*/
+			/*total_d += d;*/
 
 			/*printf("%g,%g <-> %g,%g is %g\n", data(0, j), data(1, j), centroids(0, assign), centroids(1, assign), d);*/
+		/*}*/
+
+		max_sink_bb_area = std::numeric_limits<int>::min();
+		for (int i = 0; i < num_clusters; ++i) {
+			box sink_bb = bg::make_inverse<box>();
+			for (int j = 0; j < sinks.size(); ++j) {
+				if (assignments[j] == i) {
+					bg::expand(sink_bb, point(sinks[j].x, sinks[j].y));
+				}
+			}
+			bg::subtract_value(sink_bb.min_corner(), 1);
+			max_sink_bb_area = std::max((int)bg::area(sink_bb), max_sink_bb_area);
+			/*printf("cur max_sink_bb_area: %d\n", max_sink_bb_area);*/
 		}
-		
-		/*printf("total distance %g ", total_d);*/
 
-		if (total_d < min_metric) {
-			/*printf("is < %g", min_metric);*/
-
-			min_metric = total_d;
-			best_assignment = assignments;
+		if (max_sink_bb_area > sink_bb_area_threshold) {
+			num_clusters = std::min((int)sinks.size(), num_clusters + 1);
 		}
-
-		/*printf("\n");*/
-	}
-	assignments = best_assignment;
+	} while (max_sink_bb_area > sink_bb_area_threshold);
 }
 
 void print_cluster(const char *filename, const vector<sink_t> &sinks, const arma::Col<size_t> &assignments)
@@ -164,7 +188,7 @@ void print_virtual_nets(const vector<net_t> &nets)
 	fclose(file);
 }
 
-void create_clustered_virtual_nets(vector<net_t> &nets, int num_nodes_per_cluster, vector<vector<virtual_net_t>> &virtual_nets)
+void create_clustered_virtual_nets(vector<net_t> &nets, int num_nodes_per_cluster, int sink_bb_area_threshold, vector<vector<virtual_net_t>> &virtual_nets)
 {
 	virtual_nets.resize(nets.size());
 
@@ -172,10 +196,12 @@ void create_clustered_virtual_nets(vector<net_t> &nets, int num_nodes_per_cluste
 
 	for (auto &net : nets) {
 		vector<virtual_net_t> current_virtual_nets;
-		int num_clusters = net.sinks.size()/num_nodes_per_cluster;
-		if (num_clusters > 2) {
+		int num_clusters = ceil(sqrt((float)net.sinks.size()));
+		/*if (num_clusters > 1000000000) {*/
+			/*assert(false);*/
+		/*if (num_clusters > 2) {*/
 			arma::Col<size_t> assignments;
-			cluster(net.sinks, num_clusters, assignments);
+			cluster(net.sinks, num_clusters, assignments, sink_bb_area_threshold);
 
 			int num_virtual_nets = 0;
 			for (int clus = 0; clus < num_clusters; ++clus) {
@@ -214,23 +240,23 @@ void create_clustered_virtual_nets(vector<net_t> &nets, int num_nodes_per_cluste
 			}
 			assert(num_virtual_nets == net.sinks.size());
 			char filename[256];
-			/*sprintf(filename, "/Volumes/DATA/clusters/net_%d_cluster.txt", net.vpr_id);*/
-			/*print_cluster(filename, net.sinks, assignments);*/
-		} else {
-			for (int sink = 0; sink < net.sinks.size(); ++sink) {
-				virtual_net_t virtual_net;
+			sprintf(filename, "/Volumes/DATA/clusters/net_%d_cluster.txt", net.vpr_id);
+			print_cluster(filename, net.sinks, assignments);
+		/*} else {*/
+			/*for (int sink = 0; sink < net.sinks.size(); ++sink) {*/
+				/*virtual_net_t virtual_net;*/
 
-				virtual_net.id = sink;
-				virtual_net.routed = false;
-				virtual_net.source = &net.source;
-				virtual_net.sinks.push_back(&net.sinks[sink]);
-				/*virtual_net.centroid.set<0>(net.sinks[sink].x);*/
-				/*virtual_net.centroid.set<1>(net.sinks[sink].y);*/
-				virtual_net.nearest_rr_node = -1;
+				/*virtual_net.id = sink;*/
+				/*virtual_net.routed = false;*/
+				/*virtual_net.source = &net.source;*/
+				/*virtual_net.sinks.push_back(&net.sinks[sink]);*/
+				/*[>virtual_net.centroid.set<0>(net.sinks[sink].x);<]*/
+				/*[>virtual_net.centroid.set<1>(net.sinks[sink].y);<]*/
+				/*virtual_net.nearest_rr_node = -1;*/
 
-				current_virtual_nets.push_back(virtual_net);
-			}
-		}
+				/*current_virtual_nets.push_back(virtual_net);*/
+			/*}*/
+		/*}*/
 
 		virtual_nets[net.local_id] = std::move(current_virtual_nets);
 	}	

@@ -78,6 +78,7 @@ enum e_OptionBaseToken {
 	OT_GRAIN_SIZE,
 	OT_BB_EXPAND_THRESHOLD,
 	OT_SCHEDULER,
+	OT_MAX_SINK_BB_AREA,
 	OT_BASE_UNKNOWN /* Must be last since used for counting enum items */
 };
 

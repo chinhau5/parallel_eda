@@ -155,6 +155,7 @@ void route_tree_remove_edge(route_tree_t &rt, const RouteTreeEdge &edge)
 	for (auto &rt_node: route_tree_get_nodes(rt)) {
 		if (rt_node.properties.rt_edge_to_parent > id(edge)) {
 			--rt_node.properties.rt_edge_to_parent;
+			assert(rt_node.properties.rt_edge_to_parent >= 0);
 		}
 	}
 
@@ -270,20 +271,20 @@ RouteTreeNode *route_tree_get_nearest_node(route_tree_t &rt, const point &p, con
 		RouteTreeNode *rt_node = &get_vertex(rt.graph, it->second);
 		const auto &rr_node = get_vertex(g, rt_node->properties.rr_node);
 
-		auto bounding_box = bg::make_inverse<box>();
+		/*auto bounding_box = bg::make_inverse<box>();*/
 
-		bg::expand(bounding_box, p);
+		/*bg::expand(bounding_box, p);*/
 
-		int area = bg::area(bounding_box);
+		/*int area = bg::area(bounding_box);*/
 
-		char buffer[256];
-		sprintf_rr_node(id(rr_node), buffer);
-		zlog_level(delta_log, ROUTER_V3, "Current nearest to (%d,%d): %s BB: %d-%d %d-%d Area: %d Pending rip up: %d\n", p.get<0>(), p.get<1>(), buffer, bounding_box.min_corner().get<0>(), bounding_box.max_corner().get<0>(), bounding_box.max_corner().get<1>(), bounding_box.max_corner().get<1>(), area, rt_node->properties.pending_rip_up ? 1 : 0);
+		/*char buffer[256];*/
+		/*sprintf_rr_node(id(rr_node), buffer);*/
+		/*zlog_level(delta_log, ROUTER_V3, "Current nearest to (%d,%d): %s BB: %d-%d %d-%d Area: %d Pending rip up: %d\n", p.get<0>(), p.get<1>(), buffer, bounding_box.min_corner().get<0>(), bounding_box.max_corner().get<0>(), bounding_box.max_corner().get<1>(), bounding_box.max_corner().get<1>(), area, rt_node->properties.pending_rip_up ? 1 : 0);*/
 
-		if (!rt_node->properties.pending_rip_up && rr_node.properties.type != IPIN && rr_node.properties.type != SINK) {
-			if (!res) {
-				res = rt_node;
-			}
+		assert(rr_node.properties.type != IPIN && rr_node.properties.type != SINK);
+
+		if (!rt_node->properties.pending_rip_up) {
+			res = rt_node;
 		}
 
 		++it;
@@ -331,6 +332,8 @@ void route_tree_rip_up_marked(route_tree_t &rt, RRGraph &g, float pres_fac)
 					update_one_cost_internal(parent_rr_node, -1, pres_fac); 
 				}
 				route_tree_remove_edge(rt, edge);
+
+				assert(rt_node.properties.rt_edge_to_parent == -1);
 			} 
 		} else {
 			zlog_level(delta_log, ROUTER_V2, "NOT ripping up node %s from route tree\n", buffer);

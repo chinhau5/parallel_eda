@@ -735,6 +735,7 @@ struct s_router_opts {
 	boolean doRouting;
     int num_threads;
     int grain_size;
+	int max_sink_bb_area;
     SchedulerType scheduler;
     int bb_expand_threshold;
 };
