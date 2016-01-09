@@ -8,6 +8,7 @@ link_directories(
 	~/Downloads/tbb44_20151115oss/build/macos_intel64_clang_cc5.2.0_os10.11.1_debug
 	~/Downloads/tbb44_20151115oss/build/macos_intel64_clang_cc5.2.0_os10.11.1_release
 	/Users/chinhau5/Downloads/mlpack-1.0.12/build/lib
+	/Users/chinhau5/Downloads/metis-5.1.0/build/Darwin-x86_64/libmetis/Debug
 	)
 
 #set(CMAKE_SKIP_RPATH true)
@@ -33,9 +34,6 @@ add_compile_options(
 	)
 endif()
 
-add_subdirectory(libarchfpga)
-add_subdirectory(pcre)
-add_subdirectory(printhandler)
 add_subdirectory(vpr)
 
 set_source_files_properties(vpr/SRC/main.c PROPERTIES LANGUAGE CXX)
@@ -65,6 +63,7 @@ else()
 		igraph
 		tbb
 		mlpack
+		metis
 		)
 endif()
 

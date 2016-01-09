@@ -1,7 +1,8 @@
 #ifndef QUADTREE_H
 #define QUADTREE_H
 
-#include "route.h"
+#include "geometry.h"
+#include <zlog.h>
 
 template<typename Tag>
 class QuadTree {
@@ -10,7 +11,7 @@ class QuadTree {
 		bounding_box_t box;
 		QuadTree *parent;
 		QuadTree *children;
-		vector<pair<bounding_box_t, Tag>> items;
+		std::vector<std::pair<bounding_box_t, Tag>> items;
 		int max_num_items;
 
 	public:
@@ -90,7 +91,7 @@ class QuadTree {
 			}
 		}
 
-		void get_non_overlapping_quadrant(QuadTree *current, vector<QuadTree *> &non_overlapping_quadrants) {
+		void get_non_overlapping_quadrant(QuadTree *current, std::vector<QuadTree *> &non_overlapping_quadrants) {
 			if (current->parent) {
 				for (int i = 0; i < 4; ++i) {
 					if (i != current->quadrant) {
@@ -100,7 +101,7 @@ class QuadTree {
 			}
 		}
 
-		QuadTree *insert(const pair<bounding_box_t, Tag> &item)
+		QuadTree *insert(const std::pair<bounding_box_t, Tag> &item)
 		{
 			QuadTree *res = nullptr;
 
@@ -129,7 +130,7 @@ class QuadTree {
 			return res;
 		}
 
-		void remove(const pair<bounding_box_t, Tag> &item)
+		void remove(const std::pair<bounding_box_t, Tag> &item)
 		{
 			int q = get_quadrant(item.first);
 			if (q >= 0) {
@@ -141,7 +142,7 @@ class QuadTree {
 			}
 		}
 
-		bool has_overlapping_boxes(const pair<bounding_box_t, Tag> &item) const
+		bool has_overlapping_boxes(const std::pair<bounding_box_t, Tag> &item) const
 		{
 			int q = get_quadrant(item.first);
 
@@ -149,7 +150,7 @@ class QuadTree {
 			if (q >= 0) {
 				//assert(!contains(item));
 				bool has_overlap = any_of(begin(items), end(items),
-						[&item] (const pair<bounding_box_t, Tag> &other_item) -> bool {
+						[&item] (const std::pair<bounding_box_t, Tag> &other_item) -> bool {
 						return box_overlap(other_item.first, item.first) && item.second != other_item.second;
 						});
 
@@ -158,7 +159,7 @@ class QuadTree {
 				assert(contains(item.first));
 
 				bool has_overlap = any_of(begin(items), end(items),
-						[&item] (const pair<bounding_box_t, Tag> &other_item) -> bool {
+						[&item] (const std::pair<bounding_box_t, Tag> &other_item) -> bool {
 						return box_overlap(other_item.first, item.first) && item.second != other_item.second;
 						});
 
@@ -179,13 +180,13 @@ class QuadTree {
 			return res;
 		}
 
-		void get_overlapping_boxes(const bounding_box_t &item, vector<const pair<bounding_box_t, Tag> *> &overlapping_boxes) const
+		void get_overlapping_boxes(const bounding_box_t &item, std::vector<const std::pair<bounding_box_t, Tag> *> &overlapping_boxes) const
 		{
 			int q = get_quadrant(item);
 
 			struct ptr_back_inserter {
-				vector<const pair<bounding_box_t, Tag> *> &res;
-				ptr_back_inserter(vector<const pair<bounding_box_t, Tag> *> &res)
+				std::vector<const std::pair<bounding_box_t, Tag> *> &res;
+				ptr_back_inserter(std::vector<const std::pair<bounding_box_t, Tag> *> &res)
 					: res(res) 
 				{
 				}
@@ -200,7 +201,7 @@ class QuadTree {
 					return *this;
 				}
 
-				ptr_back_inserter &operator=(const pair<bounding_box_t, Tag> &item)
+				ptr_back_inserter &operator=(const std::pair<bounding_box_t, Tag> &item)
 				{
 					res.push_back(&item);
 					return *this;
@@ -210,7 +211,7 @@ class QuadTree {
 			if (q >= 0) {
 				//assert(!contains(item));
 				copy_if(begin(items), end(items), ptr_back_inserter(overlapping_boxes),
-						[&item] (const pair<bounding_box_t, Tag> &other_box) -> bool {
+						[&item] (const std::pair<bounding_box_t, Tag> &other_box) -> bool {
 						return box_overlap(other_box.first, item);
 						});
 
@@ -219,7 +220,7 @@ class QuadTree {
 				assert(contains(item));
 
 				copy_if(begin(items), end(items), ptr_back_inserter(overlapping_boxes),
-						[&item] (const pair<bounding_box_t, Tag> &other_box) -> bool {
+						[&item] (const std::pair<bounding_box_t, Tag> &other_box) -> bool {
 						return box_overlap(other_box.first, item);
 						});
 

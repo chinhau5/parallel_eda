@@ -1,10 +1,10 @@
 #include <stdio.h>
 #include <random>
-#include <zlog.h>
 #include <mlpack/methods/kmeans/kmeans.hpp>
 #include <mlpack/methods/kmeans/refined_start.hpp>
 #include "route.h"
 #include "geometry.h"
+#include "log.h"
 
 using namespace mlpack::kmeans;
 
@@ -196,10 +196,11 @@ void create_clustered_virtual_nets(vector<net_t> &nets, int num_nodes_per_cluste
 
 	for (auto &net : nets) {
 		vector<virtual_net_t> current_virtual_nets;
-		int num_clusters = ceil(sqrt((float)net.sinks.size()));
+		int num_clusters = net.sinks.size();//ceil(sqrt((float)net.sinks.size()));
 		/*if (num_clusters > 1000000000) {*/
 			/*assert(false);*/
 		/*if (num_clusters > 2) {*/
+		if (false) {
 			arma::Col<size_t> assignments;
 			cluster(net.sinks, num_clusters, assignments, sink_bb_area_threshold);
 
@@ -240,23 +241,23 @@ void create_clustered_virtual_nets(vector<net_t> &nets, int num_nodes_per_cluste
 			}
 			assert(num_virtual_nets == net.sinks.size());
 			char filename[256];
-			sprintf(filename, "/Volumes/DATA/clusters/net_%d_cluster.txt", net.vpr_id);
-			print_cluster(filename, net.sinks, assignments);
-		/*} else {*/
-			/*for (int sink = 0; sink < net.sinks.size(); ++sink) {*/
-				/*virtual_net_t virtual_net;*/
+			/*sprintf(filename, "/Volumes/DATA/clusters/net_%d_cluster.txt", net.vpr_id);*/
+			/*print_cluster(filename, net.sinks, assignments);*/
+		} else {
+			for (int sink = 0; sink < net.sinks.size(); ++sink) {
+				virtual_net_t virtual_net;
 
-				/*virtual_net.id = sink;*/
-				/*virtual_net.routed = false;*/
-				/*virtual_net.source = &net.source;*/
-				/*virtual_net.sinks.push_back(&net.sinks[sink]);*/
-				/*[>virtual_net.centroid.set<0>(net.sinks[sink].x);<]*/
-				/*[>virtual_net.centroid.set<1>(net.sinks[sink].y);<]*/
-				/*virtual_net.nearest_rr_node = -1;*/
+				virtual_net.id = sink;
+				virtual_net.routed = false;
+				virtual_net.source = &net.source;
+				virtual_net.sinks.push_back(&net.sinks[sink]);
+				/*virtual_net.centroid.set<0>(net.sinks[sink].x);*/
+				/*virtual_net.centroid.set<1>(net.sinks[sink].y);*/
+				virtual_net.nearest_rr_node = -1;
 
-				/*current_virtual_nets.push_back(virtual_net);*/
-			/*}*/
-		/*}*/
+				current_virtual_nets.push_back(virtual_net);
+			}
+		}
 
 		virtual_nets[net.local_id] = std::move(current_virtual_nets);
 	}	
@@ -264,6 +265,7 @@ void create_clustered_virtual_nets(vector<net_t> &nets, int num_nodes_per_cluste
 	for (int i = 0; i < nets.size(); ++i) {
 		for (auto &virtual_net : virtual_nets[i]) {
 			nets[i].virtual_nets.push_back(&virtual_net);
+			virtual_net.net = &nets[i];
 		}
 	}
 }

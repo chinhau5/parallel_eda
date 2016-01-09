@@ -2,13 +2,9 @@
 #define ROUTE_H
 
 #include <chrono>
-#include <assert.h>
-#include <boost/numeric/interval.hpp>
-#include <boost/geometry.hpp>
-#include <tbb/tbb.h>
-#include "vpr_types.h"
-#include "graph.h"
 #include "geometry.h"
+#include "quadtree.h"
+#include "new_rr_graph.h"
 
 typedef struct perf_t {
 	unsigned long num_heap_pushes;
@@ -30,7 +26,8 @@ typedef struct sched_perf_t {
 	unsigned long num_updates;
 	unsigned long num_leaf_node_pred_calls;
 	unsigned long num_internal_node_pred_calls;
-	std::chrono::high_resolution_clock::duration total_rtree_build_time;
+	std::chrono::high_resolution_clock::duration total_build_time;
+	std::chrono::high_resolution_clock::duration total_partitioning_time;
 	std::chrono::high_resolution_clock::duration total_dispatch_time;
 	std::chrono::high_resolution_clock::duration total_rtree_update_time;
 	std::chrono::high_resolution_clock::duration total_wait_time;
@@ -43,19 +40,6 @@ typedef struct route_parameters_t {
 	float max_criticality;
 	float criticality_exp;
 } route_parameters_t;
-
-typedef struct bounding_box_t {
-	int xmin;
-	int xmax;
-	int ymin;
-	int ymax;
-	bool operator==(const bounding_box_t &other) const {
-		return other.xmin == xmin && 
-			other.xmax == xmax && 
-			other.ymin == ymin && 
-			other.ymax == ymax;
-	}
-} bounding_box_t;
 
 typedef struct source_t {
 	struct net_t *net;
@@ -134,11 +118,14 @@ typedef struct virtual_net_t {
 	//tbb::spin_mutex lock;
 	int id;
 	bool routed;
+	bool dispatched;
+	net_t *net;
 	source_t *source;
 	vector<sink_t *> sinks;
 	vector<sink_t *> current_sinks;
-	//point centroid;
 	int nearest_rr_node;
+	box sink_bounding_box;
+	point centroid;
 	box current_bounding_box;
 	box scheduler_bounding_box;
 	box saved_scheduler_bounding_box;
@@ -149,37 +136,6 @@ typedef struct virtual_net_t {
 	//source_t source
 //} 
 
-typedef struct rr_node_property_t {
-	t_rr_type type;
-	bool inc_direction;
-	int xlow;
-	int ylow;
-	int xhigh;
-	int yhigh;
-	int real_xlow;
-	int real_ylow;
-	int real_xhigh;
-	int real_yhigh;
-	float R;
-	float C;
-	int cost_index;
-	int capacity;
-	int occ;
-	int recalc_occ;
-	float pres_cost;
-	float acc_cost;
-} rr_node_property_t;
-
-typedef struct rr_edge_property_t {
-	bool buffered;
-	float switch_delay;
-	float R;
-} rr_edge_property_t;
-
-typedef graph_t<rr_node_property_t, rr_edge_property_t> RRGraph;
-typedef vertex_t<rr_node_property_t, rr_edge_property_t> RRNode;
-typedef edge_t<rr_edge_property_t> RREdge;
-
 typedef struct route_state_t {
 	int rr_node;
 	const RREdge *prev_edge;
@@ -189,28 +145,6 @@ typedef struct route_state_t {
 	float cost;
 } route_state_t;
 
-template<typename BoundingBox>
-int get_bounding_box_area(const BoundingBox &bb)
-{
-	assert(bb.xmax >= bb.xmin && bb.ymax >= bb.ymin);
-	int area = (bb.xmax - bb.xmin + 1) * (bb.ymax - bb.ymin + 1);
-	assert(area >= 0);
-	return area;
-}
-
-template<typename BoundingBox>
-bool box_overlap(const BoundingBox &box_a, const BoundingBox &box_b)
-{
-	using namespace boost::numeric;
-	interval<int> a_hor(box_a.xmin, box_a.xmax);
-	interval<int> b_hor(box_b.xmin, box_b.xmax);
-
-	interval<int> a_vert(box_a.ymin, box_a.ymax);
-	interval<int> b_vert(box_b.ymin, box_b.ymax);
-
-	return overlap(a_hor, b_hor) && overlap(a_vert, b_vert);
-}
-
 bool hybrid_route(t_router_opts *opts);
 bool partitioning_route(t_router_opts *opts);
 bool greedy_route(t_router_opts *opts);
@@ -219,14 +153,14 @@ bool partitioning_route_bounding_box(t_router_opts *opts);
 float get_timing_driven_expected_cost(const RRNode &current, const RRNode &target,
 		float criticality_fac, float R_upstream);
 
-void update_one_cost(RRGraph &g, const vector<int>::const_iterator &rr_nodes_begin, const vector<int>::const_iterator &rr_nodes_end, int delta, float pres_fac);
-
-#include "route_tree.h"
-
-void update_one_cost(RRGraph &g, route_tree_t &rt, const RouteTreeNode &node, int delta, float pres_fac);
-
-void update_one_cost_internal(RRNode &rr_node, int delta, float pres_fac);
-
 bool operator<(const route_state_t &a, const route_state_t &b);
+
+void update_costs(RRGraph &g, float pres_fac, float acc_fac);
+
+void analyze_timing(t_net_timing *net_timing);
+
+int zlog_custom_output(zlog_msg_t *msg);
+
+int zlog_sched_custom_output(zlog_msg_t *msg);
 
 #endif

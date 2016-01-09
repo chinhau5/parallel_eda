@@ -23,6 +23,8 @@
 
 bool partitioning_route(t_router_opts *opts);
 bool tbb_greedy_route(t_router_opts *opts);
+bool phased_greedy_route(t_router_opts *opts);
+bool locking_route(t_router_opts *opts);
 bool greedy_route(t_router_opts *opts);
 bool greedy_route_4(t_router_opts *opts);
 
@@ -353,7 +355,7 @@ boolean try_route_new(int width_fac, struct s_router_opts router_opts,
 		case HYBRID:
 			vpr_printf(TIO_MESSAGE_INFO, "Confirming Router Algorithm: HYBRID.\n");
 			assert(router_opts.route_type != GLOBAL);
-			success = greedy_route(&router_opts);
+			success = locking_route(&router_opts);
 			break;
 		default:
 			success = FALSE;

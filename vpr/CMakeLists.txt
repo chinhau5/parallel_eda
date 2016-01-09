@@ -2,6 +2,14 @@ cmake_minimum_required(VERSION 2.8)
 
 project(Vpr)
 
+#set (CMAKE_MODULE_PATH "${CMAKE_SOURCE_DIR}/CMake")
+
+#include(cotire)
+
+add_subdirectory(../libarchfpga ../libarchfpga)
+add_subdirectory(../pcre ../pcre)
+add_subdirectory(../printhandler ../printhandler)
+
 set(srcs
 	SRC/base/CheckArch.c
 	SRC/base/check_netlist.c
@@ -60,11 +68,15 @@ set(srcs
 	SRC/route/fine_grained_parallel_route_timing.c
 	SRC/route/fine_grained_parallel_route_timing_2.c
 	SRC/route/test.c
+	SRC/route/partition.cxx
+	SRC/route/fine.cxx
+	SRC/route/phased.cxx
+	SRC/route/init.cxx
 	SRC/route/partitioning_route.c
 	SRC/route/route_tree.c
 	SRC/route/trace.c
 	SRC/route/utility.c
-	SRC/route/cluster.c
+	SRC/route/net_cluster.cxx
 	SRC/route/scheduler.c
 	SRC/route/advanced_parallel_route_timing.c
 	SRC/route/route_tree_timing.c
@@ -95,24 +107,32 @@ add_library(Vpr STATIC
 	${srcs}
 )
 
+if (CMAKE_SYSTEM_NAME STREQUAL "Linux")
+	set(external_includes 
+		/usr/include/libxml2
+		/usr/local/include
+		/home/chinhau5/Downloads/tbb44_20151115oss/include
+		/home/chinhau5/Downloads/mlpack-1.0.12/build/include
+		/home/chinhau5/Downloads/armadillo-6.400.3/include
+		/home/chinhau5/Downloads/metis-5.1.0/include/
+		)
+else()
+	set(external_includes 
+		/usr/local/include
+		/opt/local/include
+		/opt/local/include/libxml2
+		/Users/chinhau5/Downloads/tbb44_20151115oss/include
+		/Users/chinhau5/Downloads/mlpack-1.0.12/build/include
+		/Users/chinhau5/Downloads/armadillo-6.400.3/include
+		/Users/chinhau5/Downloads/metis-5.1.0/include/
+		)
+	set(pch_flags
+		-fasm-blocks
+		)
+endif()
+
 target_include_directories(Vpr PUBLIC 
-	#${CMAKE_CURRENT_SOURCE_DIR}
-	#printhandler/SRC/TIO_InputOutputHandlers 
-	#libarchfpga/include 
-	/usr/local/include
-	/opt/local/include
-	#~/Downloads/tbb44_20150728oss/include
-#if (CMAKE_SYSTEM_NAME STREQUAL "Linux")
-	/home/chinhau5/Downloads/tbb44_20151115oss/include
-	/home/chinhau5/Downloads/mlpack-1.0.12/build/include
-	/home/chinhau5/Downloads/armadillo-6.400.3/include
-	/usr/include/libxml2
-#else()
-	/Users/chinhau5/Downloads/tbb44_20151115oss/include
-	/Users/chinhau5/Downloads/mlpack-1.0.12/build/include
-	/Users/chinhau5/Downloads/armadillo-6.400.3/include
-	/opt/local/include/libxml2
-#endif()
+	${external_includes}
 	SRC/util
 	SRC/timing 
 	SRC/pack 
@@ -124,10 +144,40 @@ target_include_directories(Vpr PUBLIC
 
 target_compile_options(Vpr PRIVATE
 	-Wno-write-strings -Wno-unused-variable -Wno-unused-private-field
-	-DNO_GRAPHICS) 
+	-DNO_GRAPHICS
+	) 
 
 target_link_libraries(Vpr
 	ArchFpga
 	PrintHandler
 	Pcre
 	)
+
+get_property(dirs TARGET Vpr PROPERTY INCLUDE_DIRECTORIES)
+foreach(dir ${dirs})
+	set(include_dirs ${include_dirs} -I ${dir})
+endforeach()
+
+get_property(opts TARGET Vpr PROPERTY COMPILE_OPTIONS)
+get_property(flags TARGET Vpr PROPERTY COMPILE_FLAGS)
+
+message(STATUS ${dirs})
+message(STATUS ${flags})
+
+if (CMAKE_SYSTEM_NAME STREQUAL "Linux")
+else()
+	target_compile_options(Vpr PRIVATE
+		-include-pch ${CMAKE_CURRENT_BINARY_DIR}/pch.h.gch
+		)
+endif()
+
+add_custom_command(OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/pch.h.gch
+	COMMAND ${CMAKE_CXX_COMPILER} -x c++-header ${pch_flags} ${opts} ${include_dirs} ${CMAKE_CURRENT_SOURCE_DIR}/SRC/route/pch.h -o ${CMAKE_CURRENT_BINARY_DIR}/pch.h.gch
+	DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/SRC/route/pch.h)
+
+add_custom_target(Pch
+	DEPENDS ${CMAKE_CURRENT_BINARY_DIR}/pch.h.gch)
+
+add_dependencies(Vpr Pch)
+
+#cotire(Vpr)

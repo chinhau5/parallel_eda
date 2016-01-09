@@ -1,7 +1,8 @@
-#include <zlog.h>
 #include "trace.h"
 #include "route.h"
 #include "utility.h"
+#include "route_tree.h"
+#include "log.h"
 
 extern zlog_category_t *delta_log;
 
@@ -133,7 +134,7 @@ const Segment &trace_add_path(trace_t &trace, const RRGraph &g, const route_stat
 void trace_rip_up_net(trace_t &trace, RRGraph &g, float pres_fac)
 {
 	for (const auto &segment : trace.segments) {
-		update_one_cost(g, segment.second.begin(), segment.second.end(), -1, pres_fac);
+		update_one_cost(g, segment.second.begin(), segment.second.end(), -1, pres_fac, false);
 	}
 	trace.segments.clear();
 	/*trace.first_sink_rr_node = -1;*/
@@ -150,7 +151,7 @@ void trace_rip_up_segment(trace_t &trace, RRGraph &g, int sink_rr_node, float pr
 	/*}*/
 	auto iter = trace.segments.find(sink_rr_node);
 	if (iter != trace.segments.end()) {
-		update_one_cost(g, iter->second.begin(), iter->second.end(), -1, pres_fac);
+		update_one_cost(g, iter->second.begin(), iter->second.end(), -1, pres_fac, false);
 		/*if (get_vertex(g, iter->second.back()).properties.type == SOURCE) {*/
 			/*--trace.num_sources;*/
 			/*if (trace.num_sources != 0) {*/

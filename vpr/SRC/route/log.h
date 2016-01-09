@@ -9,6 +9,16 @@ enum {
 	ROUTER_V3 = ZLOG_LEVEL_DEBUG+1
 };
 
+extern zlog_category_t *sort_log;
+extern zlog_category_t *delta_log;
+extern zlog_category_t *rr_log;
+extern zlog_category_t *net_log;
+extern zlog_category_t *schedule_log;
+extern zlog_category_t *scheduler_log;
+extern zlog_category_t *independent_log;
+extern zlog_category_t *static_log;
+extern zlog_category_t *dynamic_log;
+
 #define zlog_level(cat, level, ...) \
 	zlog(cat, __FILE__, sizeof(__FILE__)-1, __func__, sizeof(__func__)-1, __LINE__, \
 	level, __VA_ARGS__)
