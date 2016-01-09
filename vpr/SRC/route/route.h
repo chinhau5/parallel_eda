@@ -6,6 +6,11 @@
 #include "quadtree.h"
 #include "new_rr_graph.h"
 
+typedef struct lock_perf_t {
+	unsigned long num_lock_waits;
+	unsigned long num_lock_tries;
+} lock_perf_t;
+
 typedef struct perf_t {
 	unsigned long num_heap_pushes;
 	unsigned long num_heap_pops;

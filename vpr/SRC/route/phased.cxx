@@ -102,13 +102,13 @@ static void *worker_thread_4(void *args)
 
 		auto rip_up_start = clock::now();
 
-		route_tree_rip_up_marked(wargs->route_trees[net->local_id], wargs->g, wargs->params.pres_fac, false);
+		route_tree_rip_up_marked(wargs->route_trees[net->local_id], wargs->g, wargs->params.pres_fac, false, nullptr);
 
 		wargs->perf.total_rip_up_time += clock::now()-rip_up_start;
 
 		auto route_start = clock::now();
 
-		route_net_2(wargs->g, net->vpr_id, current_virtual_net->source, current_virtual_net->current_sinks, wargs->params, wargs->state, wargs->route_trees[net->local_id], wargs->net_timing[net->vpr_id], &wargs->perf, false);
+		route_net_2(wargs->g, net->vpr_id, current_virtual_net->source, current_virtual_net->current_sinks, wargs->params, wargs->state, wargs->route_trees[net->local_id], wargs->net_timing[net->vpr_id], false, &wargs->perf, nullptr);
 
 		/*for (const auto &sink : current_virtual_net->sinks) {*/
 			/*net->sink_routed[sink->id] = true;*/
@@ -545,14 +545,14 @@ static void *scheduler_thread_4(SchedulerArgs *sargs, WorkerArgs **wargs, const 
 
 						auto rip_up_start = clock::now();
 
-						route_tree_rip_up_marked(route_trees[net->local_id], g, params.pres_fac, false);
+						route_tree_rip_up_marked(route_trees[net->local_id], g, params.pres_fac, false, nullptr);
 
 						//wargs[tid]->perf.total_rip_up_time += clock::now()-rip_up_start;
 						perf[tid].total_rip_up_time += clock::now()-rip_up_start;
 
 						auto route_start = clock::now();
 
-						route_net_2(g, net->vpr_id, virtual_net->source, virtual_net->current_sinks, params, state, route_trees[net->local_id], net_timing[net->vpr_id], &(wargs[tid]->perf), false);
+						route_net_2(g, net->vpr_id, virtual_net->source, virtual_net->current_sinks, params, state, route_trees[net->local_id], net_timing[net->vpr_id], false, &(wargs[tid]->perf), nullptr);
 
 						assert(!virtual_net->routed);
 						virtual_net->routed = true;

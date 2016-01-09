@@ -326,9 +326,9 @@ void expand_neighbors_fast(const RRGraph &g, const route_state_t &current, const
 }
 
 template<typename ShouldExpandFunc>
-void expand_neighbors(const RRGraph &g, const route_state_t &current, const RRNode &target, float criticality_fac, float astar_fac, std::priority_queue<route_state_t> &heap, const ShouldExpandFunc &should_expand, perf_t *perf, bool lock)
+void expand_neighbors(const RRGraph &g, const route_state_t &current, const RRNode &target, float criticality_fac, float astar_fac, std::priority_queue<route_state_t> &heap, const ShouldExpandFunc &should_expand, bool lock, perf_t *perf, lock_perf_t *lock_perf)
 {
-	for_all_out_edges(g, get_vertex(g, current.rr_node), [&heap, &g, &current, &target, &criticality_fac, &astar_fac, &should_expand, &perf, &lock] (const RREdge &e) -> void {
+	for_all_out_edges(g, get_vertex(g, current.rr_node), [&heap, &g, &current, &target, &criticality_fac, &astar_fac, &should_expand, &perf, &lock_perf, &lock] (const RREdge &e) -> void {
 			auto &neighbor = get_target(g, e);
 
 			char buffer[256];
@@ -356,7 +356,15 @@ void expand_neighbors(const RRGraph &g, const route_state_t &current, const RRNo
 			item.upstream_R = upstream_R;
 			
 			if (lock) {
-				neighbor.properties.lock->lock();
+				if (lock_perf) {
+					++lock_perf->num_lock_tries;
+				}
+				if (!neighbor.properties.lock->try_lock()) {
+					if (lock_perf) {
+						++lock_perf->num_lock_waits;
+					}
+					neighbor.properties.lock->lock();
+				} 
 			}
 			float congestion = get_congestion_cost(neighbor);
 			if (lock) {
@@ -572,10 +580,19 @@ void update_costs(RRGraph &g, float pres_fac, float acc_fac)
 			});
 }
 
-void update_one_cost_internal(RRNode &rr_node, int delta, float pres_fac, bool lock)
+void update_one_cost_internal(RRNode &rr_node, int delta, float pres_fac, bool lock, lock_perf_t *lock_perf)
 {
 	if (lock) {
-		rr_node.properties.lock->lock();
+		if (lock_perf) {
+			++lock_perf->num_lock_tries;
+		}
+
+		if (!rr_node.properties.lock->try_lock()) {
+			if (lock_perf) {
+				++lock_perf->num_lock_waits;
+			}
+			rr_node.properties.lock->lock();
+		}
 	}
 	
 	rr_node.properties.occ += delta;
@@ -597,7 +614,7 @@ void update_one_cost_internal(RRNode &rr_node, int delta, float pres_fac, bool l
 	zlog_level(delta_log, ROUTER_V2, "Update cost of %s delta: %d new_occ: %d pres_fac: %g\n", buffer, delta, rr_node.properties.occ, pres_fac);
 }
 
-void update_one_cost(RRGraph &g, const vector<int>::const_iterator &rr_nodes_begin, const vector<int>::const_iterator &rr_nodes_end, int delta, float pres_fac, bool lock)
+void update_one_cost(RRGraph &g, const vector<int>::const_iterator &rr_nodes_begin, const vector<int>::const_iterator &rr_nodes_end, int delta, float pres_fac, bool lock, lock_perf_t *lock_perf)
 {
 	/*const RouteTreeNode *last = nullptr;*/
 	for (auto iter = rr_nodes_begin; iter != rr_nodes_end; ++iter) {
@@ -606,7 +623,7 @@ void update_one_cost(RRGraph &g, const vector<int>::const_iterator &rr_nodes_beg
 		/*last = &get_target(rt.graph, get_edge(rt.graph, rt_edge_id));*/
 		/*RRNode &rr_node = get_vertex(g, rt_node.properties.rr_node);*/
 		RRNode &rr_node = get_vertex(g, *iter);
-		update_one_cost_internal(rr_node, delta, pres_fac, lock);
+		update_one_cost_internal(rr_node, delta, pres_fac, lock, lock_perf);
 	}
 	/*RRNode &rr_node = get_vertex(g, last->properties.rr_node);*/
 	/*update_one_cost_internal(rr_node, delta, pres_fac);*/
@@ -618,7 +635,7 @@ void update_one_cost(RRGraph &g, route_tree_t &rt, const RouteTreeNode &node, in
 
 	RRNode &rr_node = get_vertex(g, node.properties.rr_node);
 
-	update_one_cost_internal(rr_node, delta, pres_fac, lock);
+	update_one_cost_internal(rr_node, delta, pres_fac, lock, nullptr);
 
 	for_all_out_edges(rt.graph, node, [&g, &rt, &delta, &pres_fac, &lock] (const RouteTreeEdge &e) -> void {
 			update_one_cost(g, rt, get_target(rt.graph, e), delta, pres_fac, lock);
@@ -955,7 +972,7 @@ void route_net_fast(RRGraph &g, const net_t &net, const route_parameters_t &para
 		/*} else {*/
 			/*update_one_cost(g, new_path.begin(), new_path.end(), 1, params.pres_fac);*/
 		/*}*/
-		update_one_cost(g, new_path.begin(), new_path.end(), 1, params.pres_fac, false);
+		update_one_cost(g, new_path.begin(), new_path.end(), 1, params.pres_fac, false, nullptr);
 
 		/* important to update route tree only after updating cost because the previous check relies on whether the
 		 * first node is already in the route tree */
@@ -976,7 +993,7 @@ void route_net_fast(RRGraph &g, const net_t &net, const route_parameters_t &para
 	/*check_route_tree(rt, net, g);*/
 }
 
-void route_net_2(RRGraph &g, int vpr_id, const source_t *source, const vector<sink_t *> &sinks, const route_parameters_t &params, route_state_t *state, route_tree_t &rt, t_net_timing &net_timing, perf_t *perf, bool lock)
+void route_net_2(RRGraph &g, int vpr_id, const source_t *source, const vector<sink_t *> &sinks, const route_parameters_t &params, route_state_t *state, route_tree_t &rt, t_net_timing &net_timing, bool lock, perf_t *perf, lock_perf_t *lock_perf)
 {
 	std::priority_queue<route_state_t> heap;
 
@@ -985,7 +1002,9 @@ void route_net_2(RRGraph &g, int vpr_id, const source_t *source, const vector<si
 	zlog_level(delta_log, ROUTER_V1, "Routing net %d (%lu sinks)\n", vpr_id, sinks.size());
 
 	vector<sink_t *> sorted_sinks = sinks;
-	std::sort(sorted_sinks.begin(), sorted_sinks.end());
+	std::sort(begin(sorted_sinks), end(sorted_sinks), [] (const sink_t *a, const sink_t *b) -> bool {
+			return a->criticality_fac > b->criticality_fac;
+			});
 
 	char buffer[256];
 
@@ -1082,7 +1101,7 @@ void route_net_2(RRGraph &g, int vpr_id, const source_t *source, const vector<si
 					/*}*/
 					/*}*/
 					return true;
-				}, perf, lock);
+				}, lock, perf, lock_perf);
 			} else {
 				zlog_level(delta_log, ROUTER_V3, "\tNot expanding neighbor because known_cost %g > %g or cost %g > %g\n", item.known_cost, state[item.rr_node].known_cost, item.cost, state[item.rr_node].cost);
 			}
@@ -1096,7 +1115,7 @@ void route_net_2(RRGraph &g, int vpr_id, const source_t *source, const vector<si
 		vector<int> added_rr_nodes;
 		route_tree_add_path(rt, g, state, sink->rr_node, vpr_id, added_rr_nodes);
 
-		update_one_cost(g, added_rr_nodes.begin(), added_rr_nodes.end(), 1, params.pres_fac, lock);
+		update_one_cost(g, added_rr_nodes.begin(), added_rr_nodes.end(), 1, params.pres_fac, lock, lock_perf);
 
 		net_timing.delay[sink->id+1] = route_tree_get_rt_node(rt, sink->rr_node)->properties.delay;
 
@@ -1214,7 +1233,7 @@ void route_net(RRGraph &g, int vpr_id, const source_t *source, const vector<sink
 					/*}*/
 					/*}*/
 					return true;
-				}, perf, false);
+				}, false, perf, nullptr);
 			} else {
 				zlog_level(delta_log, ROUTER_V3, "\tNot expanding neighbor because known_cost %g > %g or cost %g > %g\n", item.known_cost, state[item.rr_node].known_cost, item.cost, state[item.rr_node].cost);
 			}
@@ -1234,7 +1253,7 @@ void route_net(RRGraph &g, int vpr_id, const source_t *source, const vector<sink
 		/*} else {*/
 			/*update_one_cost(g, new_path.begin(), new_path.end(), 1, params.pres_fac);*/
 		/*}*/
-		update_one_cost(g, new_path.begin(), new_path.end(), 1, params.pres_fac, false);
+		update_one_cost(g, new_path.begin(), new_path.end(), 1, params.pres_fac, false, nullptr);
 
 		/* important to update route tree only after updating cost because the previous check relies on whether the
 		 * first node is already in the route tree */
@@ -1345,7 +1364,7 @@ void route_net(RRGraph &g, const net_t &net, const route_parameters_t &params, r
 					/*}*/
 					/*}*/
 					return true;
-				}, perf, false);
+				}, false, perf, nullptr);
 			} else {
 				zlog_level(delta_log, ROUTER_V3, "\tNot expanding neighbor because known_cost %g > %g or cost %g > %g\n", item.known_cost, state[item.rr_node].known_cost, item.cost, state[item.rr_node].cost);
 			}
@@ -1362,7 +1381,7 @@ void route_net(RRGraph &g, const net_t &net, const route_parameters_t &params, r
 		/*} else {*/
 			/*update_one_cost(g, new_path.begin(), new_path.end(), 1, params.pres_fac);*/
 		/*}*/
-		update_one_cost(g, new_path.begin(), new_path.end(), 1, params.pres_fac, false);
+		update_one_cost(g, new_path.begin(), new_path.end(), 1, params.pres_fac, false, nullptr);
 
 		/* important to update route tree only after updating cost because the previous check relies on whether the
 		 * first node is already in the route tree */
@@ -3620,13 +3639,13 @@ class RouteWorker2 {
 
 			auto rip_up_start = clock::now();
 
-			route_tree_rip_up_marked(route_trees[net->local_id], g, params.pres_fac, false);
+			route_tree_rip_up_marked(route_trees[net->local_id], g, params.pres_fac, false, nullptr);
 
 			perf->total_rip_up_time += clock::now()-rip_up_start;
 
 			auto route_start = clock::now();
 
-			route_net_2(g, net->vpr_id, current_virtual_net->source, current_virtual_net->current_sinks, params, state, route_trees[net->local_id], net_timing[net->vpr_id], perf, false);
+			route_net_2(g, net->vpr_id, current_virtual_net->source, current_virtual_net->current_sinks, params, state, route_trees[net->local_id], net_timing[net->vpr_id], false, perf, nullptr);
 
 			current_virtual_net->routed = true;
 
@@ -4320,13 +4339,13 @@ static void *worker_thread_3(void *args)
 
 		auto rip_up_start = clock::now();
 
-		route_tree_rip_up_marked(wargs->route_trees[net->local_id], wargs->g, wargs->params.pres_fac, false);
+		route_tree_rip_up_marked(wargs->route_trees[net->local_id], wargs->g, wargs->params.pres_fac, false, nullptr);
 
 		wargs->perf.total_rip_up_time += clock::now()-rip_up_start;
 
 		auto route_start = clock::now();
 
-		route_net_2(wargs->g, net->vpr_id, current_virtual_net->source, current_virtual_net->current_sinks, wargs->params, wargs->state, wargs->route_trees[net->local_id], wargs->net_timing[net->vpr_id], &wargs->perf, false);
+		route_net_2(wargs->g, net->vpr_id, current_virtual_net->source, current_virtual_net->current_sinks, wargs->params, wargs->state, wargs->route_trees[net->local_id], wargs->net_timing[net->vpr_id], false, &wargs->perf, nullptr);
 
 		/*for (const auto &sink : current_virtual_net->sinks) {*/
 			/*net->sink_routed[sink->id] = true;*/

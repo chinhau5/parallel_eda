@@ -126,7 +126,7 @@ route_tree_get_branches(const route_tree_t &rt, const RouteTreeNode &rt_node);
 
 bool route_tree_mark_nodes_to_be_ripped(route_tree_t &rt, const RRGraph &g, int num_iterations_fixed_threshold);
 
-void route_tree_rip_up_marked(route_tree_t &rt, RRGraph &g, float pres_fac, bool lock);
+void route_tree_rip_up_marked(route_tree_t &rt, RRGraph &g, float pres_fac, bool lock, lock_perf_t *lock_perf);
 
 void route_tree_rip_up_segment(route_tree_t &rt, int sink_rr_node, RRGraph &g, float pres_fac);
 
@@ -156,11 +156,11 @@ void route_tree_add_to_heap(const route_tree_t &rt, const RRGraph &g, const RRNo
 
 RouteTreeNode *route_tree_get_nearest_node(route_tree_t &rt, const point &p, const RRGraph &g, int *num_iters);
 
-void update_one_cost(RRGraph &g, const vector<int>::const_iterator &rr_nodes_begin, const vector<int>::const_iterator &rr_nodes_end, int delta, float pres_fac, bool lock);
+void update_one_cost(RRGraph &g, const vector<int>::const_iterator &rr_nodes_begin, const vector<int>::const_iterator &rr_nodes_end, int delta, float pres_fac, bool lock, lock_perf_t *lock_perf);
 
 void update_one_cost(RRGraph &g, route_tree_t &rt, const RouteTreeNode &node, int delta, float pres_fac, bool lock);
 
-void update_one_cost_internal(RRNode &rr_node, int delta, float pres_fac, bool lock);
+void update_one_cost_internal(RRNode &rr_node, int delta, float pres_fac, bool lock, lock_perf_t *lock_perf);
 
 
 #endif

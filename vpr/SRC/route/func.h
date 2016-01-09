@@ -19,6 +19,6 @@ void get_overused_nodes(const route_tree_t &rt, const RouteTreeNode &node, RRGra
 
 bool feasible_routing(const RRGraph &g);
 
-void route_net_2(RRGraph &g, int vpr_id, const source_t *source, const vector<sink_t *> &sinks, const route_parameters_t &params, route_state_t *state, route_tree_t &rt, t_net_timing &net_timing, perf_t *perf, bool lock);
+void route_net_2(RRGraph &g, int vpr_id, const source_t *source, const vector<sink_t *> &sinks, const route_parameters_t &params, route_state_t *state, route_tree_t &rt, t_net_timing &net_timing, bool lock, perf_t *perf, lock_perf_t *lock_perf);
 
 #endif

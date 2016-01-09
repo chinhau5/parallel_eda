@@ -301,7 +301,7 @@ RouteTreeNode *route_tree_get_nearest_node(route_tree_t &rt, const point &p, con
 /*{*/
 /*}*/
 
-void route_tree_rip_up_marked(route_tree_t &rt, RRGraph &g, float pres_fac, bool lock)
+void route_tree_rip_up_marked(route_tree_t &rt, RRGraph &g, float pres_fac, bool lock, lock_perf_t *lock_perf)
 {
 	char buffer[256];
 	for (auto &rt_node : route_tree_get_nodes(rt)) {
@@ -313,9 +313,9 @@ void route_tree_rip_up_marked(route_tree_t &rt, RRGraph &g, float pres_fac, bool
 
 			if (rr_node.properties.type == SOURCE) {
 				/*assert(rt_node.properties.saved_num_out_edges > 0);*/
-				update_one_cost_internal(rr_node, -num_out_edges(rt.graph, rt_node), pres_fac, lock); 
+				update_one_cost_internal(rr_node, -num_out_edges(rt.graph, rt_node), pres_fac, lock, lock_perf); 
 			} else {
-				update_one_cost_internal(rr_node, -1, pres_fac, lock); 
+				update_one_cost_internal(rr_node, -1, pres_fac, lock, lock_perf); 
 			}
 			route_tree_remove_node(rt, rr_node);
 			rt_node.properties.pending_rip_up = false;
@@ -329,7 +329,7 @@ void route_tree_rip_up_marked(route_tree_t &rt, RRGraph &g, float pres_fac, bool
 				 * update the cost when ripping up also.
 				 * if parent is pending rip up, cost will be updated that time. so dont handle it here */
 				if (parent_rr_node.properties.type == SOURCE && !parent_rt_node.properties.pending_rip_up && !parent_rt_node.properties.ripped_up) {
-					update_one_cost_internal(parent_rr_node, -1, pres_fac, lock); 
+					update_one_cost_internal(parent_rr_node, -1, pres_fac, lock, lock_perf); 
 				}
 				route_tree_remove_edge(rt, edge);
 
@@ -357,13 +357,13 @@ void route_tree_rip_up_marked_2(route_tree_t &rt, RRGraph &g, float pres_fac)
 					assert(false);
 					for (const auto &e : route_tree_get_branches(rt, rt_node)) {
 						/*auto &target = get_target(rt.graph, e);*/
-						update_one_cost_internal(rr_node, -1, pres_fac, false); 
+						update_one_cost_internal(rr_node, -1, pres_fac, false, nullptr); 
 					}
 				} else {
-					update_one_cost_internal(rr_node, -1, pres_fac, false); 
+					update_one_cost_internal(rr_node, -1, pres_fac, false, nullptr); 
 				}
 			} else {
-				update_one_cost_internal(rr_node, -1, pres_fac, false); 
+				update_one_cost_internal(rr_node, -1, pres_fac, false, nullptr); 
 			}
 			route_tree_remove_node(rt, rr_node);
 			rt_node.properties.pending_rip_up = false;
@@ -452,7 +452,7 @@ void route_tree_rip_up_segment_2(route_tree_t &rt, int sink_rr_node, RRGraph &g,
 
 		zlog_level(delta_log, ROUTER_V2, "Ripping up node %s from route tree\n", buffer);
 
-		update_one_cost_internal(get_vertex(g, current->properties.rr_node), -1, pres_fac, false);
+		update_one_cost_internal(get_vertex(g, current->properties.rr_node), -1, pres_fac, false, nullptr);
 		assert(current->properties.valid);
 		current->properties.valid = false;
 		current->properties.owner = -1;
@@ -515,7 +515,7 @@ void route_tree_rip_up_segment(route_tree_t &rt, int sink_rr_node, RRGraph &g, f
 		assert(num_out_edges(rt.graph, *dst) == 0);
 
 		zlog_level(delta_log, ROUTER_V2, "Ripping up node %s from route tree\n", s_dst);
-		update_one_cost_internal(get_vertex(g, dst->properties.rr_node), -1, pres_fac, false);
+		update_one_cost_internal(get_vertex(g, dst->properties.rr_node), -1, pres_fac, false, nullptr);
 		assert(dst->properties.valid);
 		dst->properties.valid = false;
 		dst->properties.owner = -1;
@@ -540,7 +540,7 @@ void route_tree_rip_up_segment(route_tree_t &rt, int sink_rr_node, RRGraph &g, f
 
 	if (should_remove_src) {
 		zlog_level(delta_log, ROUTER_V2, "Ripping up node %s from route tree\n", s_src);
-		update_one_cost_internal(get_vertex(g, src->properties.rr_node), -1, pres_fac, false);
+		update_one_cost_internal(get_vertex(g, src->properties.rr_node), -1, pres_fac, false, nullptr);
 		assert(src->properties.valid);
 		src->properties.valid = false;
 		src->properties.owner = -1;
