@@ -159,6 +159,6 @@ void test_partition()
 	vector<vector<int>> partitions;
 	vector<vector<int>> overlaps;
 	vector<bool> has;
-	partition_nets(vnet_ptrs, 2, overlaps, partitions, has);
+	partition_nets(vnet_ptrs, 2, 1, overlaps, partitions, has);
 }
 

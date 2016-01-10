@@ -485,7 +485,7 @@ static void *scheduler_thread_4(SchedulerArgs *sargs, WorkerArgs **wargs, const 
 		auto partitioning_start = clock::now();
 
 		assert(!nets_to_partition.empty());
-		partition_nets(nets_to_partition, sargs->opts->num_threads, overlaps, partitions, has_interpartition_overlap);
+		partition_nets(nets_to_partition, sargs->opts->num_threads, 1, overlaps, partitions, has_interpartition_overlap);
 		//partition_nets_by_clustering(nets_to_partition, sargs->opts->num_threads, partitions, has_interpartition_overlap);
 
 		sargs->perf.total_partitioning_time = clock::now() - partitioning_start;

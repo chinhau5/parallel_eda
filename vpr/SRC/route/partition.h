@@ -5,7 +5,7 @@
 #include "metis.h"
 
 template<typename Net>
-void partition_nets(vector<pair<box, Net>> &virtual_nets, int num_partitions, vector<vector<int>> &overlaps, vector<vector<int>> &partitions, vector<bool> &has_interpartition_overlap)
+void partition_nets(vector<pair<box, Net>> &virtual_nets, int num_partitions, float ubvec, vector<vector<int>> &overlaps, vector<vector<int>> &partitions, vector<bool> &has_interpartition_overlap)
 {
 	overlaps.resize(virtual_nets.size());
 	tbb::atomic<int> num_edges = 0;
@@ -51,8 +51,8 @@ void partition_nets(vector<pair<box, Net>> &virtual_nets, int num_partitions, ve
 	METIS_SetDefaultOptions(options);
 	//options[METIS_OPTION_DBGLVL] = METIS_DBG_INFO;
 	options[METIS_OPTION_NUMBERING] = 0;
-	//assert(METIS_PartGraphRecursive(&nvtxs, &ncon, xadj, adjncy, vwgt, NULL, NULL, &nparts, NULL, &ubvec, options, &objval, part) == METIS_OK);
-	assert(METIS_PartGraphRecursive(&nvtxs, &ncon, xadj, adjncy, vwgt, NULL, NULL, &nparts, NULL, NULL, options, &objval, part) == METIS_OK);
+	assert(METIS_PartGraphRecursive(&nvtxs, &ncon, xadj, adjncy, vwgt, NULL, NULL, &nparts, NULL, &ubvec, options, &objval, part) == METIS_OK);
+	//assert(METIS_PartGraphRecursive(&nvtxs, &ncon, xadj, adjncy, vwgt, NULL, NULL, &nparts, NULL, NULL, options, &objval, part) == METIS_OK);
 //idx t *nvtxs, idx t *ncon, idx t *xadj, idx t *adjncy, idx t *vwgt, idx t *vsize, idx t *adjwgt, idx t *nparts, real t *tpwgts, real t ubvec, idx t *options, idx t *objval, idx t *part
 	printf("edgecut: %d\n", objval);
 	partitions.resize(num_partitions);

@@ -436,6 +436,68 @@ bool route_tree_mark_nodes_to_be_ripped(route_tree_t &rt, const RRGraph &g, int 
 	return route_tree_mark_nodes_to_be_ripped_internal(rt, g, root_rt_node, num_iterations_fixed_threshold);
 }
 
+bool route_tree_node_check_and_mark_congested_for_rip_up(route_tree_t &rt, RouteTreeNode &rt_node, const RRGraph &g)
+{
+	const auto &rr_node = get_vertex(g, rt_node.properties.rr_node);
+
+	if (rt_node.properties.rt_edge_to_parent != -1) {
+		rt_node.properties.pending_rip_up = get_source(rt.graph, get_edge(rt.graph, rt_node.properties.rt_edge_to_parent)).properties.pending_rip_up;
+	} else {
+		rt_node.properties.pending_rip_up = false;
+	}
+
+	rt_node.properties.pending_rip_up |= (rr_node.properties.occ > rr_node.properties.capacity);
+	/*rt_node.properties.pending_rip_up = true;*/
+
+	if (rt_node.properties.pending_rip_up) {
+		bg::expand(rt.scheduler_bounding_box, segment(point(rr_node.properties.xlow, rr_node.properties.ylow), point(rr_node.properties.xhigh, rr_node.properties.yhigh)));
+	}
+
+	rt_node.properties.ripped_up = false;
+
+	return rt_node.properties.pending_rip_up;
+}
+
+bool route_tree_mark_congested_nodes_to_be_ripped_internal(route_tree_t &rt, const RRGraph &g, RouteTreeNode &rt_node)
+{
+	assert(rt_node.properties.valid);
+
+	bool marked = route_tree_node_check_and_mark_congested_for_rip_up(rt, rt_node, g);
+
+	for (auto &branch : route_tree_get_branches(rt, rt_node)) {
+		auto &child = get_target(rt.graph, branch);
+
+		marked |= route_tree_mark_congested_nodes_to_be_ripped_internal(rt, g, child);
+	}
+
+	return marked;
+}
+
+bool route_tree_mark_congested_nodes_to_be_ripped(route_tree_t &rt, const RRGraph &g)
+{
+	rt.scheduler_bounding_box = bg::make_inverse<box>();
+
+	if (rt.root_rt_node_id == -1) {
+		return false;
+	}
+
+	auto &root_rt_node = get_vertex(rt.graph, rt.root_rt_node_id);
+	return route_tree_mark_congested_nodes_to_be_ripped_internal(rt, g, root_rt_node);
+}
+
+void route_tree_mark_all_nodes_to_be_ripped(route_tree_t &rt, const RRGraph &g)
+{
+	rt.scheduler_bounding_box = bg::make_inverse<box>();
+
+	for (auto &rt_node : route_tree_get_nodes(rt)) {
+		rt_node.properties.pending_rip_up = true;
+		rt_node.properties.ripped_up = false;
+
+		const auto &rr_node = get_vertex(g, rt_node.properties.rr_node);
+		bg::expand(rt.scheduler_bounding_box, segment(point(rr_node.properties.xlow, rr_node.properties.ylow), point(rr_node.properties.xhigh, rr_node.properties.yhigh)));
+	}
+}
+
 void route_tree_rip_up_segment_2(route_tree_t &rt, int sink_rr_node, RRGraph &g, float pres_fac)
 {
 	RouteTreeNode *current = route_tree_get_rt_node(rt, sink_rr_node);

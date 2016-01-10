@@ -126,6 +126,10 @@ route_tree_get_branches(const route_tree_t &rt, const RouteTreeNode &rt_node);
 
 bool route_tree_mark_nodes_to_be_ripped(route_tree_t &rt, const RRGraph &g, int num_iterations_fixed_threshold);
 
+bool route_tree_mark_congested_nodes_to_be_ripped(route_tree_t &rt, const RRGraph &g);
+
+void route_tree_mark_all_nodes_to_be_ripped(route_tree_t &rt, const RRGraph &g);
+
 void route_tree_rip_up_marked(route_tree_t &rt, RRGraph &g, float pres_fac, bool lock, lock_perf_t *lock_perf);
 
 void route_tree_rip_up_segment(route_tree_t &rt, int sink_rr_node, RRGraph &g, float pres_fac);
