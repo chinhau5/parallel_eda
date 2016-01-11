@@ -477,6 +477,16 @@ static void SetupRouterOpts(INP t_options Options, INP boolean TimingEnabled,
 		RouterOpts->max_sink_bb_area = Options.max_sink_bb_area;
 	}
 
+	RouterOpts->num_runs = 1;
+	if (Options.Count[OT_NUM_RUNS]) {
+		RouterOpts->num_runs = Options.num_runs;
+	}
+
+	RouterOpts->analyze_timing = TRUE;
+	if (Options.Count[OT_ANALYZE_TIMING]) {
+		RouterOpts->analyze_timing = Options.analyze_timing;
+	}
+
 	RouterOpts->bb_expand_threshold = RouterOpts->max_router_iterations+1; /* disable bb expansion by default */
 	if (Options.Count[OT_BB_EXPAND_THRESHOLD]) {
 		RouterOpts->bb_expand_threshold = Options.bb_expand_threshold;

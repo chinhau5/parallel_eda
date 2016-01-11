@@ -162,7 +162,7 @@ bool operator<(const route_state_t &a, const route_state_t &b);
 
 void update_costs(RRGraph &g, float pres_fac, float acc_fac);
 
-void analyze_timing(t_net_timing *net_timing);
+float analyze_timing(t_net_timing *net_timing);
 
 int zlog_custom_output(zlog_msg_t *msg);
 

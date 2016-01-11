@@ -20,6 +20,14 @@ void init_logging()
 	static_log = zlog_get_category("static");
 }
 
+void delete_graph(RRGraph &g)
+{
+	for (int i = 0; i < num_vertices(g); ++i) {
+		auto &v = get_vertex(g, i);
+		delete v.properties.lock;
+	}
+}
+
 void init_graph(RRGraph &g)
 {
 	extern s_rr_node *rr_node;
@@ -66,6 +74,20 @@ void init_graph(RRGraph &g)
 	}
 	zlog_info(delta_log, "RR graph num vertices: %d\n", num_vertices(g));
 	zlog_info(delta_log, "RR graph num edges: %d\n", num_edges(g));
+}
+
+void delete_net_timing(const vector<net_t> &nets, const vector<net_t> &global_nets, t_net_timing *net_timing)
+{
+	for (const auto &net : nets) {
+	   	delete [] net_timing[net.vpr_id].delay;
+	   	delete [] net_timing[net.vpr_id].timing_criticality;
+	   	delete [] net_timing[net.vpr_id].slack;
+	}
+	for (const auto &net : global_nets) {
+	   	delete [] net_timing[net.vpr_id].delay;
+	   	delete [] net_timing[net.vpr_id].timing_criticality;
+	   	delete [] net_timing[net.vpr_id].slack;
+	}
 }
 
 void init_net_timing(const vector<net_t> &nets, const vector<net_t> &global_nets, t_net_timing *net_timing)

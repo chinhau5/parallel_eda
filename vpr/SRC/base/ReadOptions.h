@@ -81,8 +81,10 @@ struct s_options {
     int num_threads;
     int grain_size;
 	int max_sink_bb_area;
+	int num_runs;
     SchedulerType scheduler;
     int bb_expand_threshold;
+    boolean analyze_timing;
 
 	/* Timing-driven router options only */
 	float astar_fac;

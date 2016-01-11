@@ -56,6 +56,9 @@ void partition_nets(vector<pair<box, Net>> &virtual_nets, int num_partitions, fl
 //idx t *nvtxs, idx t *ncon, idx t *xadj, idx t *adjncy, idx t *vwgt, idx t *vsize, idx t *adjwgt, idx t *nparts, real t *tpwgts, real t ubvec, idx t *options, idx t *objval, idx t *part
 	printf("edgecut: %d\n", objval);
 	partitions.resize(num_partitions);
+	for (int i = 0; i < num_partitions; ++i) {
+		assert(partitions[i].empty());
+	}
 	for (int i = 0; i < virtual_nets.size(); ++i) {
 		assert(part[i] >= 0 && part[i] < partitions.size());
 		partitions[part[i]].push_back(i);
@@ -72,6 +75,10 @@ void partition_nets(vector<pair<box, Net>> &virtual_nets, int num_partitions, fl
 			}
 			});
 
+	delete [] xadj;
+	delete [] adjncy;
+	delete [] part;
+	delete [] vwgt;
 }
 
 void partition_nets_by_clustering(std::vector<virtual_net_t *> &virtual_nets, int num_partitions, std::vector<std::vector<int>> &partitions, std::vector<bool> &has_interpartition_overlap);

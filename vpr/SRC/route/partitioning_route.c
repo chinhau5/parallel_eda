@@ -356,16 +356,16 @@ void expand_neighbors(const RRGraph &g, const route_state_t &current, const RRNo
 			item.upstream_R = upstream_R;
 			
 			if (lock) {
-				if (lock_perf) {
-					++lock_perf->num_lock_tries;
-				}
-				if (!neighbor.properties.lock->try_lock()) {
-					if (lock_perf) {
-						++lock_perf->num_lock_waits;
-					}
-					neighbor.properties.lock->lock();
-				} 
-				/*neighbor.properties.lock->lock();*/
+				/*if (lock_perf) {*/
+					/*++lock_perf->num_lock_tries;*/
+				/*}*/
+				/*if (!neighbor.properties.lock->try_lock()) {*/
+					/*if (lock_perf) {*/
+						/*++lock_perf->num_lock_waits;*/
+					/*}*/
+					/*neighbor.properties.lock->lock();*/
+				/*} */
+				neighbor.properties.lock->lock();
 			}
 			float congestion = get_congestion_cost(neighbor);
 			if (lock) {
@@ -584,17 +584,17 @@ void update_costs(RRGraph &g, float pres_fac, float acc_fac)
 void update_one_cost_internal(RRNode &rr_node, /*int net_id, */int delta, float pres_fac, bool lock, lock_perf_t *lock_perf)
 {
 	if (lock) {
-		if (lock_perf) {
-			++lock_perf->num_lock_tries;
-		}
+		/*if (lock_perf) {*/
+			/*++lock_perf->num_lock_tries;*/
+		/*}*/
 
-		if (!rr_node.properties.lock->try_lock()) {
-			if (lock_perf) {
-				++lock_perf->num_lock_waits;
-			}
-			rr_node.properties.lock->lock();
-		}
-		/*rr_node.properties.lock->lock();*/
+		/*if (!rr_node.properties.lock->try_lock()) {*/
+			/*if (lock_perf) {*/
+				/*++lock_perf->num_lock_waits;*/
+			/*}*/
+			/*rr_node.properties.lock->lock();*/
+		/*}*/
+		rr_node.properties.lock->lock();
 	}
 	
 	rr_node.properties.occ += delta;
@@ -2184,7 +2184,7 @@ void schedule_nets_fast(vector<net_t *> &nets, vector<vector<const net_t *>> &ne
 	}
 }
 
-void analyze_timing(t_net_timing *net_timing) 
+float analyze_timing(t_net_timing *net_timing) 
 {
 	load_timing_graph_net_delays_new(net_timing); 
 #ifdef HACK_LUT_PIN_SWAPPING
@@ -2193,9 +2193,9 @@ void analyze_timing(t_net_timing *net_timing)
 	do_timing_analysis_new(net_timing, FALSE, FALSE, FALSE);
 #endif
 
-	float critical_path_delay = get_critical_path_delay();
-	zlog_info(delta_log, "Critical path: %g ns\n", critical_path_delay);
-	printf("Critical path: %g ns\n", critical_path_delay);
+	return get_critical_path_delay();
+	/*zlog_info(delta_log, "Critical path: %g ns\n", critical_path_delay);*/
+	/*printf("Critical path: %g ns\n", critical_path_delay);*/
 }
 
 bool feasible_routing(const RRGraph &g)

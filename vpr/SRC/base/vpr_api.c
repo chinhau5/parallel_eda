@@ -192,6 +192,8 @@ void vpr_init(INP int argc, INP char **argv, OUTP t_options *options,
 	/* Read in user options */
 	ReadOptions(argc, argv, options);
 	/* Timing option priorities */
+	extern char *s_circuit_name;
+	s_circuit_name = options->CircuitName;
 	vpr_setup->TimingEnabled = IsTimingEnabled(options);
 	/* Determine whether echo is on or off */
 	setEchoEnabled(IsEchoEnabled(options));

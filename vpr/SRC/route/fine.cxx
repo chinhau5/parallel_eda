@@ -27,7 +27,63 @@ extern __itt_string_handle *shMyTask;
 extern __itt_string_handle *shMainTask;
 #endif
 
-bool locking_route(t_router_opts *opts)
+void dump_all_net_bounding_boxes(const char *circuit_name, const vector<net_t> &nets)
+{
+	char filename[256];
+	sprintf(filename, "%s_all_net_heatmap.txt", circuit_name);
+	FILE *file = fopen(filename, "w");
+
+	fprintf(file, "%lu 0\n", nets.size());
+	extern int nx;
+	extern int ny;
+	fprintf(file, "%d %d\n", nx+2, ny+2);
+	for (const auto &net : nets) {
+		for (int x = net.bounding_box.xmin; x <= net.bounding_box.xmax; ++x) {
+			for (int y = net.bounding_box.ymin; y <= net.bounding_box.ymax; ++y) {
+				fprintf(file, "%d %d\n", x, y);
+			}
+		}
+	}
+	fclose(file);
+}
+
+void dump_all_net_bounding_boxes_area(const char *circuit_name, const vector<net_t> &nets)
+{
+	char filename[256];
+	sprintf(filename, "%s_all_net_bb_area.txt", circuit_name);
+	FILE *file = fopen(filename, "w");
+
+	for (const auto &net : nets) {
+		fprintf(file, "%d\n", abs(net.bounding_box.xmin-net.bounding_box.xmax)*abs(net.bounding_box.ymin-net.bounding_box.ymax));
+	}
+	fclose(file);
+}
+
+void dump_rr_graph_occ(const RRGraph &g, const char *filename)
+{
+	FILE *file = fopen(filename, "w");
+	for_all_vertices(g, [&] (const RRNode &v) -> void {
+			fprintf(file, "%d\n", v.properties.occ);
+			});
+	fclose(file);
+}
+
+bool locking_route(t_router_opts *opts, int run);
+
+bool locking_route_driver(t_router_opts *opts)
+{
+	int num_routed = 0;
+	for (int i = 0; i < opts->num_runs; ++i) {
+		bool routed = locking_route(opts, i);
+		if (routed) {
+			++num_routed;
+		}
+	}
+	printf("%d/%d routed\n", num_routed, opts->num_runs);
+	return false;
+}
+
+bool locking_route(t_router_opts *opts, int run)
 {
 	tbb::task_scheduler_init init(opts->num_threads);
 
@@ -61,6 +117,12 @@ bool locking_route(t_router_opts *opts)
 	vector<net_t> nets;
 	vector<net_t> global_nets;
 	init_nets(nets, global_nets, opts->bb_factor);
+
+	printf("Num nets: %lu\n", nets.size());
+	extern char *s_circuit_name;
+	printf("Circuit name: %s\n", s_circuit_name);
+	//dump_all_net_bounding_boxes(s_circuit_name, nets);
+	//dump_all_net_bounding_boxes_area(s_circuit_name, nets);
 
 	/* calculating net bounding box area rank */
 	vector<net_t *> nets_ptr(nets.size());
@@ -153,11 +215,26 @@ bool locking_route(t_router_opts *opts)
 
 	vector<perf_t> perfs(opts->num_threads);
 	vector<lock_perf_t> lock_perfs(opts->num_threads);
-	clock::duration total_route_time = clock::duration::zero();
+	clock::duration total_greedy_route_time = clock::duration::zero();
+	clock::duration total_partitioned_route_time = clock::duration::zero();
+	clock::duration total_update_cost_time = clock::duration::zero();
+	clock::duration total_partitioning_time = clock::duration::zero();
+	clock::duration total_analyze_timing_time = clock::duration::zero();
+	clock::duration total_iter_time = clock::duration::zero();
+
 	const int rip_up_all_period = 10;
 	int use_partitioned_iter = -1;
+	int iter;
+	float crit_path_delay;
 	
-	for (int iter = 0; iter < opts->max_router_iterations && !routed; ++iter) {
+	for (iter = 0; iter < opts->max_router_iterations && !routed; ++iter) {
+		clock::duration greedy_route_time = clock::duration::zero();
+		clock::duration partitioned_route_time = clock::duration::zero();
+		clock::duration update_cost_time = clock::duration::zero();
+		clock::duration partitioning_time = clock::duration::zero();
+		clock::duration analyze_timing_time = clock::duration::zero();
+		clock::duration iter_time = clock::duration::zero();
+
 		sprintf(buffer, "/Volumes/DATA/iter_%d.txt", iter);
 		current_output_log = fopen(buffer, "w");
 
@@ -165,15 +242,9 @@ bool locking_route(t_router_opts *opts)
 		bool rip_up_all = (use_partitioned_iter % rip_up_all_period) == 0;
 		printf("Routing iteration: %d Use partitioned: %d Rip up all: %d\n", iter, use_partitioned ? 1 : 0, rip_up_all ? 1 : 0);
 
-		auto iter_start = clock::now();
-
 		for (int i = 0; i < opts->num_threads; ++i) {
 			lock_perfs[i].num_lock_tries = 0;
 			lock_perfs[i].num_lock_waits = 0;
-		}
-
-		for (auto &net : nets) {
-			update_sink_criticalities(net, net_timing[net.vpr_id], params);
 		}
 
 		for (auto &net : nets) {
@@ -182,7 +253,14 @@ bool locking_route(t_router_opts *opts)
 			net.total_point_tree_size = 0;
 		}
 
-		auto route_start = clock::now();
+		auto iter_start = clock::now();
+
+		//auto route_start = clock::now();
+
+		for (auto &net : nets) {
+			update_sink_criticalities(net, net_timing[net.vpr_id], params);
+		}
+
 #ifdef __linux__ 
 		__itt_frame_begin_v3(pD, NULL);
 #endif
@@ -193,6 +271,8 @@ bool locking_route(t_router_opts *opts)
 
 		/*std::shuffle(begin(virtual_nets), end(virtual_nets), mt);*/
 		if (!use_partitioned) {
+			auto greedy_route_start = clock::now();
+
 			tbb::parallel_for(tbb::blocked_range<int>(0, opts->num_threads, 1),
 					[&] (const tbb::blocked_range<int> &range) {
 
@@ -215,8 +295,14 @@ bool locking_route(t_router_opts *opts)
 					while ((i = net_index++) < nets_to_route.size()) {
 						net_t *net = nets_to_route[i].second;
 
+						//auto rip_up_start = clock::now();
+
 						route_tree_mark_congested_nodes_to_be_ripped(route_trees[net->local_id], g);
 						route_tree_rip_up_marked(route_trees[net->local_id], g, params.pres_fac, true, &local_lock_perf);
+
+						//local_perf.total_rip_up_time += clock::now()-rip_up_start;
+
+						//auto route_start = clock::now();
 
 						vector<sink_t *> sinks;	
 						sinks.reserve(net->sinks.size());
@@ -231,6 +317,8 @@ bool locking_route(t_router_opts *opts)
 						if (!sinks.empty()) {
 							route_net_2(g, net->vpr_id, &net->source, sinks, params, states[tid], route_trees[net->local_id], net_timing[net->vpr_id], true, &local_perf, &local_lock_perf);
 						}
+
+						//local_perf.total_route_time += clock::now()-rip_up_start;
 					}
 
 					perfs[tid] = local_perf;
@@ -238,7 +326,11 @@ bool locking_route(t_router_opts *opts)
 
 					//debug_lock[tid].unlock();
 					});
+
+			greedy_route_time = clock::now()-greedy_route_start;
 		} else {
+			auto partitioned_route_start = clock::now();
+
 			tbb::parallel_for(tbb::blocked_range<int>(0, opts->num_threads, 1),
 					[&] (const tbb::blocked_range<int> &range) {
 
@@ -288,20 +380,17 @@ bool locking_route(t_router_opts *opts)
 					//debug_lock[tid].unlock();
 				});
 			++use_partitioned_iter;
+
+			partitioned_route_time = clock::now()-partitioned_route_start;
 		}
 
 #ifdef __linux__ 
 		__itt_frame_end_v3(pD, NULL);
 #endif
 		
-		auto route_time = clock::now()-route_start;
-		total_route_time += route_time;
+		//route_time = clock::now()-route_start;
 
-		zlog_info(delta_log, "Routing took %g\n", std::chrono::duration_cast<std::chrono::nanoseconds>(route_time).count() / 1e9);
-		printf("Routing took %g\n", std::chrono::duration_cast<std::chrono::nanoseconds>(route_time).count() / 1e9);
-		for (int i = 0; i < opts->num_threads; ++i) {
-			printf("Thread %d num lock waits/tries: %lu/%lu (%g)\n", i, lock_perfs[i].num_lock_waits, lock_perfs[i].num_lock_tries, (float)lock_perfs[i].num_lock_waits*100/lock_perfs[i].num_lock_tries);
-		}
+		iter_time = clock::now()-iter_start;
 
 		/* checking */
 		for_all_vertices(g, [] (RRNode &v) -> void { v.properties.recalc_occ = 0; });
@@ -332,16 +421,14 @@ bool locking_route(t_router_opts *opts)
 			}
 		}
 
-		/*char filename[256];*/
-		/*sprintf(filename, "congestion_%d.txt", iter);*/
-		/*dump_congestion_map(g, filename);*/
+		iter_start = clock::now();
 
 		if (feasible_routing(g)) {
-			zlog_info(delta_log, "Routed in %d iterations. Total route time: %g\n", iter+1, std::chrono::duration_cast<std::chrono::nanoseconds>(total_route_time).count() / 1e9);
-			printf("Routed in %d iterations. Total route time: %g\n", iter+1, std::chrono::duration_cast<std::chrono::nanoseconds>(total_route_time).count() / 1e9);
 			//dump_route(*current_traces_ptr, "route.txt");
 			routed = true;
 		} else {
+			auto partitioning_start = clock::now();
+
 			unsigned long num_overused_nodes = 0;
 			for_all_vertices(g, [&num_overused_nodes] (const RRNode &v) -> void {
 					if (v.properties.occ > v.properties.capacity) {
@@ -373,7 +460,8 @@ bool locking_route(t_router_opts *opts)
 				partitions.clear();
 				has_interpartition_overlap.clear();
 				assert(!nets_to_partition.empty());
-				int num_partitions = std::min((unsigned long)opts->num_threads, nets_to_partition.size());
+				int num_partitions = opts->num_threads;
+				//int num_partitions = std::min((unsigned long)opts->num_threads, nets_to_partition.size());
 				partition_nets(nets_to_partition, num_partitions, 1000, overlaps, partitions, has_interpartition_overlap);
 				use_partitioned = true;
 				for (int i = 0; i < opts->num_threads; ++i) {
@@ -388,6 +476,10 @@ bool locking_route(t_router_opts *opts)
 
 			prev_num_overused_nodes = num_overused_nodes;
 
+			partitioning_time = clock::now()-partitioning_start;
+
+			auto update_cost_start = clock::now();
+
 			if (iter == 0) {
 				params.pres_fac = opts->initial_pres_fac;
 				update_costs(g, params.pres_fac, 0);
@@ -400,21 +492,37 @@ bool locking_route(t_router_opts *opts)
 				update_costs(g, params.pres_fac, opts->acc_fac);
 			}
 
-			for (auto &net : nets) {
-				/*zlog_level(delta_log, ROUTER_V1, "Net %d trace stats:\n", net.vpr_id);*/
-				/*adjust_bb_factor((*current_traces_ptr)[net.local_id], net, g, opts->bb_expand_threshold);*/
-			}
-
-			for (auto &net : nets) {
-				//overused_stats((*current_traces_ptr)[net.local_id], route_trees[net.local_id], net, g);
-			}
+			update_cost_time = clock::now()-update_cost_start;
 		}
 
-		analyze_timing(net_timing);
+		auto analyze_timing_start = clock::now();
 
-		auto iter_time = clock::now()-iter_start;
+		crit_path_delay = analyze_timing(net_timing);
 
-		zlog_info(delta_log, "Iteration time: %g s. Route time: %g s. \n", std::chrono::duration_cast<std::chrono::nanoseconds>(iter_time).count() / 1e9, route_time / 1e9);
+		analyze_timing_time = clock::now()-analyze_timing_start;
+
+		iter_time += clock::now()-iter_start;
+
+		//total_route_time += route_time;
+		total_greedy_route_time += greedy_route_time;
+		total_partitioned_route_time += partitioned_route_time;
+		total_update_cost_time += update_cost_time;
+		total_partitioning_time += partitioning_time;
+		total_analyze_timing_time += analyze_timing_time;
+		total_iter_time += iter_time;
+
+		printf("Iteration time: %g s.\n", std::chrono::duration_cast<std::chrono::nanoseconds>(iter_time).count() / 1e9);
+			printf("\tRoute time: %g s.\n", std::chrono::duration_cast<std::chrono::nanoseconds>(greedy_route_time+partitioned_route_time).count() / 1e9);
+				printf("\t\tGreedy route time: %g s.\n", std::chrono::duration_cast<std::chrono::nanoseconds>(greedy_route_time).count() / 1e9);
+				printf("\t\tPartitioned route time: %g s.\n", std::chrono::duration_cast<std::chrono::nanoseconds>(partitioned_route_time).count() / 1e9);
+			printf("\tUpdate cost time: %g s.\n", std::chrono::duration_cast<std::chrono::nanoseconds>(update_cost_time).count() / 1e9);
+			printf("\tPartitioning time: %g s.\n", std::chrono::duration_cast<std::chrono::nanoseconds>(partitioning_time).count() / 1e9);
+			printf("\tAnalyze timing time: %g s.\n", std::chrono::duration_cast<std::chrono::nanoseconds>(analyze_timing_time).count() / 1e9);
+		printf("Critical path: %g ns\n", crit_path_delay);
+
+		for (int i = 0; i < opts->num_threads; ++i) {
+			printf("Thread %d num lock waits/tries: %lu/%lu (%g)\n", i, lock_perfs[i].num_lock_waits, lock_perfs[i].num_lock_tries, (float)lock_perfs[i].num_lock_waits*100/lock_perfs[i].num_lock_tries);
+		}
 
 		if (current_output_log && fclose(current_output_log)) {
 			char str[256];
@@ -424,8 +532,34 @@ bool locking_route(t_router_opts *opts)
 		}
 	}
 
-	if (!routed) {
-		printf("Failed to route in %d iterations. Total route time: %g\n", opts->max_router_iterations, std::chrono::duration_cast<std::chrono::nanoseconds>(total_route_time).count() / 1e9);
+	sprintf(buffer, "%s_run_%d_rr_graph_occ.txt", s_circuit_name, run);
+	dump_rr_graph_occ(g, buffer);
+
+	if (routed) {
+		printf("Routed in %d iterations. Total iteration time: %g\n", iter, std::chrono::duration_cast<std::chrono::nanoseconds>(total_iter_time).count() / 1e9);
+			printf("\tTotal route time: %g s.\n", std::chrono::duration_cast<std::chrono::nanoseconds>(total_greedy_route_time+total_partitioned_route_time).count() / 1e9);
+				printf("\t\tTotal greedy route time: %g s.\n", std::chrono::duration_cast<std::chrono::nanoseconds>(total_greedy_route_time).count() / 1e9);
+				printf("\t\tTotal partitioned route time: %g s.\n", std::chrono::duration_cast<std::chrono::nanoseconds>(total_partitioned_route_time).count() / 1e9);
+			printf("\tTotal update cost time: %g s.\n", std::chrono::duration_cast<std::chrono::nanoseconds>(total_update_cost_time).count() / 1e9);
+			printf("\tTotal partitioning time: %g s.\n", std::chrono::duration_cast<std::chrono::nanoseconds>(total_partitioning_time).count() / 1e9);
+			printf("\tTotal analyze timing time: %g s.\n", std::chrono::duration_cast<std::chrono::nanoseconds>(total_analyze_timing_time).count() / 1e9);
+
+		printf("Final critical path: %g ns\n", crit_path_delay);
+	} else {
+		printf("Failed to route in %d iterations. Total iteration time: %g\n", opts->max_router_iterations, std::chrono::duration_cast<std::chrono::nanoseconds>(total_iter_time).count() / 1e9);
+			printf("\tTotal route time: %g s.\n", std::chrono::duration_cast<std::chrono::nanoseconds>(total_greedy_route_time+total_partitioned_route_time).count() / 1e9);
+				printf("\t\tTotal greedy route time: %g s.\n", std::chrono::duration_cast<std::chrono::nanoseconds>(total_greedy_route_time).count() / 1e9);
+				printf("\t\tTotal partitioned route time: %g s.\n", std::chrono::duration_cast<std::chrono::nanoseconds>(total_partitioned_route_time).count() / 1e9);
+			printf("\tTotal update cost time: %g s.\n", std::chrono::duration_cast<std::chrono::nanoseconds>(total_update_cost_time).count() / 1e9);
+			printf("\tTotal partitioning time: %g s.\n", std::chrono::duration_cast<std::chrono::nanoseconds>(total_partitioning_time).count() / 1e9);
+			printf("\tTotal analyze timing time: %g s.\n", std::chrono::duration_cast<std::chrono::nanoseconds>(total_analyze_timing_time).count() / 1e9);
+	}
+
+	delete_graph(g);
+	delete_net_timing(nets, global_nets, net_timing);	
+	delete [] net_timing;
+	for (int i = 0; i < opts->num_threads; ++i) {
+		delete [] states[i];
 	}
 
 	return routed;

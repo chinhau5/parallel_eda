@@ -40,6 +40,8 @@ void init_advanced_parallel_route_logging();
 
 std::chrono::time_point<std::chrono::high_resolution_clock> program_start;
 
+char *s_circuit_name = nullptr;
+
 int main(int argc, char **argv) {
 	t_options Options;
 	t_arch Arch;

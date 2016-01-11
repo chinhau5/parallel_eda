@@ -236,6 +236,8 @@ static void ShowRouterOpts(INP struct s_router_opts RouterOpts) {
 		vpr_printf(TIO_MESSAGE_INFO, "RouterOpts.grain_size: %d\n", RouterOpts.grain_size);
 		vpr_printf(TIO_MESSAGE_INFO, "RouterOpts.max_sink_bb_area: %d\n", RouterOpts.max_sink_bb_area);
 		vpr_printf(TIO_MESSAGE_INFO, "RouterOpts.bb_expand_threshold: %d\n", RouterOpts.bb_expand_threshold);
+		vpr_printf(TIO_MESSAGE_INFO, "RouterOpts.num_runs: %d\n", RouterOpts.num_runs);
+		vpr_printf(TIO_MESSAGE_INFO, "RouterOpts.analyze_timing: %s\n", RouterOpts.analyze_timing ? "on" : "off");
 
 		vpr_printf(TIO_MESSAGE_INFO, "RouterOpts.scheduler: ");
 		switch (RouterOpts.scheduler) {

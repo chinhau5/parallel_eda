@@ -19,12 +19,13 @@
 #include "ReadOptions.h"
 #include "parallel_route_timing.h"
 #include "advanced_parallel_route_timing.h"
-/*#include "route.h"*/
+#include "route.h"
 
 bool partitioning_route(t_router_opts *opts);
 bool tbb_greedy_route(t_router_opts *opts);
 bool phased_greedy_route(t_router_opts *opts);
 bool locking_route(t_router_opts *opts);
+bool locking_route_driver(t_router_opts *opts);
 bool greedy_route(t_router_opts *opts);
 bool greedy_route_4(t_router_opts *opts);
 
@@ -263,6 +264,11 @@ void test_intervals();
 		/*net_rr_terminals[i][*/
 	/*}*/
 /*}*/
+void dump_all_net_bounding_boxes(const std::vector<net_t> &nets);
+
+void dump_all_net_bounding_boxes_area(const std::vector<net_t> &nets);
+
+void init_nets(std::vector<net_t> &nets, std::vector<net_t> &global_nets, int bb_factor);
 
 boolean try_route_new(int width_fac, struct s_router_opts router_opts,
 		struct s_det_routing_arch det_routing_arch, t_segment_inf * segment_inf,
@@ -307,6 +313,14 @@ boolean try_route_new(int width_fac, struct s_router_opts router_opts,
 	/* Free any old routing graph, if one exists. */
 
 	free_rr_graph();
+
+	/*vector<net_t> nets;*/
+	/*vector<net_t> global_nets;*/
+	/*init_nets(nets, global_nets, router_opts.bb_factor);*/
+
+	/*printf("Num nets: %lu\n", nets.size());*/
+	/*dump_all_net_bounding_boxes(nets);*/
+	/*dump_all_net_bounding_boxes_area(nets);*/
 
 	begin = clock();
 
@@ -355,7 +369,7 @@ boolean try_route_new(int width_fac, struct s_router_opts router_opts,
 		case HYBRID:
 			vpr_printf(TIO_MESSAGE_INFO, "Confirming Router Algorithm: HYBRID.\n");
 			assert(router_opts.route_type != GLOBAL);
-			success = locking_route(&router_opts);
+			success = locking_route_driver(&router_opts);
 			break;
 		default:
 			success = FALSE;
