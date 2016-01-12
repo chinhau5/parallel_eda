@@ -211,6 +211,8 @@ bool locking_route(t_router_opts *opts, int run)
 
 	bool routed = false;
 	unsigned long prev_num_overused_nodes = std::numeric_limits<unsigned long>::max();
+	bool initialized_initial_num_overused_nodes = false;
+	unsigned long initial_num_overused_nodes = 0;
 	bool use_partitioned = false;
 
 	vector<perf_t> perfs(opts->num_threads);
@@ -222,11 +224,13 @@ bool locking_route(t_router_opts *opts, int run)
 	clock::duration total_analyze_timing_time = clock::duration::zero();
 	clock::duration total_iter_time = clock::duration::zero();
 
-	const int rip_up_all_period = 10;
-	int use_partitioned_iter = -1;
+	const int partitioned_rip_up_all_period = 10;
+	int greedy_rip_up_all_period = 3;
+	int partitioned_iter = -1;
 	int iter;
+	int next_greedy_rip_up_iter = 0;
 	float crit_path_delay;
-	
+
 	for (iter = 0; iter < opts->max_router_iterations && !routed; ++iter) {
 		clock::duration greedy_route_time = clock::duration::zero();
 		clock::duration partitioned_route_time = clock::duration::zero();
@@ -239,8 +243,9 @@ bool locking_route(t_router_opts *opts, int run)
 		current_output_log = fopen(buffer, "w");
 
 		zlog_info(delta_log, "Routing iteration: %d\n", iter);
-		bool rip_up_all = (use_partitioned_iter % rip_up_all_period) == 0;
-		printf("Routing iteration: %d Use partitioned: %d Rip up all: %d\n", iter, use_partitioned ? 1 : 0, rip_up_all ? 1 : 0);
+		bool partitioned_rip_up_all = (partitioned_iter % partitioned_rip_up_all_period) == 0;
+		bool greedy_rip_up_all = (next_greedy_rip_up_iter == iter);
+		printf("Routing iteration: %d Use partitioned: %d Greedy rip up all: %d Partitioned rip up all: %d\n", iter, use_partitioned ? 1 : 0, greedy_rip_up_all ? 1 : 0, partitioned_rip_up_all ? 1 : 0);
 
 		for (int i = 0; i < opts->num_threads; ++i) {
 			lock_perfs[i].num_lock_tries = 0;
@@ -296,8 +301,11 @@ bool locking_route(t_router_opts *opts, int run)
 						net_t *net = nets_to_route[i].second;
 
 						//auto rip_up_start = clock::now();
-
-						route_tree_mark_congested_nodes_to_be_ripped(route_trees[net->local_id], g);
+						//if (greedy_rip_up_all) {
+							//route_tree_mark_all_nodes_to_be_ripped(route_trees[net->local_id], g);
+						//} else {
+							route_tree_mark_congested_nodes_to_be_ripped(route_trees[net->local_id], g);
+						//}
 						route_tree_rip_up_marked(route_trees[net->local_id], g, params.pres_fac, true, &local_lock_perf);
 
 						//local_perf.total_rip_up_time += clock::now()-rip_up_start;
@@ -352,7 +360,7 @@ bool locking_route(t_router_opts *opts, int run)
 					for (int i = 0; i < partitions[tid].size(); ++i) {
 						net_t *net = nets_to_partition[partitions[tid][i]].second;
 
-						if (rip_up_all) {
+						if (partitioned_rip_up_all) {
 							route_tree_mark_all_nodes_to_be_ripped(route_trees[net->local_id], g);
 						} else {
 							route_tree_mark_congested_nodes_to_be_ripped(route_trees[net->local_id], g);
@@ -379,10 +387,16 @@ bool locking_route(t_router_opts *opts, int run)
 
 					//debug_lock[tid].unlock();
 				});
-			++use_partitioned_iter;
+			++partitioned_iter;
 
 			partitioned_route_time = clock::now()-partitioned_route_start;
 		}
+
+		//if (greedy_rip_up_all) {
+			//next_greedy_rip_up_iter += greedy_rip_up_all_period;
+			//++greedy_rip_up_all_period;
+			//prev_num_overused_nodes = std::numeric_limits<unsigned long>::max();
+		//}
 
 #ifdef __linux__ 
 		__itt_frame_end_v3(pD, NULL);
@@ -427,8 +441,6 @@ bool locking_route(t_router_opts *opts, int run)
 			//dump_route(*current_traces_ptr, "route.txt");
 			routed = true;
 		} else {
-			auto partitioning_start = clock::now();
-
 			unsigned long num_overused_nodes = 0;
 			for_all_vertices(g, [&num_overused_nodes] (const RRNode &v) -> void {
 					if (v.properties.occ > v.properties.capacity) {
@@ -438,7 +450,14 @@ bool locking_route(t_router_opts *opts, int run)
 			zlog_info(delta_log, "Num overused nodes: %lu/%d (%.2f)\n", num_overused_nodes, num_vertices(g), num_overused_nodes*100.0/num_vertices(g));
 			printf("Num overused nodes: %lu/%d (%.2f)\n", num_overused_nodes, num_vertices(g), num_overused_nodes*100.0/num_vertices(g));
 
-			if (!use_partitioned && num_overused_nodes >= prev_num_overused_nodes && opts->num_threads > 1) {
+			if (iter == 0) {
+				initial_num_overused_nodes = num_overused_nodes;
+			}
+
+			//if (!use_partitioned && num_overused_nodes >= prev_num_overused_nodes && opts->num_threads > 1) {
+			if (!use_partitioned && iter > 0 && (float)num_overused_nodes/initial_num_overused_nodes < 0.01f && opts->num_threads > 1) {
+				auto partitioning_start = clock::now();
+
 				nets_to_partition.clear();
 				tbb::spin_mutex lock;
 				tbb::parallel_for(tbb::blocked_range<int>(0, nets_to_route.size(), 1024),
@@ -468,15 +487,15 @@ bool locking_route(t_router_opts *opts, int run)
 					printf("Partition %d size %lu\n", i, partitions[i].size());
 				}
 
-				use_partitioned_iter = 0;
+				partitioned_iter = 0;
+
+				partitioning_time = clock::now()-partitioning_start;
 			} else {
 				/* check whether we need to do this */
 				//use_partitioned = false;
 			}
 
 			prev_num_overused_nodes = num_overused_nodes;
-
-			partitioning_time = clock::now()-partitioning_start;
 
 			auto update_cost_start = clock::now();
 
