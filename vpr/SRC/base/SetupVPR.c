@@ -487,6 +487,16 @@ static void SetupRouterOpts(INP t_options Options, INP boolean TimingEnabled,
 		RouterOpts->analyze_timing = Options.analyze_timing;
 	}
 
+	RouterOpts->rip_up_period = 10;
+	if (Options.Count[OT_RIP_UP_PERIOD]) {
+		RouterOpts->rip_up_period = Options.rip_up_period;
+	}
+
+	RouterOpts->transition_threshold = 0.01f;
+	if (Options.Count[OT_TRANSITION_THRESHOLD]) {
+		RouterOpts->transition_threshold = Options.transition_threshold;
+	}
+
 	RouterOpts->bb_expand_threshold = RouterOpts->max_router_iterations+1; /* disable bb expansion by default */
 	if (Options.Count[OT_BB_EXPAND_THRESHOLD]) {
 		RouterOpts->bb_expand_threshold = Options.bb_expand_threshold;

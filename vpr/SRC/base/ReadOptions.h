@@ -85,6 +85,8 @@ struct s_options {
     SchedulerType scheduler;
     int bb_expand_threshold;
     boolean analyze_timing;
+    int rip_up_period;
+    float transition_threshold;
 
 	/* Timing-driven router options only */
 	float astar_fac;

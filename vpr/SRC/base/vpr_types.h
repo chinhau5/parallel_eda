@@ -738,6 +738,8 @@ struct s_router_opts {
 	int max_sink_bb_area;
 	int num_runs;
 	boolean analyze_timing;
+	int rip_up_period;
+	float transition_threshold;
     SchedulerType scheduler;
     int bb_expand_threshold;
 };

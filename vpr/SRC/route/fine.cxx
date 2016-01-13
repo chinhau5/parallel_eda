@@ -111,6 +111,14 @@ bool locking_route(t_router_opts *opts, int run)
 	zlog_warn(delta_log, "Using debug version of TBB\n");
 #endif
 
+	box a(point(0, 0), point(5,5));
+	box b(point(5, 0), point(10,5));
+	box inter;
+	bg::intersection(a, b, inter);
+	bg::add_value(inter.max_corner(), 1);
+	int lol_area = bg::area(inter);
+	printf("we're here\n");
+
 	RRGraph g;
 	init_graph(g);
 
@@ -189,7 +197,8 @@ bool locking_route(t_router_opts *opts, int run)
 
 	vector<pair<box, net_t *>> nets_to_route;
 	vector<pair<box, net_t *>> nets_to_partition;
-	vector<vector<int>> overlaps;
+	//vector<vector<int>> overlaps;
+	vector<vector<pair<int, int>>> overlaps;
 	vector<vector<int>> partitions;
 	vector<bool> has_interpartition_overlap;
 	
@@ -224,7 +233,6 @@ bool locking_route(t_router_opts *opts, int run)
 	clock::duration total_analyze_timing_time = clock::duration::zero();
 	clock::duration total_iter_time = clock::duration::zero();
 
-	const int partitioned_rip_up_all_period = 10;
 	int greedy_rip_up_all_period = 3;
 	int partitioned_iter = -1;
 	int iter;
@@ -243,7 +251,7 @@ bool locking_route(t_router_opts *opts, int run)
 		current_output_log = fopen(buffer, "w");
 
 		zlog_info(delta_log, "Routing iteration: %d\n", iter);
-		bool partitioned_rip_up_all = (partitioned_iter % partitioned_rip_up_all_period) == 0;
+		bool partitioned_rip_up_all = (partitioned_iter % opts->rip_up_period) == 0;
 		bool greedy_rip_up_all = (next_greedy_rip_up_iter == iter);
 		printf("Routing iteration: %d Use partitioned: %d Greedy rip up all: %d Partitioned rip up all: %d\n", iter, use_partitioned ? 1 : 0, greedy_rip_up_all ? 1 : 0, partitioned_rip_up_all ? 1 : 0);
 
@@ -339,6 +347,32 @@ bool locking_route(t_router_opts *opts, int run)
 		} else {
 			auto partitioned_route_start = clock::now();
 
+			if (false) {
+			for (const auto &n : nets_to_partition) {
+				net_t *net = n.second;
+				if (partitioned_rip_up_all) {
+					route_tree_mark_all_nodes_to_be_ripped(route_trees[net->local_id], g);
+				} else {
+					route_tree_mark_congested_nodes_to_be_ripped(route_trees[net->local_id], g);
+				}
+				route_tree_rip_up_marked(route_trees[net->local_id], g, params.pres_fac, true, nullptr);
+
+				vector<sink_t *> sinks;	
+				sinks.reserve(net->sinks.size());
+				for (auto &sink : net->sinks) {
+					const RouteTreeNode *sink_rt_node = route_tree_get_rt_node(route_trees[net->local_id], sink.rr_node);
+					if (!sink_rt_node)  {
+						sinks.push_back(&sink);
+					} else {
+						assert(!sink_rt_node->properties.pending_rip_up);
+					}
+				}
+				if (!sinks.empty()) {
+					route_net_2(g, net->vpr_id, &net->source, sinks, params, states[0], route_trees[net->local_id], net_timing[net->vpr_id], true, nullptr, nullptr);
+				}
+			}
+			} else {
+
 			tbb::parallel_for(tbb::blocked_range<int>(0, opts->num_threads, 1),
 					[&] (const tbb::blocked_range<int> &range) {
 
@@ -387,6 +421,7 @@ bool locking_route(t_router_opts *opts, int run)
 
 					//debug_lock[tid].unlock();
 				});
+			}
 			++partitioned_iter;
 
 			partitioned_route_time = clock::now()-partitioned_route_start;
@@ -454,8 +489,8 @@ bool locking_route(t_router_opts *opts, int run)
 				initial_num_overused_nodes = num_overused_nodes;
 			}
 
-			//if (!use_partitioned && num_overused_nodes >= prev_num_overused_nodes && opts->num_threads > 1) {
-			if (!use_partitioned && iter > 0 && (float)num_overused_nodes/initial_num_overused_nodes < 0.01f && opts->num_threads > 1) {
+			if (!use_partitioned && num_overused_nodes >= prev_num_overused_nodes && opts->num_threads > 1) {
+			//if (!use_partitioned && iter > 0 && (float)num_overused_nodes/initial_num_overused_nodes < opts->transition_threshold && opts->num_threads > 1) {
 				auto partitioning_start = clock::now();
 
 				nets_to_partition.clear();
@@ -481,7 +516,7 @@ bool locking_route(t_router_opts *opts, int run)
 				assert(!nets_to_partition.empty());
 				int num_partitions = opts->num_threads;
 				//int num_partitions = std::min((unsigned long)opts->num_threads, nets_to_partition.size());
-				partition_nets(nets_to_partition, num_partitions, 1000, overlaps, partitions, has_interpartition_overlap);
+				partition_nets_overlap_area_metric(nets_to_partition, num_partitions, 1000000, overlaps, partitions, has_interpartition_overlap);
 				use_partitioned = true;
 				for (int i = 0; i < opts->num_threads; ++i) {
 					printf("Partition %d size %lu\n", i, partitions[i].size());

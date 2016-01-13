@@ -355,22 +355,22 @@ void expand_neighbors(const RRGraph &g, const route_state_t &current, const RRNo
 			}
 			item.upstream_R = upstream_R;
 			
-			if (lock) {
-				/*if (lock_perf) {*/
-					/*++lock_perf->num_lock_tries;*/
-				/*}*/
-				/*if (!neighbor.properties.lock->try_lock()) {*/
-					/*if (lock_perf) {*/
-						/*++lock_perf->num_lock_waits;*/
-					/*}*/
-					/*neighbor.properties.lock->lock();*/
-				/*} */
-				neighbor.properties.lock->lock();
-			}
+			/*if (lock) {*/
+				/*[>if (lock_perf) {<]*/
+					/*[>++lock_perf->num_lock_tries;<]*/
+				/*[>}<]*/
+				/*[>if (!neighbor.properties.lock->try_lock()) {<]*/
+					/*[>if (lock_perf) {<]*/
+						/*[>++lock_perf->num_lock_waits;<]*/
+					/*[>}<]*/
+					/*[>neighbor.properties.lock->lock();<]*/
+				/*[>} <]*/
+				/*neighbor.properties.lock->lock();*/
+			/*}*/
 			float congestion = get_congestion_cost(neighbor);
-			if (lock) {
-				neighbor.properties.lock->unlock();
-			}
+			/*if (lock) {*/
+				/*neighbor.properties.lock->unlock();*/
+			/*}*/
 			float delay = get_delay(e, neighbor, unbuffered_upstream_R);
 
 			item.delay = current.delay + delay;

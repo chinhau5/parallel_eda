@@ -469,6 +469,10 @@ ProcessOption(INP char **Args, INOUTP t_options * Options) {
 		return ReadInt(Args, &Options->num_runs);
 	case OT_ANALYZE_TIMING:
 		return ReadOnOff(Args, &Options->analyze_timing);
+	case OT_RIP_UP_PERIOD:
+		return ReadInt(Args, &Options->rip_up_period);
+	case OT_TRANSITION_THRESHOLD:
+		return ReadFloat(Args, &Options->transition_threshold);
 			
 		/* Routing options valid only for timing-driven routing */
 	case OT_ASTAR_FAC:

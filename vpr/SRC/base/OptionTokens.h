@@ -81,6 +81,8 @@ enum e_OptionBaseToken {
 	OT_MAX_SINK_BB_AREA,
 	OT_NUM_RUNS,
 	OT_ANALYZE_TIMING,
+	OT_RIP_UP_PERIOD,
+	OT_TRANSITION_THRESHOLD,
 	OT_BASE_UNKNOWN /* Must be last since used for counting enum items */
 };
 
