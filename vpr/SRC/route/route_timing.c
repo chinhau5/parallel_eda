@@ -847,8 +847,6 @@ static void update_rr_base_costs(int inet, float largest_criticality) {
 	}
 }
 
-void sprintf_rr_node(int rr_node, char *buffer);
-
 /* Nets that have high fanout can take a very long time to route.  Each sink should be routed contained within a bin instead of the entire bounding box to speed things up */
 static int mark_node_expansion_by_bin(int inet, int target_node,
 		t_rt_node * rt_node) {

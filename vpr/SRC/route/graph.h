@@ -167,16 +167,16 @@ struct graph_t {
 		}
 	};
 
-	//typedef iterator<edge_t<EdgeProperties>, typename Edges::iterator> edge_iterator;
-	//typedef iterator<const edge_t<EdgeProperties>, typename Edges::const_iterator> const_edge_iterator;
+	typedef iterator<edge_t<EdgeProperties>, typename Edges::iterator> edge_iterator;
+	typedef iterator<const edge_t<EdgeProperties>, typename Edges::const_iterator> const_edge_iterator;
 
-	//typedef iterator<vertex_t<VertexProperties, EdgeProperties>, typename Vertices::iterator> vertex_iterator;
-	//typedef iterator<const vertex_t<VertexProperties, EdgeProperties>, typename Vertices::const_iterator> const_vertex_iterator;
-	typedef typename Edges::iterator edge_iterator;
-	typedef typename Edges::const_iterator edge_const_iterator;
+	typedef iterator<vertex_t<VertexProperties, EdgeProperties>, typename Vertices::iterator> vertex_iterator;
+	typedef iterator<const vertex_t<VertexProperties, EdgeProperties>, typename Vertices::const_iterator> const_vertex_iterator;
+	//typedef typename Edges::iterator edge_iterator;
+	//typedef typename Edges::const_iterator edge_const_iterator;
 
-	typedef typename Vertices::iterator vertex_iterator;
-	typedef typename Vertices::const_iterator vertex_const_iterator;
+	//typedef typename Vertices::iterator vertex_iterator;
+	//typedef typename Vertices::const_iterator vertex_const_iterator;
 };
 
 //template<typename VertexProperties, typename EdgeProperties>
@@ -274,20 +274,24 @@ get_vertices(graph_t<VertexProperties, EdgeProperties> &g)
 
 template<typename VertexProperties, typename EdgeProperties>
 adapter_t<typename graph_t<VertexProperties, EdgeProperties>::out_edges_iterator>
-get_out_edges(graph_t<VertexProperties, EdgeProperties> &g, const vertex_t<VertexProperties, EdgeProperties> &v)
+get_out_edges(graph_t<VertexProperties, EdgeProperties> &g, int v)
 {
+	const auto &edges = g.vertices[v].edges;
+
 	return adapter_t<typename graph_t<VertexProperties, EdgeProperties>::out_edges_iterator>
-		(typename graph_t<VertexProperties, EdgeProperties>::out_edges_iterator(g, v.edges.begin()),
-		 typename graph_t<VertexProperties, EdgeProperties>::out_edges_iterator(g, v.edges.end()));
+		(typename graph_t<VertexProperties, EdgeProperties>::out_edges_iterator(g, edges.begin()),
+		 typename graph_t<VertexProperties, EdgeProperties>::out_edges_iterator(g, edges.end()));
 }
 
 template<typename VertexProperties, typename EdgeProperties>
 adapter_t<typename graph_t<VertexProperties, EdgeProperties>::out_edges_const_iterator>
-get_out_edges(const graph_t<VertexProperties, EdgeProperties> &g, const vertex_t<VertexProperties, EdgeProperties> &v)
+get_out_edges(const graph_t<VertexProperties, EdgeProperties> &g, int v)
 {
+	const auto &edges = g.vertices[v].edges;
+
 	return adapter_t<typename graph_t<VertexProperties, EdgeProperties>::out_edges_const_iterator>
-		(typename graph_t<VertexProperties, EdgeProperties>::out_edges_const_iterator(g, v.edges.begin()),
-		 typename graph_t<VertexProperties, EdgeProperties>::out_edges_const_iterator(g, v.edges.end()));
+		(typename graph_t<VertexProperties, EdgeProperties>::out_edges_const_iterator(g, edges.begin()),
+		 typename graph_t<VertexProperties, EdgeProperties>::out_edges_const_iterator(g, edges.end()));
 }
 
 template<typename VertexProperties, typename EdgeProperties>
@@ -315,9 +319,9 @@ int num_edges(const graph_t<VertexProperties, EdgeProperties> &g)
 }
 
 template<typename VertexProperties, typename EdgeProperties>
-int num_out_edges(const graph_t<VertexProperties, EdgeProperties> &g, const vertex_t<VertexProperties, EdgeProperties> &v)
+int num_out_edges(const graph_t<VertexProperties, EdgeProperties> &g, int v)
 {
-	return v.edges.size();
+	return g.vertices[v].edges.size();
 }
 
 template<typename VertexProperties, typename EdgeProperties>
@@ -345,20 +349,43 @@ void add_vertex(graph_t<VertexProperties, EdgeProperties> &g, int n = 1)
 }
 
 template<typename VertexProperties, typename EdgeProperties>
-edge_t<EdgeProperties> &add_edge(graph_t<VertexProperties, EdgeProperties> &g, vertex_t<VertexProperties, EdgeProperties> &v_a, vertex_t<VertexProperties, EdgeProperties> &v_b)
+edge_t<EdgeProperties> &add_edge(graph_t<VertexProperties, EdgeProperties> &g, int a, int b)
 {
+	assert(a < num_vertices(g));
+	assert(b < num_vertices(g));
+
 	edge_t<EdgeProperties> e;
 	e.m_id = g.edges.size();
-	e.a = v_a.m_id;
-	e.b = v_b.m_id;
+	e.a = a;
+	e.b = b;
 
-	assert(find_if(v_a.edges.begin(), v_a.edges.end(), [&g, &v_b] (int e) -> bool { return g.edges[e].b == v_b.m_id; }) == v_a.edges.end());
+	auto &v_a = get_vertex(g, e.a);
+
+	assert(find_if(v_a.edges.begin(), v_a.edges.end(), [&g, b] (int e) -> bool { return g.edges[e].b == b; }) == v_a.edges.end());
 
 	g.edges.push_back(e);
 	v_a.edges.push_back(e.m_id);
 
 	return g.edges[e.m_id];
 }
+
+//template<typename VertexProperties, typename EdgeProperties>
+//edge_t<EdgeProperties> &add_edge(graph_t<VertexProperties, EdgeProperties> &g, const vertex_t<VertexProperties, EdgeProperties> &v_a, const vertex_t<VertexProperties, EdgeProperties> &v_b)
+//{
+	//edge_t<EdgeProperties> e;
+	//e.m_id = g.edges.size();
+	//e.a = v_a.m_id;
+	//e.b = v_b.m_id;
+
+	//auto &real_v_a = get_vertex(g, e.a);
+
+	//assert(find_if(real_v_a.edges.begin(), real_v_a.edges.end(), [&g, &v_b] (int e) -> bool { return g.edges[e].b == v_b.m_id; }) == real_v_a.edges.end());
+
+	//g.edges.push_back(e);
+	//real_v_a.edges.push_back(e.m_id);
+
+	//return g.edges[e.m_id];
+//}
 
 template<typename VertexProperties, typename EdgeProperties>
 void remove_edge(graph_t<VertexProperties, EdgeProperties> &g, const edge_t<EdgeProperties> &e_del)
@@ -384,29 +411,29 @@ void remove_edge(graph_t<VertexProperties, EdgeProperties> &g, const edge_t<Edge
 	g.edges.erase(g.edges.begin() + e_del.m_id);
 }
 
-template<typename VertexProperties, typename EdgeProperties>
-void remove_edge(graph_t<VertexProperties, EdgeProperties> &g, int a, int b)
-{
-	auto iter = find_if(g.vertices[a].edges.begin(), g.vertices[a].edges.end(), [&g, &b] (int e) -> bool { return g.edges[e].b == b; });
-	assert(iter != g.vertices[a].edges.end());
+//template<typename VertexProperties, typename EdgeProperties>
+//void remove_edge(graph_t<VertexProperties, EdgeProperties> &g, int a, int b)
+//{
+	//auto iter = find_if(g.vertices[a].edges.begin(), g.vertices[a].edges.end(), [&g, &b] (int e) -> bool { return g.edges[e].b == b; });
+	//assert(iter != g.vertices[a].edges.end());
 
-	for (auto &v : g.vertices) {
-		for (auto &e : v.edges) {
-			if (e > *iter) {
-				--e;
-			}
-		}
-	}
+	//for (auto &v : g.vertices) {
+		//for (auto &e : v.edges) {
+			//if (e > *iter) {
+				//--e;
+			//}
+		//}
+	//}
 
-	for (auto &e : g.edges) {
-		if (e.m_id > *iter) {
-			--e.m_id;
-		}
-	}
+	//for (auto &e : g.edges) {
+		//if (e.m_id > *iter) {
+			//--e.m_id;
+		//}
+	//}
 
-	g.edges.erase(*iter);
-	g.vertices[a].edges.erase(iter);
-}
+	//g.edges.erase(*iter);
+	//g.vertices[a].edges.erase(iter);
+//}
 
 template<typename VertexProperties, typename EdgeProperties>
 edge_t<EdgeProperties> &get_edge(graph_t<VertexProperties, EdgeProperties> &g, int e)
@@ -423,18 +450,44 @@ const edge_t<EdgeProperties> &get_edge(const graph_t<VertexProperties, EdgePrope
 }
 
 template<typename VertexProperties, typename EdgeProperties>
-const edge_t<EdgeProperties> *get_edge(const graph_t<VertexProperties, EdgeProperties> &g, const vertex_t<VertexProperties, EdgeProperties> &v_a, const vertex_t<VertexProperties, EdgeProperties> &v_b)
+const edge_t<EdgeProperties> &get_edge(const graph_t<VertexProperties, EdgeProperties> &g, int a, int b)
 {
-	auto iter = find_if(v_a.edges.begin(), v_a.edges.end(), [&g, &v_b] (int e) -> bool { return g.edges[e].b == v_b.m_id; });
-
-	const edge_t<EdgeProperties> *res;
-	if (iter != v_a.edges.end()) {
-		res = &g.edges[*iter];
-	} else {
-		res = nullptr;
-	}
-	return res;
+	const auto &v_a = get_vertex(g, a);
+	auto iter = find_if(v_a.edges.begin(), v_a.edges.end(), [&g, &b] (int e) -> bool { return g.edges[e].b == b; });
+	assert(iter != v_a.edges.end());
+	return g.edges[*iter];
 }
+
+template<typename VertexProperties, typename EdgeProperties>
+edge_t<EdgeProperties> &get_edge(graph_t<VertexProperties, EdgeProperties> &g, int a, int b)
+{
+	const auto &v_a = get_vertex(g, a);
+	auto iter = find_if(v_a.edges.begin(), v_a.edges.end(), [&g, &b] (int e) -> bool { return g.edges[e].b == b; });
+	assert(iter != v_a.edges.end());
+	return g.edges[*iter];
+}
+
+template<typename VertexProperties, typename EdgeProperties>
+bool has_edge(const graph_t<VertexProperties, EdgeProperties> &g, int a, int b)
+{
+	const auto &v_a = get_vertex(g, a);
+	auto iter = find_if(v_a.edges.begin(), v_a.edges.end(), [&g, &b] (int e) -> bool { return g.edges[e].b == b; });
+	return iter != v_a.edges.end();
+}
+
+//template<typename VertexProperties, typename EdgeProperties>
+//const edge_t<EdgeProperties> *get_edge(const graph_t<VertexProperties, EdgeProperties> &g, const vertex_t<VertexProperties, EdgeProperties> &v_a, const vertex_t<VertexProperties, EdgeProperties> &v_b)
+//{
+	//auto iter = find_if(v_a.edges.begin(), v_a.edges.end(), [&g, &v_b] (int e) -> bool { return g.edges[e].b == v_b.m_id; });
+
+	//const edge_t<EdgeProperties> *res;
+	//if (iter != v_a.edges.end()) {
+		//res = &g.edges[*iter];
+	//} else {
+		//res = nullptr;
+	//}
+	//return res;
+//}
 
 template<typename VertexProperties, typename EdgeProperties>
 const vertex_t<VertexProperties, EdgeProperties> &get_source(const graph_t<VertexProperties, EdgeProperties> &g, const edge_t<EdgeProperties> &e)

@@ -8,6 +8,7 @@
 #include "vpr_types.h"
 #include "route.h"
 #include "scheduler.h"
+#include "utility.h"
 
 namespace bg = boost::geometry;
 namespace bgi = boost::geometry::index;
@@ -18,8 +19,6 @@ typedef std::pair<box, const net_t *> value;
 
 /* TODO: check whether nets are global before routing */
 using namespace boost::timer;
-
-void sprintf_rr_node(int rr_node, char *buffer);
 
 void verify_rtree_overlap(vector<net_t *> &nets)
 {

@@ -72,6 +72,7 @@ zlog_category_t *scheduler_log;
 zlog_category_t *independent_log;
 zlog_category_t *static_log;
 zlog_category_t *dynamic_log;
+zlog_category_t *missing_edge_log;
 
 /*int get_num_nets()*/
 /*{*/
@@ -109,23 +110,25 @@ float get_delay(const RREdge &e, const RRNode &v, float unbuffered_upstream_R)
 	return delay;
 }
 
-float get_congestion_cost(const RRNode &v)
+float get_congestion_cost(const congestion_t &congestion, int cost_index)
 {
 	extern t_rr_indexed_data *rr_indexed_data;
 	/*zlog_level(delta_log, ROUTER_V3, " [pres: %g acc: %g] ", v.properties.pres_cost, v.properties.acc_cost);*/
-	return rr_indexed_data[v.properties.cost_index].base_cost * v.properties.acc_cost * v.properties.pres_cost;
+	return rr_indexed_data[cost_index].base_cost * congestion.acc_cost * congestion.pres_cost;
 }
 
 float get_known_cost(const RRGraph &g, const RREdge &e, float criticality_fac, float unbuffered_upstream_R)
 {
-	const auto &target = get_target(g, e);
+	/*const auto &target = get_target(g, e);*/
 
-	float delay = get_delay(e, target, unbuffered_upstream_R);
-	float congestion = get_congestion_cost(target);
+	/*float delay = get_delay(e, target, unbuffered_upstream_R);*/
+	/*float congestion = get_congestion_cost(target);*/
 
-	zlog_level(delta_log, ROUTER_V3, " [delay: %g congestion %g crit_fac: %g] ", delay, congestion, criticality_fac);
+	/*zlog_level(delta_log, ROUTER_V3, " [delay: %g congestion %g crit_fac: %g] ", delay, congestion, criticality_fac);*/
 
-	return criticality_fac * delay + (1 - criticality_fac) * congestion;
+	/*return criticality_fac * delay + (1 - criticality_fac) * congestion;*/
+	assert(false);
+	return 0;
 }
 
 /* Macro used below to ensure that fractions are rounded up, but floating   *
@@ -326,9 +329,9 @@ void expand_neighbors_fast(const RRGraph &g, const route_state_t &current, const
 }
 
 template<typename ShouldExpandFunc>
-void expand_neighbors(const RRGraph &g, const route_state_t &current, const RRNode &target, float criticality_fac, float astar_fac, std::priority_queue<route_state_t> &heap, const ShouldExpandFunc &should_expand, bool lock, perf_t *perf, lock_perf_t *lock_perf)
+void expand_neighbors(const RRGraph &g, const RRNode &current, const route_state_t *state, const congestion_t *congestion, const RRNode &target, float criticality_fac, float astar_fac, std::priority_queue<route_state_t> &heap, const ShouldExpandFunc &should_expand, bool lock, perf_t *perf, lock_perf_t *lock_perf)
 {
-	for_all_out_edges(g, get_vertex(g, current.rr_node), [&heap, &g, &current, &target, &criticality_fac, &astar_fac, &should_expand, &perf, &lock_perf, &lock] (const RREdge &e) -> void {
+	for_all_out_edges(g, current, [&heap, &g, &current, &state, &congestion, &target, &criticality_fac, &astar_fac, &should_expand, &perf, &lock_perf, &lock] (const RREdge &e) -> void {
 			auto &neighbor = get_target(g, e);
 
 			char buffer[256];
@@ -348,7 +351,9 @@ void expand_neighbors(const RRGraph &g, const route_state_t &current, const RRNo
 			item.rr_node = id(neighbor);
 			item.prev_edge = &e;
 
-			float unbuffered_upstream_R = current.upstream_R;
+			const route_state_t *current_state = &state[id(current)];
+
+			float unbuffered_upstream_R = current_state->upstream_R;
 			float upstream_R = e.properties.R + neighbor.properties.R;
 			if (!e.properties.buffered) {
 				upstream_R += unbuffered_upstream_R;
@@ -367,16 +372,16 @@ void expand_neighbors(const RRGraph &g, const route_state_t &current, const RRNo
 				/*[>} <]*/
 				/*neighbor.properties.lock->lock();*/
 			/*}*/
-			float congestion = get_congestion_cost(neighbor);
+			float congestion_cost = get_congestion_cost(congestion[item.rr_node], neighbor.properties.cost_index);
 			/*if (lock) {*/
 				/*neighbor.properties.lock->unlock();*/
 			/*}*/
 			float delay = get_delay(e, neighbor, unbuffered_upstream_R);
 
-			item.delay = current.delay + delay;
+			item.delay = current_state->delay + delay;
 
-			float known_cost = criticality_fac * delay + (1 - criticality_fac) * congestion;
-			item.known_cost = current.known_cost + known_cost;
+			float known_cost = criticality_fac * delay + (1 - criticality_fac) * congestion_cost;
+			item.known_cost = current_state->known_cost + known_cost;
 
 			float expected_cost = get_timing_driven_expected_cost(get_vertex(g, item.rr_node), target, criticality_fac, upstream_R);
 			item.cost = item.known_cost + astar_fac * expected_cost;
@@ -389,7 +394,7 @@ void expand_neighbors(const RRGraph &g, const route_state_t &current, const RRNo
 
 			zlog_level(delta_log, ROUTER_V3, " [cost: %g known_cost: %g][occ/cap: %d/%d pres: %g acc: %g][edge_delay: %g edge_R: %g node_R: %g node_C: %g] \n",
 					item.cost, item.known_cost, 
-					neighbor.properties.occ, neighbor.properties.capacity, neighbor.properties.pres_cost, neighbor.properties.acc_cost,
+					congestion[item.rr_node].occ, neighbor.properties.capacity, congestion[item.rr_node].pres_cost, congestion[item.rr_node].acc_cost,
 					e.properties.switch_delay, e.properties.R, neighbor.properties.R, neighbor.properties.C);
 	});
 }
@@ -476,46 +481,46 @@ void test_heap()
 
 void overused_stats(const trace_t &trace, const route_tree_t &rt, const net_t &net, const RRGraph &g)
 {
-	for (const auto &item : trace.segments) {
-		const Segment &segment = item.second;
-		int sink_rr_node = item.first;
+	/*for (const auto &item : trace.segments) {*/
+		/*const Segment &segment = item.second;*/
+		/*int sink_rr_node = item.first;*/
 
-		int num_overused_nodes = 0;
-		for (const auto &rr_node : segment) {
-			auto &v = get_vertex(g, rr_node);
-			if (v.properties.occ > v.properties.capacity) {
-				++num_overused_nodes;
-			}
-		}
+		/*int num_overused_nodes = 0;*/
+		/*for (const auto &rr_node : segment) {*/
+			/*auto &v = get_vertex(g, rr_node);*/
+			/*if (congestion[rr_node].occ > v.properties.capacity) {*/
+				/*++num_overused_nodes;*/
+			/*}*/
+		/*}*/
 
-		int isink = -1;
-		int num_matches = 0;
-		for (int i = 0; i < net.sinks.size(); ++i) {
-			if (net.sinks[i].rr_node == sink_rr_node) {
-				isink = i;
-				++num_matches;
-			}
-		}
-		assert(num_matches == 1 && isink != -1);
-		auto &sink = net.sinks[isink];
+		/*int isink = -1;*/
+		/*int num_matches = 0;*/
+		/*for (int i = 0; i < net.sinks.size(); ++i) {*/
+			/*if (net.sinks[i].rr_node == sink_rr_node) {*/
+				/*isink = i;*/
+				/*++num_matches;*/
+			/*}*/
+		/*}*/
+		/*assert(num_matches == 1 && isink != -1);*/
+		/*auto &sink = net.sinks[isink];*/
 
-		char buffer[256];
-		sprintf_rr_node(sink_rr_node, buffer);
+		/*char buffer[256];*/
+		/*sprintf_rr_node(sink_rr_node, buffer);*/
 
-		if (num_overused_nodes > 0) {
-			const bounding_box_t &bb = sink.current_bounding_box;
+		/*if (num_overused_nodes > 0) {*/
+			/*const bounding_box_t &bb = sink.current_bounding_box;*/
 
-			zlog_level(delta_log, ROUTER_V2, "Net %d sink %d: %s (distance rank %d/%lu BB %d-%d %d-%d) segment has %d/%lu (%g) overused nodes\n", net.vpr_id, sink.id, buffer, sink.distance_to_source_rank, net.sinks.size(), bb.xmin, bb.xmax, bb.ymin, bb.ymax, num_overused_nodes, segment.size(), (float)num_overused_nodes/segment.size()*100);
+			/*zlog_level(delta_log, ROUTER_V2, "Net %d sink %d: %s (distance rank %d/%lu BB %d-%d %d-%d) segment has %d/%lu (%g) overused nodes\n", net.vpr_id, sink.id, buffer, sink.distance_to_source_rank, net.sinks.size(), bb.xmin, bb.xmax, bb.ymin, bb.ymax, num_overused_nodes, segment.size(), (float)num_overused_nodes/segment.size()*100);*/
 
-			bool is_only_path = route_tree_is_only_path(rt, sink_rr_node, g);
-			if (is_only_path) {
-				zlog_level(delta_log, ROUTER_V2, "IS_ONLY_PATH\n");
-			}
-		} 		
-	}
+			/*bool is_only_path = route_tree_is_only_path(rt, sink_rr_node, g);*/
+			/*if (is_only_path) {*/
+				/*zlog_level(delta_log, ROUTER_V2, "IS_ONLY_PATH\n");*/
+			/*}*/
+		/*} 		*/
+	/*}*/
 }
 
-void adjust_bb_factor(const trace_t &trace, net_t &net, const RRGraph &g, int threshold)
+void adjust_bb_factor(const trace_t &trace, net_t &net, const RRGraph &g, const congestion_t *congestion, int threshold)
 {
 	assert(net.sinks.size() == trace.segments.size());
 
@@ -526,7 +531,7 @@ void adjust_bb_factor(const trace_t &trace, net_t &net, const RRGraph &g, int th
 		int num_overused_nodes = 0;
 		for (const auto &rr_node : segment) {
 			auto &v = get_vertex(g, rr_node);
-			if (v.properties.occ > v.properties.capacity) {
+			if (congestion[rr_node].occ > v.properties.capacity) {
 				++num_overused_nodes;
 			}
 		}
@@ -565,46 +570,50 @@ void adjust_bb_factor(const trace_t &trace, net_t &net, const RRGraph &g, int th
 	}
 }
 
-void update_costs(RRGraph &g, float pres_fac, float acc_fac)
+void update_costs(const RRGraph &g, congestion_t *congestion, float pres_fac, float acc_fac)
 {
-	for_all_vertices(g, [&pres_fac, &acc_fac] (RRNode &v) -> void {
-			int occ = v.properties.occ;
+	for_all_vertices(g, [&congestion, &pres_fac, &acc_fac] (const RRNode &v) -> void {
+			int rr_node = id(v);
+			int occ = congestion[rr_node].occ;
 			int capacity = v.properties.capacity;
 			if (occ > capacity) {
-				v.properties.acc_cost += (occ - capacity) * acc_fac;
-				v.properties.pres_cost = 1. + (occ + 1 - capacity) * pres_fac;
+				congestion[rr_node].acc_cost += (occ - capacity) * acc_fac;
+				congestion[rr_node].pres_cost = 1. + (occ + 1 - capacity) * pres_fac;
 			} else if (occ == capacity) {
 				/* If occ == capacity, we don't need to increase acc_cost, but a change    *
 				 * in pres_fac could have made it necessary to recompute the cost anyway.  */
-				v.properties.pres_cost = 1. + pres_fac;
+				congestion[rr_node].pres_cost = 1. + pres_fac;
 			}
 			});
 }
 
-void update_one_cost_internal(RRNode &rr_node, /*int net_id, */int delta, float pres_fac, bool lock, lock_perf_t *lock_perf)
+void update_one_cost_internal(const RRNode &rr_node, congestion_t &congestion, /*int net_id, */int delta, float pres_fac, bool lock, lock_perf_t *lock_perf)
 {
 	if (lock) {
-		/*if (lock_perf) {*/
-			/*++lock_perf->num_lock_tries;*/
-		/*}*/
+		if (lock_perf) {
+			++lock_perf->num_lock_tries;
+		}
 
-		/*if (!rr_node.properties.lock->try_lock()) {*/
-			/*if (lock_perf) {*/
-				/*++lock_perf->num_lock_waits;*/
-			/*}*/
-			/*rr_node.properties.lock->lock();*/
-		/*}*/
-		rr_node.properties.lock->lock();
+		if (!congestion.lock.try_lock()) {
+			if (lock_perf) {
+				++lock_perf->num_lock_waits;
+			}
+			using clock = std::chrono::high_resolution_clock;
+			auto wait_start = clock::now();
+			congestion.lock.lock();
+			lock_perf->total_wait_time += clock::now()-wait_start;
+		}
+		/*rr_node.properties.lock->lock();*/
 	}
 	
-	rr_node.properties.occ += delta;
+	congestion.occ += delta;
 
-	assert(rr_node.properties.occ >= 0);
+	assert(congestion.occ >= 0);
 
-	if (rr_node.properties.occ < rr_node.properties.capacity) {
-		rr_node.properties.pres_cost = 1;
+	if (congestion.occ < rr_node.properties.capacity) {
+		congestion.pres_cost = 1;
 	} else {
-		rr_node.properties.pres_cost = 1 + (rr_node.properties.occ + 1 - rr_node.properties.capacity) * pres_fac;
+		congestion.pres_cost = 1 + (congestion.occ + 1 - rr_node.properties.capacity) * pres_fac;
 	}
 
 	/*if (delta > 0) {*/
@@ -618,15 +627,15 @@ void update_one_cost_internal(RRNode &rr_node, /*int net_id, */int delta, float 
 	/*}*/
 
 	if (lock) {
-		rr_node.properties.lock->unlock();
+		congestion.lock.unlock();
 	}
 		
 	char buffer[256];
 	sprintf_rr_node(id(rr_node), buffer);
-	zlog_level(delta_log, ROUTER_V2, "Update cost of %s delta: %d new_occ: %d pres_fac: %g\n", buffer, delta, rr_node.properties.occ, pres_fac);
+	zlog_level(delta_log, ROUTER_V2, "Update cost of %s delta: %d new_occ: %d pres_fac: %g\n", buffer, delta, congestion.occ, pres_fac);
 }
 
-void update_one_cost(RRGraph &g, const vector<int>::const_iterator &rr_nodes_begin, const vector<int>::const_iterator &rr_nodes_end, /*int net_id,*/ int delta, float pres_fac, bool lock, lock_perf_t *lock_perf)
+void update_one_cost(const RRGraph &g, congestion_t *congestion, const vector<int>::const_iterator &rr_nodes_begin, const vector<int>::const_iterator &rr_nodes_end, /*int net_id,*/ int delta, float pres_fac, bool lock, lock_perf_t *lock_perf)
 {
 	/*const RouteTreeNode *last = nullptr;*/
 	for (auto iter = rr_nodes_begin; iter != rr_nodes_end; ++iter) {
@@ -634,23 +643,23 @@ void update_one_cost(RRGraph &g, const vector<int>::const_iterator &rr_nodes_beg
 		/*const RouteTreeNode &rt_node = get_target(rt.graph, get_edge(rt.graph, rt_edge_id));*/
 		/*last = &get_target(rt.graph, get_edge(rt.graph, rt_edge_id));*/
 		/*RRNode &rr_node = get_vertex(g, rt_node.properties.rr_node);*/
-		RRNode &rr_node = get_vertex(g, *iter);
-		update_one_cost_internal(rr_node, /*net_id,*/ delta, pres_fac, lock, lock_perf);
+		const RRNode &rr_node = get_vertex(g, *iter);
+		update_one_cost_internal(rr_node, congestion[*iter], /*net_id,*/ delta, pres_fac, lock, lock_perf);
 	}
 	/*RRNode &rr_node = get_vertex(g, last->properties.rr_node);*/
 	/*update_one_cost_internal(rr_node, delta, pres_fac);*/
 }
 
-void update_one_cost(RRGraph &g, route_tree_t &rt, const RouteTreeNode &node, int delta, float pres_fac, bool lock)
+void update_one_cost(const RRGraph &g, congestion_t *congestion, route_tree_t &rt, const RouteTreeNode &node, int delta, float pres_fac, bool lock)
 {
 	assert(node.properties.valid);
 
-	RRNode &rr_node = get_vertex(g, node.properties.rr_node);
+	const RRNode &rr_node = get_vertex(g, node.properties.rr_node);
 
-	update_one_cost_internal(rr_node, /*-1,*/ delta, pres_fac, lock, nullptr);
+	update_one_cost_internal(rr_node, congestion[id(rr_node)], /*-1,*/ delta, pres_fac, lock, nullptr);
 
-	for_all_out_edges(rt.graph, node, [&g, &rt, &delta, &pres_fac, &lock] (const RouteTreeEdge &e) -> void {
-			update_one_cost(g, rt, get_target(rt.graph, e), delta, pres_fac, lock);
+	for_all_out_edges(rt.graph, node, [&g, &rt, &congestion, &delta, &pres_fac, &lock] (const RouteTreeEdge &e) -> void {
+			update_one_cost(g, congestion, rt, get_target(rt.graph, e), delta, pres_fac, lock);
 			});
 }
 
@@ -703,20 +712,47 @@ void update_sink_criticalities(net_t &net, const t_net_timing &net_timing, const
 	}
 }
 
-void get_overused_nodes(const route_tree_t &rt, const RouteTreeNode &node, RRGraph &g, vector<int> &overused_rr_node)
+void get_overused_nodes(const route_tree_t &rt, const RouteTreeNode &node, const RRGraph &g, const congestion_t *congestion, vector<int> &overused_rr_node)
 {
 	assert(node.properties.valid);
 
 	const auto &rr_node = get_vertex(g, node.properties.rr_node);
 
-	if (rr_node.properties.occ > rr_node.properties.capacity) {
-		overused_rr_node.push_back(id(rr_node));
+	int rr_node_id = id(rr_node);
+	if (congestion[rr_node_id].occ > rr_node.properties.capacity) {
+		overused_rr_node.push_back(rr_node_id);
 	}
 	
-	for_all_out_edges(rt.graph, node, [&rt, &g, &overused_rr_node] (const RouteTreeEdge &e) -> void {
+	for_all_out_edges(rt.graph, node, [&rt, &g, &congestion, &overused_rr_node] (const RouteTreeEdge &e) -> void {
 			const auto &neighbor = get_target(rt.graph, e);
-			get_overused_nodes(rt, neighbor, g, overused_rr_node);
+			get_overused_nodes(rt, neighbor, g, congestion, overused_rr_node);
 			});
+}
+
+void recalculate_occ_internal(const route_tree_t &rt, const RouteTreeNode &node, const RRGraph &g, congestion_t *congestion)
+{
+	assert(node.properties.valid);
+
+	auto &rr_node = get_vertex(g, node.properties.rr_node);
+	int rr_node_id = id(rr_node);
+	if (rr_node.properties.type == SOURCE) {
+		congestion[rr_node_id].recalc_occ += num_out_edges(rt.graph, node);
+	} else {
+		++congestion[rr_node_id].recalc_occ;
+	}
+
+	for (const auto &branch : route_tree_get_branches(rt, node)) {
+		/*for_all_out_edges(rt.graph, node, [&rt, &g, &visited_sinks, &visited_nodes] (const RouteTreeEdge &e) -> void {*/
+		const auto &child = get_target(rt.graph, branch);
+		recalculate_occ_internal(rt, child, g, congestion);
+	}
+}
+
+void recalculate_occ(const route_tree_t &rt, const RRGraph &g, congestion_t *congestion)
+{
+	const auto &rt_root = get_vertex(rt.graph, rt.root_rt_node_id);
+
+	recalculate_occ_internal(rt, rt_root, g, congestion);
 }
 
 void check_route_tree_internal(const route_tree_t &rt, const RouteTreeNode &node, RRGraph &g, vector<int> &visited_sinks, vector<int> &visited_nodes)
@@ -732,12 +768,6 @@ void check_route_tree_internal(const route_tree_t &rt, const RouteTreeNode &node
 	}
 
 	visited_nodes.push_back(node.properties.rr_node);
-
-	if (rr_node.properties.type == SOURCE) {
-		rr_node.properties.recalc_occ += num_out_edges(rt.graph, node);
-	} else {
-		++rr_node.properties.recalc_occ;
-	}
 
 	for (const auto &branch : route_tree_get_branches(rt, node)) {
 		/*for_all_out_edges(rt.graph, node, [&rt, &g, &visited_sinks, &visited_nodes] (const RouteTreeEdge &e) -> void {*/
@@ -984,7 +1014,7 @@ void route_net_fast(RRGraph &g, const net_t &net, const route_parameters_t &para
 		/*} else {*/
 			/*update_one_cost(g, new_path.begin(), new_path.end(), 1, params.pres_fac);*/
 		/*}*/
-		update_one_cost(g, new_path.begin(), new_path.end(), 1, params.pres_fac, false, nullptr);
+		/*update_one_cost(g, new_path.begin(), new_path.end(), 1, params.pres_fac, false, nullptr);*/
 
 		/* important to update route tree only after updating cost because the previous check relies on whether the
 		 * first node is already in the route tree */
@@ -1005,7 +1035,7 @@ void route_net_fast(RRGraph &g, const net_t &net, const route_parameters_t &para
 	/*check_route_tree(rt, net, g);*/
 }
 
-void route_net_2(RRGraph &g, int vpr_id, const source_t *source, const vector<sink_t *> &sinks, const route_parameters_t &params, route_state_t *state, route_tree_t &rt, t_net_timing &net_timing, bool lock, perf_t *perf, lock_perf_t *lock_perf)
+int route_net_2(const RRGraph &g, int vpr_id, const source_t *source, const vector<sink_t *> &sinks, const route_parameters_t &params, route_state_t *state, congestion_t *congestion, route_tree_t &rt, t_net_timing &net_timing, bool lock, perf_t *perf, lock_perf_t *lock_perf)
 {
 	std::priority_queue<route_state_t> heap;
 
@@ -1027,7 +1057,7 @@ void route_net_2(RRGraph &g, int vpr_id, const source_t *source, const vector<si
 		/* special case */
 		zlog_level(delta_log, ROUTER_V2, "Empty route tree. Setting root to %s\n", buffer);
 
-		auto &source_rr_node = get_vertex(g, source->rr_node);
+		const auto &source_rr_node = get_vertex(g, source->rr_node);
 		RouteTreeNode *root_rt_node = route_tree_add_rr_node(rt, source_rr_node);
 		route_tree_set_node_properties(*root_rt_node, true, nullptr, source_rr_node.properties.R, 0.5 * source_rr_node.properties.R * source_rr_node.properties.C);
 		route_tree_set_root(rt, source->rr_node);
@@ -1047,6 +1077,7 @@ void route_net_2(RRGraph &g, int vpr_id, const source_t *source, const vector<si
 	}
 
 	int isink = 0;
+	int num_routed_sinks = 0;
 	for (const auto &sink : sorted_sinks) {
 		sprintf_rr_node(sink->rr_node, buffer);
 		zlog_level(delta_log, ROUTER_V1, "Net %d Sink %d: %s criticality: %g BB: %d-%d %d-%d Prev BB: %d-%d %d-%d\n", vpr_id, sink->id, buffer, sink->criticality_fac, sink->current_bounding_box.xmin, sink->current_bounding_box.xmax, sink->current_bounding_box.ymin, sink->current_bounding_box.ymax, sink->previous_bounding_box.xmin, sink->previous_bounding_box.xmax, sink->previous_bounding_box.ymin, sink->previous_bounding_box.ymax);
@@ -1066,7 +1097,7 @@ void route_net_2(RRGraph &g, int vpr_id, const source_t *source, const vector<si
 
 			sprintf_rr_node(item.rr_node, buffer);
 			const auto &v = get_vertex(g, item.rr_node);
-			zlog_level(delta_log, ROUTER_V3, "Current: %s occ/cap: %d/%d prev: %d new_cost: %g new_known: %g new_delay: %g old_cost: %g old_known: %g old_delay: %g\n", buffer, v.properties.occ, v.properties.capacity, item.prev_edge ? id(get_source(g, *item.prev_edge)) : -1, item.cost, item.known_cost, item.delay, state[item.rr_node].cost, state[item.rr_node].known_cost, state[item.rr_node].delay);
+			zlog_level(delta_log, ROUTER_V3, "Current: %s occ/cap: %d/%d prev: %d new_cost: %g new_known: %g new_delay: %g old_cost: %g old_known: %g old_delay: %g\n", buffer, congestion[item.rr_node].occ, v.properties.capacity, item.prev_edge ? id(get_source(g, *item.prev_edge)) : -1, item.cost, item.known_cost, item.delay, state[item.rr_node].cost, state[item.rr_node].known_cost, state[item.rr_node].delay);
 
 			if (item.rr_node == sink->rr_node) {
 				state[item.rr_node] = item;
@@ -1082,7 +1113,7 @@ void route_net_2(RRGraph &g, int vpr_id, const source_t *source, const vector<si
 				state[item.rr_node] = item;
 				modified.push_back(item.rr_node);
 
-				expand_neighbors(g, item, sink_rr_node, sink->criticality_fac, params.astar_fac, heap, [&sink, &sink_rr_node] (const RRNode &v) -> bool {
+				expand_neighbors(g, v, state, congestion, sink_rr_node, sink->criticality_fac, params.astar_fac, heap, [&sink, &sink_rr_node] (const RRNode &v) -> bool {
 
 					/*if (trace_has_node(prev_trace, id(v))) {*/
 						/*zlog_level(delta_log, ROUTER_V3, " existing node route tree ");*/
@@ -1121,15 +1152,17 @@ void route_net_2(RRGraph &g, int vpr_id, const source_t *source, const vector<si
 
 		if (!found_sink) {
 			zlog_error(delta_log, "Error: Failed to find sink\n");
-			assert(false);
+			assert(heap.empty());
+		} else {
+			vector<int> added_rr_nodes;
+			route_tree_add_path(rt, g, state, sink->rr_node, vpr_id, added_rr_nodes);
+
+			update_one_cost(g, congestion, added_rr_nodes.begin(), added_rr_nodes.end(), 1, params.pres_fac, lock, lock_perf);
+
+			net_timing.delay[sink->id+1] = route_tree_get_rt_node(rt, sink->rr_node)->properties.delay;
+
+			++num_routed_sinks;
 		}
-
-		vector<int> added_rr_nodes;
-		route_tree_add_path(rt, g, state, sink->rr_node, vpr_id, added_rr_nodes);
-
-		update_one_cost(g, added_rr_nodes.begin(), added_rr_nodes.end(), 1, params.pres_fac, lock, lock_perf);
-
-		net_timing.delay[sink->id+1] = route_tree_get_rt_node(rt, sink->rr_node)->properties.delay;
 
 		for (const auto &m : modified)  {
 			state[m].known_cost = std::numeric_limits<float>::max();
@@ -1140,6 +1173,8 @@ void route_net_2(RRGraph &g, int vpr_id, const source_t *source, const vector<si
 	}
 
 	zlog_level(delta_log, ROUTER_V1, "\n");
+
+	return num_routed_sinks;
 
 	/*delete [] state;*/
 
@@ -1197,7 +1232,7 @@ void route_net(RRGraph &g, int vpr_id, const source_t *source, const vector<sink
 
 			sprintf_rr_node(item.rr_node, buffer);
 			const auto &v = get_vertex(g, item.rr_node);
-			zlog_level(delta_log, ROUTER_V2, "Current: %s occ/cap: %d/%d prev: %d old_cost: %g new_cost: %g old_delay: %g new_delay: %g old_known: %g new_known: %g \n", buffer, v.properties.occ, v.properties.capacity, item.prev_edge ? id(get_source(g, *item.prev_edge)) : -1, state[item.rr_node].cost, item.cost, state[item.rr_node].delay, item.delay, state[item.rr_node].known_cost, item.known_cost);
+			/*zlog_level(delta_log, ROUTER_V2, "Current: %s occ/cap: %d/%d prev: %d old_cost: %g new_cost: %g old_delay: %g new_delay: %g old_known: %g new_known: %g \n", buffer, congestion[item.rr_node].occ, v.properties.capacity, item.prev_edge ? id(get_source(g, *item.prev_edge)) : -1, state[item.rr_node].cost, item.cost, state[item.rr_node].delay, item.delay, state[item.rr_node].known_cost, item.known_cost);*/
 
 			if (item.rr_node == sink->rr_node) {
 				state[item.rr_node] = item;
@@ -1214,7 +1249,7 @@ void route_net(RRGraph &g, int vpr_id, const source_t *source, const vector<sink
 				state[item.rr_node] = item;
 				modified.push_back(item.rr_node);
 
-				expand_neighbors(g, item, sink_vertex, sink->criticality_fac, params.astar_fac, heap, [&sink, &prev_trace, &sink_vertex] (const RRNode &v) -> bool {
+				expand_neighbors(g, v, nullptr, nullptr, sink_vertex, sink->criticality_fac, params.astar_fac, heap, [&sink, &prev_trace, &sink_vertex] (const RRNode &v) -> bool {
 
 					if (trace_has_node(prev_trace, id(v))) {
 						zlog_level(delta_log, ROUTER_V3, " existing node route tree ");
@@ -1265,7 +1300,7 @@ void route_net(RRGraph &g, int vpr_id, const source_t *source, const vector<sink
 		/*} else {*/
 			/*update_one_cost(g, new_path.begin(), new_path.end(), 1, params.pres_fac);*/
 		/*}*/
-		update_one_cost(g, new_path.begin(), new_path.end(), 1, params.pres_fac, false, nullptr);
+		/*update_one_cost(g, new_path.begin(), new_path.end(), 1, params.pres_fac, false, nullptr);*/
 
 		/* important to update route tree only after updating cost because the previous check relies on whether the
 		 * first node is already in the route tree */
@@ -1349,7 +1384,7 @@ void route_net(RRGraph &g, const net_t &net, const route_parameters_t &params, r
 				state[item.rr_node] = item;
 				modified.push_back(item.rr_node);
 
-				expand_neighbors(g, item, sink_vertex, sink.criticality_fac, params.astar_fac, heap, [&net, &sink, &sink_vertex] (const RRNode &v) -> bool {
+				expand_neighbors(g, get_vertex(g, item.rr_node), nullptr, nullptr, sink_vertex, sink.criticality_fac, params.astar_fac, heap, [&net, &sink, &sink_vertex] (const RRNode &v) -> bool {
 					const auto &prop = v.properties;
 
 					if (prop.xhigh < sink.current_bounding_box.xmin
@@ -1393,7 +1428,7 @@ void route_net(RRGraph &g, const net_t &net, const route_parameters_t &params, r
 		/*} else {*/
 			/*update_one_cost(g, new_path.begin(), new_path.end(), 1, params.pres_fac);*/
 		/*}*/
-		update_one_cost(g, new_path.begin(), new_path.end(), 1, params.pres_fac, false, nullptr);
+		/*update_one_cost(g, new_path.begin(), new_path.end(), 1, params.pres_fac, false, nullptr);*/
 
 		/* important to update route tree only after updating cost because the previous check relies on whether the
 		 * first node is already in the route tree */
@@ -2198,13 +2233,13 @@ float analyze_timing(t_net_timing *net_timing)
 	/*printf("Critical path: %g ns\n", critical_path_delay);*/
 }
 
-bool feasible_routing(const RRGraph &g)
+bool feasible_routing(const RRGraph &g, const congestion_t *congestion)
 {
 	bool feasible = true;
-	for (const auto &v : get_vertices(g)) {
-		if (v.properties.occ > v.properties.capacity) {
+
+	for (int i = 0; i < num_vertices(g) && feasible; ++i) {
+		if (congestion[i].occ > get_vertex(g, i).properties.capacity) {
 			feasible = false;
-			break;
 		}
 	}
 
@@ -2332,7 +2367,7 @@ int adjust_bounding_box_2(net_t &net)
 	return num_changed;
 }
 
-void update_sink_bounding_boxes_3(net_t &net, route_tree_t &rt, const RRGraph &g, float astar_fac)
+void update_sink_bounding_boxes_3(net_t &net, route_tree_t &rt, const RRGraph &g, const congestion_t *congestion, float astar_fac)
 {
 	/*net.previous_sink_index = net.current_sink_index;*/
 	/*net.previous_source = net.current_source;*/
@@ -2357,7 +2392,7 @@ void update_sink_bounding_boxes_3(net_t &net, route_tree_t &rt, const RRGraph &g
 			pair<int, int> min_metric = make_pair(std::numeric_limits<int>::max(), std::numeric_limits<int>::max());
 			const RRNode *new_from = nullptr;
 			bounding_box_t new_bounding_box;
-			for_all_vertices(rt.graph, [&min_metric, &new_from, &new_bounding_box, &sink, &g] (const RouteTreeNode &rt_node) -> void {
+			for_all_vertices(rt.graph, [&min_metric, &new_from, &new_bounding_box, &sink, &g, &congestion] (const RouteTreeNode &rt_node) -> void {
 					if (!rt_node.properties.valid) {
 					return;
 					}
@@ -2378,7 +2413,7 @@ void update_sink_bounding_boxes_3(net_t &net, route_tree_t &rt, const RRGraph &g
 					new_bounding_box = get_bounding_box(bottom_left, top_right, sink.bb_factor);
 
 					int area = get_bounding_box_area(new_bounding_box);
-					int slack = from_node.properties.occ - from_node.properties.capacity;
+					int slack = congestion[rt_node.properties.rr_node].occ - from_node.properties.capacity;
 					auto new_metric = make_pair(slack, area);
 					if (new_metric < min_metric) {
 						new_from = &from_node;
@@ -3121,11 +3156,12 @@ bool partitioning_route_bounding_box(t_router_opts *opts)
 	params.bend_cost = opts->bend_cost;
 	params.pres_fac = opts->first_iter_pres_fac; /* Typically 0 -> ignore cong. */
 
-	for_all_vertices(g, [] (RRNode &v) -> void {
-			v.properties.acc_cost = 1;
-			v.properties.pres_cost = 1;
-			v.properties.occ = 0;
-			});
+
+	/*for_all_vertices(g, [] (RRNode &v) -> void {*/
+			/*v.properties.acc_cost = 1;*/
+			/*v.properties.pres_cost = 1;*/
+			/*v.properties.occ = 0;*/
+			/*});*/
 
 	bool routed = false;
 	for (int iter = 0; iter < max_iter && !routed; ++iter) {
@@ -3260,26 +3296,26 @@ bool partitioning_route_bounding_box(t_router_opts *opts)
 		}
 		assert(!fail);
 
-		for_all_vertices(g, [] (RRNode &v) -> void { v.properties.recalc_occ = 0; });
+		/*for_all_vertices(g, [] (RRNode &v) -> void { v.properties.recalc_occ = 0; });*/
 
 		for (const auto &net : nets) {
 			check_route_tree(route_trees[net.local_id], net, g);
 		}
 
 		bool valid = true;
-		for_all_vertices(g, [&valid] (RRNode &v) -> void {
-				char buffer[256];
-				sprintf_rr_node(id(v), buffer);
-				if (v.properties.recalc_occ != v.properties.occ) {
-					zlog_error(delta_log, "Node %s occ mismatch, recalc: %d original: %d\n", buffer, v.properties.recalc_occ, v.properties.occ);
-					valid = false;
-				}
-				});
+		/*for_all_vertices(g, [&valid] (RRNode &v) -> void {*/
+				/*char buffer[256];*/
+				/*sprintf_rr_node(id(v), buffer);*/
+				/*if (v.properties.recalc_occ != v.properties.occ) {*/
+					/*zlog_error(delta_log, "Node %s occ mismatch, recalc: %d original: %d\n", buffer, v.properties.recalc_occ, v.properties.occ);*/
+					/*valid = false;*/
+				/*}*/
+				/*});*/
 		assert(valid);
 
 		for (const auto &net : nets) {
 			vector<int> overused_rr_node;
-			get_overused_nodes(route_trees[net.local_id], get_vertex(route_trees[net.local_id].graph, route_trees[net.local_id].root_rt_node_id), g, overused_rr_node);
+			get_overused_nodes(route_trees[net.local_id], get_vertex(route_trees[net.local_id].graph, route_trees[net.local_id].root_rt_node_id), g, nullptr, overused_rr_node);
 			if (!overused_rr_node.empty()) {
 				zlog_level(delta_log, ROUTER_V3, "Net %d bb_rank %d overused nodes:\n", net.vpr_id, net.bb_area_rank);
 				for (const auto &item : overused_rr_node) {
@@ -3289,28 +3325,28 @@ bool partitioning_route_bounding_box(t_router_opts *opts)
 			}
 		}
 
-		if (feasible_routing(g)) {
+		if (feasible_routing(g, nullptr)) {
 			zlog_info(delta_log, "Routed in %d iterations\n", iter+1);
 			routed = true;
 		} else {
 			int num_overused_nodes = 0;
-			for_all_vertices(g, [&num_overused_nodes] (const RRNode &v) -> void {
-					if (v.properties.occ > v.properties.capacity) {
-					++num_overused_nodes;
-					}
-					});
+			/*for_all_vertices(g, [&num_overused_nodes] (const RRNode &v) -> void {*/
+					/*if (v.properties.occ > v.properties.capacity) {*/
+					/*++num_overused_nodes;*/
+					/*}*/
+					/*});*/
 			zlog_info(delta_log, "Num overused nodes: %d/%d (%.2f)\n", num_overused_nodes, num_vertices(g), num_overused_nodes*100.0/num_vertices(g));
 
 			if (iter == 0) {
 				params.pres_fac = opts->initial_pres_fac;
-				update_costs(g, params.pres_fac, 0);
+				/*update_costs(g, params.pres_fac, 0);*/
 			} else {
 				params.pres_fac *= opts->pres_fac_mult;
 
 				/* Avoid overflow for high iteration counts, even if acc_cost is big */
 				params.pres_fac = std::min(params.pres_fac, static_cast<float>(HUGE_POSITIVE_FLOAT / 1e5));
 
-				update_costs(g, params.pres_fac, opts->acc_fac);
+				/*update_costs(g, params.pres_fac, opts->acc_fac);*/
 			}
 
 			for (auto &net : nets) { 
@@ -3328,22 +3364,22 @@ bool partitioning_route_bounding_box(t_router_opts *opts)
 	return routed;
 }
 
-void dump_congestion_map(const RRGraph &g, const char *filename)
+void dump_congestion_map(const RRGraph &g, const congestion_t *congestion, const char *filename)
 {
 	FILE *file = fopen(filename, "w");
 
-	for_all_vertices(g, [&file] (const RRNode &v) -> void {
-			auto &prop = v.properties;
-			if (prop.occ > prop.capacity) {
+	for (int i = 0; i < num_vertices(g); ++i) {
+		const auto &prop = get_vertex(g, i).properties;
+		if (congestion[i].occ > prop.capacity) {
 			for (int x = prop.xlow; x <= prop.xhigh; ++x) {
-			for (int y = prop.ylow; y <= prop.yhigh; ++y) {
-				for (int i = 0; i < prop.occ-prop.capacity; ++i) {
-					fprintf(file, "%d %d\n", x, y);
+				for (int y = prop.ylow; y <= prop.yhigh; ++y) {
+					for (int i = 0; i < congestion[i].occ-prop.capacity; ++i) {
+						fprintf(file, "%d %d\n", x, y);
+					}
 				}
 			}
-			}
-			}
-			});
+		}
+	}
 
 	fclose(file);
 }
@@ -3651,13 +3687,13 @@ class RouteWorker2 {
 
 			auto rip_up_start = clock::now();
 
-			route_tree_rip_up_marked(route_trees[net->local_id], g, params.pres_fac, false, nullptr);
+			route_tree_rip_up_marked(route_trees[net->local_id], g, nullptr, params.pres_fac, false, nullptr);
 
 			perf->total_rip_up_time += clock::now()-rip_up_start;
 
 			auto route_start = clock::now();
 
-			route_net_2(g, net->vpr_id, current_virtual_net->source, current_virtual_net->current_sinks, params, state, route_trees[net->local_id], net_timing[net->vpr_id], false, perf, nullptr);
+			route_net_2(g, net->vpr_id, current_virtual_net->source, current_virtual_net->current_sinks, params, state, nullptr, route_trees[net->local_id], net_timing[net->vpr_id], false, perf, nullptr);
 
 			current_virtual_net->routed = true;
 
@@ -3859,7 +3895,7 @@ static void *test_scheduler_thread(void *args)
 			zlog_level(scheduler_log, ROUTER_V3, "Current: (%lu sinks) net %d virtual net %d\n", net->sinks.size(), net->vpr_id, vnet.id);
 
 			if (!ripped_up[net->local_id]) {
-				route_tree_mark_nodes_to_be_ripped((*sargs->route_trees)[net->local_id], *sargs->g, 3);
+				route_tree_mark_nodes_to_be_ripped((*sargs->route_trees)[net->local_id], *sargs->g, nullptr, 3);
 				ripped_up[net->local_id] = true;
 			}
 
@@ -3968,7 +4004,7 @@ static void *scheduler_thread_2(void *args)
 		/*const net_t &net = (*sargs->nets)[inet];*/
 
 	for (const auto &net : *sargs->nets) {
-		route_tree_mark_nodes_to_be_ripped((*sargs->route_trees)[net.local_id], *sargs->g, 10000);
+		route_tree_mark_nodes_to_be_ripped((*sargs->route_trees)[net.local_id], *sargs->g, nullptr, 10000);
 
 		for (const auto &virtual_net : net.virtual_nets) {
 			update_virtual_net_current_sinks(*virtual_net, (*sargs->route_trees)[net.local_id]);
@@ -4351,13 +4387,13 @@ static void *worker_thread_3(void *args)
 
 		auto rip_up_start = clock::now();
 
-		route_tree_rip_up_marked(wargs->route_trees[net->local_id], wargs->g, wargs->params.pres_fac, false, nullptr);
+		route_tree_rip_up_marked(wargs->route_trees[net->local_id], wargs->g, nullptr, wargs->params.pres_fac, false, nullptr);
 
 		wargs->perf.total_rip_up_time += clock::now()-rip_up_start;
 
 		auto route_start = clock::now();
 
-		route_net_2(wargs->g, net->vpr_id, current_virtual_net->source, current_virtual_net->current_sinks, wargs->params, wargs->state, wargs->route_trees[net->local_id], wargs->net_timing[net->vpr_id], false, &wargs->perf, nullptr);
+		route_net_2(wargs->g, net->vpr_id, current_virtual_net->source, current_virtual_net->current_sinks, wargs->params, wargs->state, nullptr, wargs->route_trees[net->local_id], wargs->net_timing[net->vpr_id], false, &wargs->perf, nullptr);
 
 		/*for (const auto &sink : current_virtual_net->sinks) {*/
 			/*net->sink_routed[sink->id] = true;*/
@@ -4546,8 +4582,12 @@ FILE *current_output_log;
 
 int zlog_custom_output(zlog_msg_t *msg)
 {
-	fprintf(current_output_log, "%s", msg->buf);
-	fflush(current_output_log);
+	FILE *file = fopen(msg->path, "a");
+	if (!file) {
+		perror(nullptr);
+	}
+	fprintf(file, "%s", msg->buf);
+	fclose(file);
 	return 0;
 }
 
@@ -4652,51 +4692,51 @@ sem_t *create_sem(const char *name)
 
 void test_route_tree()
 {
-	RRGraph g;
-	add_vertex(g, 10);
-	for (int i = 0; i < 10; ++i) {
-		get_vertex(g, i).properties.occ = 0;
-		get_vertex(g, i).properties.capacity = 1;
-	}
+	/*RRGraph g;*/
+	/*add_vertex(g, 10);*/
+	/*for (int i = 0; i < 10; ++i) {*/
+		/*get_vertex(g, i).properties.occ = 0;*/
+		/*get_vertex(g, i).properties.capacity = 1;*/
+	/*}*/
 
-	route_tree_t rt;
-	route_tree_init(rt);
-	for (int i = 0; i < 10; ++i) {
-		route_tree_add_rr_node(rt, get_vertex(g, i));
-	}
-	route_tree_set_root(rt, 0);
-	route_tree_add_edge_between_rr_node(rt, 0, 1);
-	route_tree_add_edge_between_rr_node(rt, 1, 2);
-	route_tree_add_edge_between_rr_node(rt, 1, 3);
-	route_tree_add_edge_between_rr_node(rt, 2, 4);
-	route_tree_add_edge_between_rr_node(rt, 4, 5);
-	route_tree_add_edge_between_rr_node(rt, 4, 6);
-	route_tree_add_edge_between_rr_node(rt, 6, 7);
+	/*route_tree_t rt;*/
+	/*route_tree_init(rt);*/
+	/*for (int i = 0; i < 10; ++i) {*/
+		/*route_tree_add_rr_node(rt, get_vertex(g, i));*/
+	/*}*/
+	/*route_tree_set_root(rt, 0);*/
+	/*route_tree_add_edge_between_rr_node(rt, 0, 1);*/
+	/*route_tree_add_edge_between_rr_node(rt, 1, 2);*/
+	/*route_tree_add_edge_between_rr_node(rt, 1, 3);*/
+	/*route_tree_add_edge_between_rr_node(rt, 2, 4);*/
+	/*route_tree_add_edge_between_rr_node(rt, 4, 5);*/
+	/*route_tree_add_edge_between_rr_node(rt, 4, 6);*/
+	/*route_tree_add_edge_between_rr_node(rt, 6, 7);*/
 
-	/* case */
-	get_vertex(g, 0).properties.occ = 2;
-	route_tree_mark_nodes_to_be_ripped(rt, g, 3);
-	assert(route_tree_get_rt_node(rt, 0)->properties.pending_rip_up);
-	assert(route_tree_get_rt_node(rt, 1)->properties.pending_rip_up);
-	assert(route_tree_get_rt_node(rt, 2)->properties.pending_rip_up);
-	assert(route_tree_get_rt_node(rt, 3)->properties.pending_rip_up);
-	assert(route_tree_get_rt_node(rt, 4)->properties.pending_rip_up);
-	assert(route_tree_get_rt_node(rt, 5)->properties.pending_rip_up);
-	assert(route_tree_get_rt_node(rt, 6)->properties.pending_rip_up);
-	assert(route_tree_get_rt_node(rt, 7)->properties.pending_rip_up);
+	/*[> case <]*/
+	/*get_vertex(g, 0).properties.occ = 2;*/
+	/*route_tree_mark_nodes_to_be_ripped(rt, g, 3);*/
+	/*assert(route_tree_get_rt_node(rt, 0)->properties.pending_rip_up);*/
+	/*assert(route_tree_get_rt_node(rt, 1)->properties.pending_rip_up);*/
+	/*assert(route_tree_get_rt_node(rt, 2)->properties.pending_rip_up);*/
+	/*assert(route_tree_get_rt_node(rt, 3)->properties.pending_rip_up);*/
+	/*assert(route_tree_get_rt_node(rt, 4)->properties.pending_rip_up);*/
+	/*assert(route_tree_get_rt_node(rt, 5)->properties.pending_rip_up);*/
+	/*assert(route_tree_get_rt_node(rt, 6)->properties.pending_rip_up);*/
+	/*assert(route_tree_get_rt_node(rt, 7)->properties.pending_rip_up);*/
 
-	/* case */
-	get_vertex(g, 0).properties.occ = 0;
-	get_vertex(g, 2).properties.occ = 2;
-	route_tree_mark_nodes_to_be_ripped(rt, g, 3);
-	assert(!route_tree_get_rt_node(rt, 0)->properties.pending_rip_up);
-	assert(!route_tree_get_rt_node(rt, 1)->properties.pending_rip_up);
-	assert(!route_tree_get_rt_node(rt, 3)->properties.pending_rip_up);
-	assert(route_tree_get_rt_node(rt, 2)->properties.pending_rip_up);
-	assert(route_tree_get_rt_node(rt, 4)->properties.pending_rip_up);
-	assert(route_tree_get_rt_node(rt, 5)->properties.pending_rip_up);
-	assert(route_tree_get_rt_node(rt, 6)->properties.pending_rip_up);
-	assert(route_tree_get_rt_node(rt, 7)->properties.pending_rip_up);
+	/*[> case <]*/
+	/*get_vertex(g, 0).properties.occ = 0;*/
+	/*get_vertex(g, 2).properties.occ = 2;*/
+	/*route_tree_mark_nodes_to_be_ripped(rt, g, 3);*/
+	/*assert(!route_tree_get_rt_node(rt, 0)->properties.pending_rip_up);*/
+	/*assert(!route_tree_get_rt_node(rt, 1)->properties.pending_rip_up);*/
+	/*assert(!route_tree_get_rt_node(rt, 3)->properties.pending_rip_up);*/
+	/*assert(route_tree_get_rt_node(rt, 2)->properties.pending_rip_up);*/
+	/*assert(route_tree_get_rt_node(rt, 4)->properties.pending_rip_up);*/
+	/*assert(route_tree_get_rt_node(rt, 5)->properties.pending_rip_up);*/
+	/*assert(route_tree_get_rt_node(rt, 6)->properties.pending_rip_up);*/
+	/*assert(route_tree_get_rt_node(rt, 7)->properties.pending_rip_up);*/
 }
 
 void test_clustering(int, int);
@@ -4764,7 +4804,7 @@ pending_rtree_t build_pending_rtree(const vector<net_t> &nets, const RRGraph &g,
 	vector<pending_rtree_value> bulk;
 
 	for (const auto &net : nets) {
-		route_tree_mark_nodes_to_be_ripped(route_trees[net.local_id], g, 10000);
+		route_tree_mark_nodes_to_be_ripped(route_trees[net.local_id], g, nullptr, 10000);
 
 		for (const auto &virtual_net : net.virtual_nets) {
 			update_virtual_net_current_sinks(*virtual_net, route_trees[net.local_id]);
@@ -4971,11 +5011,11 @@ bool tbb_greedy_route(t_router_opts *opts)
 
 	vector<std::mutex> net_locks(nets.size());
 
-	for_all_vertices(g, [] (RRNode &v) -> void {
-			v.properties.acc_cost = 1;
-			v.properties.pres_cost = 1;
-			v.properties.occ = 0;
-			});
+	/*for_all_vertices(g, [] (RRNode &v) -> void {*/
+			/*v.properties.acc_cost = 1;*/
+			/*v.properties.pres_cost = 1;*/
+			/*v.properties.occ = 0;*/
+			/*});*/
 
 	char buffer[256];
 
@@ -5162,25 +5202,25 @@ bool tbb_greedy_route(t_router_opts *opts)
 			}
 		}
 
-		for_all_vertices(g, [] (RRNode &v) -> void { v.properties.recalc_occ = 0; });
+		/*for_all_vertices(g, [] (RRNode &v) -> void { v.properties.recalc_occ = 0; });*/
 
 		for (const auto &net : nets) {
 			check_route_tree(route_trees[net.local_id], net, g);
 		}
 
 		bool valid = true;
-		for_all_vertices(g, [&valid, &buffer] (RRNode &v) -> void {
-				sprintf_rr_node(id(v), buffer);
-				if (v.properties.recalc_occ != v.properties.occ) {
-					zlog_error(delta_log, "Node %s occ mismatch, recalc: %d original: %d\n", buffer, v.properties.recalc_occ, v.properties.occ);
-					valid = false;
-				}
-				});
+		/*for_all_vertices(g, [&valid, &buffer] (RRNode &v) -> void {*/
+				/*sprintf_rr_node(id(v), buffer);*/
+				/*if (v.properties.recalc_occ != v.properties.occ) {*/
+					/*zlog_error(delta_log, "Node %s occ mismatch, recalc: %d original: %d\n", buffer, v.properties.recalc_occ, v.properties.occ);*/
+					/*valid = false;*/
+				/*}*/
+				/*});*/
 		assert(valid);
 
 		for (const auto &net : nets) {
 			vector<int> overused_rr_node;
-			get_overused_nodes(route_trees[net.local_id], get_vertex(route_trees[net.local_id].graph, route_trees[net.local_id].root_rt_node_id), g, overused_rr_node);
+			get_overused_nodes(route_trees[net.local_id], get_vertex(route_trees[net.local_id].graph, route_trees[net.local_id].root_rt_node_id), g, nullptr, overused_rr_node);
 			if (!overused_rr_node.empty()) {
 				zlog_level(delta_log, ROUTER_V1, "Net %d bb_rank %d overused nodes:\n", net.vpr_id, net.bb_area_rank);
 				for (const auto &item : overused_rr_node) {
@@ -5194,30 +5234,30 @@ bool tbb_greedy_route(t_router_opts *opts)
 		/*sprintf(filename, "congestion_%d.txt", iter);*/
 		/*dump_congestion_map(g, filename);*/
 
-		if (feasible_routing(g)) {
+		if (feasible_routing(g, nullptr)) {
 			zlog_info(delta_log, "Routed in %d iterations. Total route time: %g\n", iter+1, total_route_time / 1e9);
 			printf("Routed in %d iterations. Total route time: %g\n", iter+1, total_route_time / 1e9);
 			dump_route(*current_traces_ptr, "route.txt");
 			routed = true;
 		} else {
 			int num_overused_nodes = 0;
-			for_all_vertices(g, [&num_overused_nodes] (const RRNode &v) -> void {
-					if (v.properties.occ > v.properties.capacity) {
-					++num_overused_nodes;
-					}
-					});
+			/*for_all_vertices(g, [&num_overused_nodes] (const RRNode &v) -> void {*/
+					/*if (v.properties.occ > v.properties.capacity) {*/
+					/*++num_overused_nodes;*/
+					/*}*/
+					/*});*/
 			zlog_info(delta_log, "Num overused nodes: %d/%d (%.2f)\n", num_overused_nodes, num_vertices(g), num_overused_nodes*100.0/num_vertices(g));
 
 			if (iter == 0) {
 				params.pres_fac = opts->initial_pres_fac;
-				update_costs(g, params.pres_fac, 0);
+				/*update_costs(g, params.pres_fac, 0);*/
 			} else {
 				params.pres_fac *= opts->pres_fac_mult;
 
 				/* Avoid overflow for high iteration counts, even if acc_cost is big */
 				params.pres_fac = std::min(params.pres_fac, static_cast<float>(HUGE_POSITIVE_FLOAT / 1e5));
 
-				update_costs(g, params.pres_fac, opts->acc_fac);
+				//update_costs(g, params.pres_fac, opts->acc_fac);
 			}
 
 			for (auto &net : nets) {
@@ -5226,7 +5266,7 @@ bool tbb_greedy_route(t_router_opts *opts)
 			}
 
 			for (auto &net : nets) {
-				overused_stats((*current_traces_ptr)[net.local_id], route_trees[net.local_id], net, g);
+				/*overused_stats((*current_traces_ptr)[net.local_id], route_trees[net.local_id], net, g);*/
 			}
 
 			/* swap the pointers */
@@ -5533,11 +5573,11 @@ bool greedy_route(t_router_opts *opts)
 	sargs.net_locks = &net_locks;
 	sargs.opts = opts;
 
-	for_all_vertices(g, [] (RRNode &v) -> void {
-			v.properties.acc_cost = 1;
-			v.properties.pres_cost = 1;
-			v.properties.occ = 0;
-			});
+	/*for_all_vertices(g, [] (RRNode &v) -> void {*/
+			/*v.properties.acc_cost = 1;*/
+			/*v.properties.pres_cost = 1;*/
+			/*v.properties.occ = 0;*/
+			/*});*/
 
 	char buffer[256];
 
@@ -5707,25 +5747,25 @@ bool greedy_route(t_router_opts *opts)
 			}
 		}
 
-		for_all_vertices(g, [] (RRNode &v) -> void { v.properties.recalc_occ = 0; });
+		/*for_all_vertices(g, [] (RRNode &v) -> void { v.properties.recalc_occ = 0; });*/
 
 		for (const auto &net : nets) {
 			check_route_tree(route_trees[net.local_id], net, g);
 		}
 
 		bool valid = true;
-		for_all_vertices(g, [&valid, &buffer] (RRNode &v) -> void {
-				sprintf_rr_node(id(v), buffer);
-				if (v.properties.recalc_occ != v.properties.occ) {
-					zlog_error(delta_log, "Node %s occ mismatch, recalc: %d original: %d\n", buffer, v.properties.recalc_occ, v.properties.occ);
-					valid = false;
-				}
-				});
+		/*for_all_vertices(g, [&valid, &buffer] (RRNode &v) -> void {*/
+				/*sprintf_rr_node(id(v), buffer);*/
+				/*if (v.properties.recalc_occ != v.properties.occ) {*/
+					/*zlog_error(delta_log, "Node %s occ mismatch, recalc: %d original: %d\n", buffer, v.properties.recalc_occ, v.properties.occ);*/
+					/*valid = false;*/
+				/*}*/
+				/*});*/
 		assert(valid);
 
 		for (const auto &net : nets) {
 			vector<int> overused_rr_node;
-			get_overused_nodes(route_trees[net.local_id], get_vertex(route_trees[net.local_id].graph, route_trees[net.local_id].root_rt_node_id), g, overused_rr_node);
+			get_overused_nodes(route_trees[net.local_id], get_vertex(route_trees[net.local_id].graph, route_trees[net.local_id].root_rt_node_id), g, nullptr, overused_rr_node);
 			if (!overused_rr_node.empty()) {
 				zlog_level(delta_log, ROUTER_V1, "Net %d bb_rank %d overused nodes:\n", net.vpr_id, net.bb_area_rank);
 				for (const auto &item : overused_rr_node) {
@@ -5739,30 +5779,30 @@ bool greedy_route(t_router_opts *opts)
 		/*sprintf(filename, "congestion_%d.txt", iter);*/
 		/*dump_congestion_map(g, filename);*/
 
-		if (feasible_routing(g)) {
+		if (feasible_routing(g, nullptr)) {
 			zlog_info(delta_log, "Routed in %d iterations. Total route time: %g\n", iter+1, total_route_time / 1e9);
 			printf("Routed in %d iterations. Total route time: %g\n", iter+1, total_route_time / 1e9);
 			dump_route(*current_traces_ptr, "route.txt");
 			routed = true;
 		} else {
 			int num_overused_nodes = 0;
-			for_all_vertices(g, [&num_overused_nodes] (const RRNode &v) -> void {
-					if (v.properties.occ > v.properties.capacity) {
-					++num_overused_nodes;
-					}
-					});
+			/*for_all_vertices(g, [&num_overused_nodes] (const RRNode &v) -> void {*/
+					/*if (v.properties.occ > v.properties.capacity) {*/
+					/*++num_overused_nodes;*/
+					/*}*/
+					/*});*/
 			zlog_info(delta_log, "Num overused nodes: %d/%d (%.2f)\n", num_overused_nodes, num_vertices(g), num_overused_nodes*100.0/num_vertices(g));
 
 			if (iter == 0) {
 				params.pres_fac = opts->initial_pres_fac;
-				update_costs(g, params.pres_fac, 0);
+				//update_costs(g, params.pres_fac, 0);
 			} else {
 				params.pres_fac *= opts->pres_fac_mult;
 
 				/* Avoid overflow for high iteration counts, even if acc_cost is big */
 				params.pres_fac = std::min(params.pres_fac, static_cast<float>(HUGE_POSITIVE_FLOAT / 1e5));
 
-				update_costs(g, params.pres_fac, opts->acc_fac);
+				//update_costs(g, params.pres_fac, opts->acc_fac);
 			}
 
 			for (auto &net : nets) {
@@ -5771,7 +5811,7 @@ bool greedy_route(t_router_opts *opts)
 			}
 
 			for (auto &net : nets) {
-				overused_stats((*current_traces_ptr)[net.local_id], route_trees[net.local_id], net, g);
+				/*overused_stats((*current_traces_ptr)[net.local_id], route_trees[net.local_id], net, g);*/
 			}
 
 			/* swap the pointers */
@@ -6034,11 +6074,11 @@ bool _old_greedy_route_4(t_router_opts *opts)
 	sargs.g = &g;
 	sargs.params = &params;
 
-	for_all_vertices(g, [] (RRNode &v) -> void {
-			v.properties.acc_cost = 1;
-			v.properties.pres_cost = 1;
-			v.properties.occ = 0;
-			});
+	/*for_all_vertices(g, [] (RRNode &v) -> void {*/
+			/*v.properties.acc_cost = 1;*/
+			/*v.properties.pres_cost = 1;*/
+			/*v.properties.occ = 0;*/
+			/*});*/
 
 	char buffer[256];
 
@@ -6104,25 +6144,25 @@ bool _old_greedy_route_4(t_router_opts *opts)
 		zlog_info(delta_log, "Num heap pushes: %d\n", perf.num_heap_pushes);
 
 		/* checking */
-		for_all_vertices(g, [] (RRNode &v) -> void { v.properties.recalc_occ = 0; });
+		/*for_all_vertices(g, [] (RRNode &v) -> void { v.properties.recalc_occ = 0; });*/
 
 		for (const auto &net : nets) {
 			check_route_tree(route_trees[net.local_id], net, g);
 		}
 
 		bool valid = true;
-		for_all_vertices(g, [&valid, &buffer] (RRNode &v) -> void {
-				sprintf_rr_node(id(v), buffer);
-				if (v.properties.recalc_occ != v.properties.occ) {
-					zlog_error(delta_log, "Node %s occ mismatch, recalc: %d original: %d\n", buffer, v.properties.recalc_occ, v.properties.occ);
-					valid = false;
-				}
-				});
+		/*for_all_vertices(g, [&valid, &buffer] (RRNode &v) -> void {*/
+				/*sprintf_rr_node(id(v), buffer);*/
+				/*if (v.properties.recalc_occ != v.properties.occ) {*/
+					/*zlog_error(delta_log, "Node %s occ mismatch, recalc: %d original: %d\n", buffer, v.properties.recalc_occ, v.properties.occ);*/
+					/*valid = false;*/
+				/*}*/
+				/*});*/
 		assert(valid);
 
 		for (const auto &net : nets) {
 			vector<int> overused_rr_node;
-			get_overused_nodes(route_trees[net.local_id], get_vertex(route_trees[net.local_id].graph, route_trees[net.local_id].root_rt_node_id), g, overused_rr_node);
+			get_overused_nodes(route_trees[net.local_id], get_vertex(route_trees[net.local_id].graph, route_trees[net.local_id].root_rt_node_id), g, nullptr, overused_rr_node);
 			if (!overused_rr_node.empty()) {
 				zlog_level(delta_log, ROUTER_V1, "Net %d bb_rank %d overused nodes:\n", net.vpr_id, net.bb_area_rank);
 				for (const auto &item : overused_rr_node) {
@@ -6138,40 +6178,40 @@ bool _old_greedy_route_4(t_router_opts *opts)
 
 		char filename[256];
 		sprintf(filename, "congestion_%d.txt", iter);
-		dump_congestion_map(g, filename);
+		dump_congestion_map(g, nullptr, filename);
 
-		if (feasible_routing(g)) {
+		if (feasible_routing(g, nullptr)) {
 			zlog_info(delta_log, "Routed in %d iterations\n", iter+1);
 			dump_route(*current_traces_ptr, "route.txt");
 			routed = true;
 		} else {
 			int num_overused_nodes = 0;
-			for_all_vertices(g, [&num_overused_nodes] (const RRNode &v) -> void {
-					if (v.properties.occ > v.properties.capacity) {
-					++num_overused_nodes;
-					}
-					});
+			/*for_all_vertices(g, [&num_overused_nodes] (const RRNode &v) -> void {*/
+					/*if (v.properties.occ > v.properties.capacity) {*/
+					/*++num_overused_nodes;*/
+					/*}*/
+					/*});*/
 			zlog_info(delta_log, "Num overused nodes: %d/%d (%.2f)\n", num_overused_nodes, num_vertices(g), num_overused_nodes*100.0/num_vertices(g));
 
 			if (iter == 0) {
 				params.pres_fac = opts->initial_pres_fac;
-				update_costs(g, params.pres_fac, 0);
+				//update_costs(g, params.pres_fac, 0);
 			} else {
 				params.pres_fac *= opts->pres_fac_mult;
 
 				/* Avoid overflow for high iteration counts, even if acc_cost is big */
 				params.pres_fac = std::min(params.pres_fac, static_cast<float>(HUGE_POSITIVE_FLOAT / 1e5));
 
-				update_costs(g, params.pres_fac, opts->acc_fac);
+				//update_costs(g, params.pres_fac, opts->acc_fac);
 			}
 
 			for (auto &net : nets) {
 				/*zlog_level(delta_log, ROUTER_V1, "Net %d trace stats:\n", net.vpr_id);*/
-				adjust_bb_factor((*current_traces_ptr)[net.local_id], net, g, opts->bb_expand_threshold);
+				/*adjust_bb_factor((*current_traces_ptr)[net.local_id], net, g, opts->bb_expand_threshold);*/
 			}
 
 			for (auto &net : nets) {
-				overused_stats((*current_traces_ptr)[net.local_id], route_trees[net.local_id], net, g);
+				/*overused_stats((*current_traces_ptr)[net.local_id], route_trees[net.local_id], net, g);*/
 			}
 
 			/* swap the pointers */
@@ -6403,11 +6443,11 @@ bool _old_greedy_route_3(t_router_opts *opts)
 		}
 	}
 
-	for_all_vertices(g, [] (RRNode &v) -> void {
-			v.properties.acc_cost = 1;
-			v.properties.pres_cost = 1;
-			v.properties.occ = 0;
-			});
+	/*for_all_vertices(g, [] (RRNode &v) -> void {*/
+			/*v.properties.acc_cost = 1;*/
+			/*v.properties.pres_cost = 1;*/
+			/*v.properties.occ = 0;*/
+			/*});*/
 
 	char buffer[256];
 
@@ -6462,25 +6502,25 @@ bool _old_greedy_route_3(t_router_opts *opts)
 		zlog_info(delta_log, "Num heap pushes: %d\n", perf.num_heap_pushes);
 
 		/* checking */
-		for_all_vertices(g, [] (RRNode &v) -> void { v.properties.recalc_occ = 0; });
+		/*for_all_vertices(g, [] (RRNode &v) -> void { v.properties.recalc_occ = 0; });*/
 
 		for (const auto &net : nets) {
 			check_route_tree(route_trees[net.local_id], net, g);
 		}
 
 		bool valid = true;
-		for_all_vertices(g, [&valid, &buffer] (RRNode &v) -> void {
-				sprintf_rr_node(id(v), buffer);
-				if (v.properties.recalc_occ != v.properties.occ) {
-					zlog_error(delta_log, "Node %s occ mismatch, recalc: %d original: %d\n", buffer, v.properties.recalc_occ, v.properties.occ);
-					valid = false;
-				}
-				});
+		/*for_all_vertices(g, [&valid, &buffer] (RRNode &v) -> void {*/
+				/*sprintf_rr_node(id(v), buffer);*/
+				/*if (v.properties.recalc_occ != v.properties.occ) {*/
+					/*zlog_error(delta_log, "Node %s occ mismatch, recalc: %d original: %d\n", buffer, v.properties.recalc_occ, v.properties.occ);*/
+					/*valid = false;*/
+				/*}*/
+				/*});*/
 		assert(valid);
 
 		for (const auto &net : nets) {
 			vector<int> overused_rr_node;
-			get_overused_nodes(route_trees[net.local_id], get_vertex(route_trees[net.local_id].graph, route_trees[net.local_id].root_rt_node_id), g, overused_rr_node);
+			get_overused_nodes(route_trees[net.local_id], get_vertex(route_trees[net.local_id].graph, route_trees[net.local_id].root_rt_node_id), g, nullptr, overused_rr_node);
 			if (!overused_rr_node.empty()) {
 				zlog_level(delta_log, ROUTER_V1, "Net %d bb_rank %d overused nodes:\n", net.vpr_id, net.bb_area_rank);
 				for (const auto &item : overused_rr_node) {
@@ -6496,36 +6536,36 @@ bool _old_greedy_route_3(t_router_opts *opts)
 
 		char filename[256];
 		sprintf(filename, "congestion_%d.txt", iter);
-		dump_congestion_map(g, filename);
+		dump_congestion_map(g, nullptr, filename);
 
 		for (auto &net : nets) {
 			/*zlog_level(delta_log, ROUTER_V1, "Net %d trace stats:\n", net.vpr_id);*/
-			adjust_bb_factor((*current_traces_ptr)[net.local_id], net, g, opts->bb_expand_threshold);
+			/*adjust_bb_factor((*current_traces_ptr)[net.local_id], net, g, opts->bb_expand_threshold);*/
 		}
 
-		if (feasible_routing(g)) {
+		if (feasible_routing(g, nullptr)) {
 			zlog_info(delta_log, "Routed in %d iterations\n", iter+1);
 			dump_route(*current_traces_ptr, "route.txt");
 			routed = true;
 		} else {
 			int num_overused_nodes = 0;
-			for_all_vertices(g, [&num_overused_nodes] (const RRNode &v) -> void {
-					if (v.properties.occ > v.properties.capacity) {
-					++num_overused_nodes;
-					}
-					});
+			/*for_all_vertices(g, [&num_overused_nodes] (const RRNode &v) -> void {*/
+					/*if (v.properties.occ > v.properties.capacity) {*/
+					/*++num_overused_nodes;*/
+					/*}*/
+					/*});*/
 			zlog_info(delta_log, "Num overused nodes: %d/%d (%.2f)\n", num_overused_nodes, num_vertices(g), num_overused_nodes*100.0/num_vertices(g));
 
 			if (iter == 0) {
 				params.pres_fac = opts->initial_pres_fac;
-				update_costs(g, params.pres_fac, 0);
+				//update_costs(g, params.pres_fac, 0);
 			} else {
 				params.pres_fac *= opts->pres_fac_mult;
 
 				/* Avoid overflow for high iteration counts, even if acc_cost is big */
 				params.pres_fac = std::min(params.pres_fac, static_cast<float>(HUGE_POSITIVE_FLOAT / 1e5));
 
-				update_costs(g, params.pres_fac, opts->acc_fac);
+				//update_costs(g, params.pres_fac, opts->acc_fac);
 			}
 
 			/* swap the pointers */
@@ -6666,11 +6706,11 @@ bool _old_greedy_route_2(t_router_opts *opts)
 	params.bend_cost = opts->bend_cost;
 	params.pres_fac = opts->first_iter_pres_fac; /* Typically 0 -> ignore cong. */
 
-	for_all_vertices(g, [] (RRNode &v) -> void {
-			v.properties.acc_cost = 1;
-			v.properties.pres_cost = 1;
-			v.properties.occ = 0;
-			});
+	/*for_all_vertices(g, [] (RRNode &v) -> void {*/
+			/*v.properties.acc_cost = 1;*/
+			/*v.properties.pres_cost = 1;*/
+			/*v.properties.occ = 0;*/
+			/*});*/
 
 	char buffer[256];
 
@@ -6805,25 +6845,25 @@ bool _old_greedy_route_2(t_router_opts *opts)
 
 		zlog_info(delta_log, "Num heap pushes: %d\n", perf.num_heap_pushes);
 
-		for_all_vertices(g, [] (RRNode &v) -> void { v.properties.recalc_occ = 0; });
+		/*for_all_vertices(g, [] (RRNode &v) -> void { v.properties.recalc_occ = 0; });*/
 
 		for (const auto &net : nets) {
 			check_route_tree(route_trees[net.local_id], net, g);
 		}
 
 		bool valid = true;
-		for_all_vertices(g, [&valid, &buffer] (RRNode &v) -> void {
-				sprintf_rr_node(id(v), buffer);
-				if (v.properties.recalc_occ != v.properties.occ) {
-					zlog_error(delta_log, "Node %s occ mismatch, recalc: %d original: %d\n", buffer, v.properties.recalc_occ, v.properties.occ);
-					valid = false;
-				}
-				});
+		/*for_all_vertices(g, [&valid, &buffer] (RRNode &v) -> void {*/
+				/*sprintf_rr_node(id(v), buffer);*/
+				/*if (v.properties.recalc_occ != v.properties.occ) {*/
+					/*zlog_error(delta_log, "Node %s occ mismatch, recalc: %d original: %d\n", buffer, v.properties.recalc_occ, v.properties.occ);*/
+					/*valid = false;*/
+				/*}*/
+				/*});*/
 		assert(valid);
 
 		for (const auto &net : nets) {
 			vector<int> overused_rr_node;
-			get_overused_nodes(route_trees[net.local_id], get_vertex(route_trees[net.local_id].graph, route_trees[net.local_id].root_rt_node_id), g, overused_rr_node);
+			get_overused_nodes(route_trees[net.local_id], get_vertex(route_trees[net.local_id].graph, route_trees[net.local_id].root_rt_node_id), g, nullptr, overused_rr_node);
 			if (!overused_rr_node.empty()) {
 				zlog_level(delta_log, ROUTER_V1, "Net %d bb_rank %d overused nodes:\n", net.vpr_id, net.bb_area_rank);
 				for (const auto &item : overused_rr_node) {
@@ -6835,36 +6875,36 @@ bool _old_greedy_route_2(t_router_opts *opts)
 
 		char filename[256];
 		sprintf(filename, "congestion_%d.txt", iter);
-		dump_congestion_map(g, filename);
+		dump_congestion_map(g, nullptr, filename);
 
 		for (auto &net : nets) {
 			/*zlog_level(delta_log, ROUTER_V1, "Net %d trace stats:\n", net.vpr_id);*/
-			adjust_bb_factor((*current_traces_ptr)[net.local_id], net, g, opts->bb_expand_threshold);
+			/*adjust_bb_factor((*current_traces_ptr)[net.local_id], net, g, opts->bb_expand_threshold);*/
 		}
 
-		if (feasible_routing(g)) {
+		if (feasible_routing(g, nullptr)) {
 			zlog_info(delta_log, "Routed in %d iterations\n", iter+1);
 			dump_route(*current_traces_ptr, "route.txt");
 			routed = true;
 		} else {
 			int num_overused_nodes = 0;
-			for_all_vertices(g, [&num_overused_nodes] (const RRNode &v) -> void {
-					if (v.properties.occ > v.properties.capacity) {
-					++num_overused_nodes;
-					}
-					});
+			/*for_all_vertices(g, [&num_overused_nodes] (const RRNode &v) -> void {*/
+					/*if (v.properties.occ > v.properties.capacity) {*/
+					/*++num_overused_nodes;*/
+					/*}*/
+					/*});*/
 			zlog_info(delta_log, "Num overused nodes: %d/%d (%.2f)\n", num_overused_nodes, num_vertices(g), num_overused_nodes*100.0/num_vertices(g));
 
 			if (iter == 0) {
 				params.pres_fac = opts->initial_pres_fac;
-				update_costs(g, params.pres_fac, 0);
+				//update_costs(g, params.pres_fac, 0);
 			} else {
 				params.pres_fac *= opts->pres_fac_mult;
 
 				/* Avoid overflow for high iteration counts, even if acc_cost is big */
 				params.pres_fac = std::min(params.pres_fac, static_cast<float>(HUGE_POSITIVE_FLOAT / 1e5));
 
-				update_costs(g, params.pres_fac, opts->acc_fac);
+				//update_costs(g, params.pres_fac, opts->acc_fac);
 			}
 
 			/* swap the pointers */
@@ -7007,11 +7047,11 @@ bool partitioning_route(t_router_opts *opts)
 	params.bend_cost = opts->bend_cost;
 	params.pres_fac = opts->first_iter_pres_fac; /* Typically 0 -> ignore cong. */
 
-	for_all_vertices(g, [] (RRNode &v) -> void {
-			v.properties.acc_cost = 1;
-			v.properties.pres_cost = 1;
-			v.properties.occ = 0;
-			});
+	/*for_all_vertices(g, [] (RRNode &v) -> void {*/
+			/*v.properties.acc_cost = 1;*/
+			/*v.properties.pres_cost = 1;*/
+			/*v.properties.occ = 0;*/
+			/*});*/
 
 	char buffer[256];
 
@@ -7226,25 +7266,25 @@ bool partitioning_route(t_router_opts *opts)
 
 		zlog_info(delta_log, "Num heap pushes: %d\n", perf.num_heap_pushes);
 
-		for_all_vertices(g, [] (RRNode &v) -> void { v.properties.recalc_occ = 0; });
+		/*for_all_vertices(g, [] (RRNode &v) -> void { v.properties.recalc_occ = 0; });*/
 
 		for (const auto &net : nets) {
 			check_route_tree(route_trees[net.local_id], net, g);
 		}
 
 		bool valid = true;
-		for_all_vertices(g, [&valid, &buffer] (RRNode &v) -> void {
-				sprintf_rr_node(id(v), buffer);
-				if (v.properties.recalc_occ != v.properties.occ) {
-					zlog_error(delta_log, "Node %s occ mismatch, recalc: %d original: %d\n", buffer, v.properties.recalc_occ, v.properties.occ);
-					valid = false;
-				}
-				});
+		/*for_all_vertices(g, [&valid, &buffer] (RRNode &v) -> void {*/
+				/*sprintf_rr_node(id(v), buffer);*/
+				/*if (v.properties.recalc_occ != v.properties.occ) {*/
+					/*zlog_error(delta_log, "Node %s occ mismatch, recalc: %d original: %d\n", buffer, v.properties.recalc_occ, v.properties.occ);*/
+					/*valid = false;*/
+				/*}*/
+				/*});*/
 		assert(valid);
 
 		for (const auto &net : nets) {
 			vector<int> overused_rr_node;
-			get_overused_nodes(route_trees[net.local_id], get_vertex(route_trees[net.local_id].graph, route_trees[net.local_id].root_rt_node_id), g, overused_rr_node);
+			get_overused_nodes(route_trees[net.local_id], get_vertex(route_trees[net.local_id].graph, route_trees[net.local_id].root_rt_node_id), g, nullptr, overused_rr_node);
 			if (!overused_rr_node.empty()) {
 				zlog_level(delta_log, ROUTER_V1, "Net %d bb_rank %d overused nodes:\n", net.vpr_id, net.bb_area_rank);
 				for (const auto &item : overused_rr_node) {
@@ -7256,36 +7296,36 @@ bool partitioning_route(t_router_opts *opts)
 
 		char filename[256];
 		sprintf(filename, "congestion_%d.txt", iter);
-		dump_congestion_map(g, filename);
+		dump_congestion_map(g, nullptr, filename);
 
 		for (auto &net : nets) {
 			/*zlog_level(delta_log, ROUTER_V1, "Net %d trace stats:\n", net.vpr_id);*/
-			adjust_bb_factor((*current_traces_ptr)[net.local_id], net, g, opts->bb_expand_threshold);
+			/*adjust_bb_factor((*current_traces_ptr)[net.local_id], net, g, opts->bb_expand_threshold);*/
 		}
 
-		if (feasible_routing(g)) {
+		if (feasible_routing(g, nullptr)) {
 			zlog_info(delta_log, "Routed in %d iterations\n", iter+1);
 			dump_route(*current_traces_ptr, "route.txt");
 			routed = true;
 		} else {
 			int num_overused_nodes = 0;
-			for_all_vertices(g, [&num_overused_nodes] (const RRNode &v) -> void {
-					if (v.properties.occ > v.properties.capacity) {
-					++num_overused_nodes;
-					}
-					});
+			/*for_all_vertices(g, [&num_overused_nodes] (const RRNode &v) -> void {*/
+					/*if (v.properties.occ > v.properties.capacity) {*/
+					/*++num_overused_nodes;*/
+					/*}*/
+					/*});*/
 			zlog_info(delta_log, "Num overused nodes: %d/%d (%.2f)\n", num_overused_nodes, num_vertices(g), num_overused_nodes*100.0/num_vertices(g));
 
 			if (iter == 0) {
 				params.pres_fac = opts->initial_pres_fac;
-				update_costs(g, params.pres_fac, 0);
+				//update_costs(g, params.pres_fac, 0);
 			} else {
 				params.pres_fac *= opts->pres_fac_mult;
 
 				/* Avoid overflow for high iteration counts, even if acc_cost is big */
 				params.pres_fac = std::min(params.pres_fac, static_cast<float>(HUGE_POSITIVE_FLOAT / 1e5));
 
-				update_costs(g, params.pres_fac, opts->acc_fac);
+				//update_costs(g, params.pres_fac, opts->acc_fac);
 			}
 
 			for (auto &net : nets) { 
@@ -7357,11 +7397,11 @@ bool hybrid_route(t_router_opts *opts)
 	params.max_criticality = opts->max_criticality;
 	params.bend_cost = opts->bend_cost;
 
-	for_all_vertices(g, [] (RRNode &v) -> void {
-			v.properties.acc_cost = 1;
-			v.properties.pres_cost = 1;
-			v.properties.occ = 0;
-			});
+	/*for_all_vertices(g, [] (RRNode &v) -> void {*/
+			/*v.properties.acc_cost = 1;*/
+			/*v.properties.pres_cost = 1;*/
+			/*v.properties.occ = 0;*/
+			/*});*/
 
 	params.pres_fac = opts->first_iter_pres_fac; /* Typically 0 -> ignore cong. */
 
@@ -7375,28 +7415,28 @@ bool hybrid_route(t_router_opts *opts)
 			/*fine_grained_route_nets();*/
 		/*}*/
 
-		if (feasible_routing(g)) {
+		if (feasible_routing(g, nullptr)) {
 			zlog_info(delta_log, "Routed in %d iterations\n", iter);
 			routed = true;
 		} else {
 			int num_overused_nodes = 0;
-			for_all_vertices(g, [&num_overused_nodes] (const RRNode &v) -> void {
-					if (v.properties.occ > v.properties.capacity) {
-					++num_overused_nodes;
-					}
-					});
+			/*for_all_vertices(g, [&num_overused_nodes] (const RRNode &v) -> void {*/
+					/*if (v.properties.occ > v.properties.capacity) {*/
+					/*++num_overused_nodes;*/
+					/*}*/
+					/*});*/
 			zlog_info(delta_log, "Num overused nodes: %d/%d (%.2f)\n", num_overused_nodes, num_vertices(g), num_overused_nodes*100.0/num_vertices(g));
 
 			if (iter == 0) {
 				params.pres_fac = opts->initial_pres_fac;
-				update_costs(g, params.pres_fac, 0);
+				//update_costs(g, params.pres_fac, 0);
 			} else {
 				params.pres_fac *= opts->pres_fac_mult;
 
 				/* Avoid overflow for high iteration counts, even if acc_cost is big */
 				params.pres_fac = std::min(params.pres_fac, static_cast<float>(HUGE_POSITIVE_FLOAT / 1e5));
 
-				update_costs(g, params.pres_fac, opts->acc_fac);
+				//update_costs(g, params.pres_fac, opts->acc_fac);
 			}
 		}
 

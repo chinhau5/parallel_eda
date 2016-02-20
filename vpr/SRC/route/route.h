@@ -9,6 +9,7 @@
 typedef struct lock_perf_t {
 	unsigned long num_lock_waits;
 	unsigned long num_lock_tries;
+	std::chrono::high_resolution_clock::duration total_wait_time;
 } lock_perf_t;
 
 typedef struct perf_t {
@@ -140,6 +141,14 @@ typedef struct virtual_net_t {
 	//const net_t *parent_net;
 	//source_t source
 //} 
+//
+typedef struct congestion_t {
+	tbb::spin_mutex lock;
+	int occ;
+	float pres_cost;
+	float acc_cost;
+	int recalc_occ;
+} congestion_t;
 
 typedef struct route_state_t {
 	int rr_node;
@@ -160,12 +169,6 @@ float get_timing_driven_expected_cost(const RRNode &current, const RRNode &targe
 
 bool operator<(const route_state_t &a, const route_state_t &b);
 
-void update_costs(RRGraph &g, float pres_fac, float acc_fac);
-
 float analyze_timing(t_net_timing *net_timing);
-
-int zlog_custom_output(zlog_msg_t *msg);
-
-int zlog_sched_custom_output(zlog_msg_t *msg);
 
 #endif

@@ -8,7 +8,7 @@ template<typename Net>
 void partition_nets(vector<pair<box, Net>> &virtual_nets, int num_partitions, float ubvec, vector<vector<int>> &overlaps, vector<vector<int>> &partitions, vector<bool> &has_interpartition_overlap)
 {
 	overlaps.resize(virtual_nets.size());
-	tbb::atomic<int> num_edges = 0;
+	tbb::atomic<unsigned long> num_edges = 0;
 	tbb::parallel_for(tbb::blocked_range<size_t>(0, virtual_nets.size(), 1024), [&virtual_nets, &overlaps, &num_edges] (const tbb::blocked_range<size_t> &range) -> void {
 			for (int i = range.begin(); i != range.end(); ++i) {
 			for (int j = 0; j < virtual_nets.size(); ++j) {
@@ -54,7 +54,7 @@ void partition_nets(vector<pair<box, Net>> &virtual_nets, int num_partitions, fl
 	assert(METIS_PartGraphRecursive(&nvtxs, &ncon, xadj, adjncy, vwgt, NULL, NULL, &nparts, NULL, &ubvec, options, &objval, part) == METIS_OK);
 	//assert(METIS_PartGraphRecursive(&nvtxs, &ncon, xadj, adjncy, vwgt, NULL, NULL, &nparts, NULL, NULL, options, &objval, part) == METIS_OK);
 //idx t *nvtxs, idx t *ncon, idx t *xadj, idx t *adjncy, idx t *vwgt, idx t *vsize, idx t *adjwgt, idx t *nparts, real t *tpwgts, real t ubvec, idx t *options, idx t *objval, idx t *part
-	printf("edgecut: %d\n", objval);
+	printf("ubvec: %g edgecut: %d num_edges: %lu percentage: %g\n", ubvec, objval, num_edges, (float)objval/num_edges*100);
 	partitions.resize(num_partitions);
 	for (int i = 0; i < num_partitions; ++i) {
 		assert(partitions[i].empty());

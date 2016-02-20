@@ -3,6 +3,7 @@ cmake_minimum_required(VERSION 2.8)
 project(Router)
 
 link_directories(
+	/usr/X11/lib
 	/usr/local/lib
 	/opt/local/lib
 	~/Downloads/tbb44_20151115oss/build/macos_intel64_clang_cc5.2.0_os10.11.1_debug
@@ -21,7 +22,7 @@ add_compile_options(
 	#-ferror-limit=0
 	-ftemplate-backtrace-limit=0
 	-std=c++11
-	-g -O2
+	-g -O0
 	#-Bdynamic
 	-Wall
 	#	-H
@@ -54,6 +55,7 @@ if (CMAKE_SYSTEM_NAME STREQUAL "Linux")
 else()
 	set(link_libs
 		Vpr
+		X11
 		pthread
 		dl 
 		m
@@ -78,4 +80,4 @@ target_link_libraries(Router
 	)
 endif()
 
-set_target_properties(Router PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
+set_target_properties(Router PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/bin)

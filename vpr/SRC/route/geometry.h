@@ -10,11 +10,11 @@
 namespace bg = boost::geometry;
 namespace bgi = boost::geometry::index;
 
-using point = bg::model::point<int, 2, bg::cs::cartesian>; 
-using box = bg::model::box<point>;
-using multi_point = bg::model::multi_point<point>;
-using segment = bg::model::segment<point>;
-using polygon = bg::model::polygon<point>;
+using point = typename bg::model::point<int, 2, bg::cs::cartesian>; 
+using box = typename bg::model::box<point>;
+using multi_point = typename bg::model::multi_point<point>;
+using segment = typename bg::model::segment<point>;
+using polygon = typename bg::model::polygon<point>;
 
 template<typename T>
 struct point_t {

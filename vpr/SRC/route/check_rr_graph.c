@@ -155,7 +155,7 @@ void check_rr_graph(INP t_graph_type graph_type, INP t_type_ptr types,
 
 				if (!is_chain && !is_fringe && !is_wire) {
 					vpr_printf(TIO_MESSAGE_ERROR, "in check_rr_graph: node %d has no fanin.\n", inode);
-					exit(1);
+					//exit(1);
 				} else if (!is_chain && !is_fringe_warning_sent) {
 					vpr_printf(TIO_MESSAGE_WARNING, "in check_rr_graph: fringe node %d has no fanin.\n", inode);
 					vpr_printf(TIO_MESSAGE_WARNING, "\tThis is possible on the fringe for low Fc_out, N, and certain Lengths\n");

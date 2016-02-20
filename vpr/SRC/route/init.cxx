@@ -18,14 +18,19 @@ void init_logging()
 	sort_log = zlog_get_category("sort");
 	dynamic_log = zlog_get_category("dynamic");
 	static_log = zlog_get_category("static");
+	missing_edge_log = zlog_get_category("missing_edge");
 }
 
 void delete_graph(RRGraph &g)
 {
 	for (int i = 0; i < num_vertices(g); ++i) {
 		auto &v = get_vertex(g, i);
-		delete v.properties.lock;
 	}
+}
+
+int get_track_domain(int track_number, int num_partitions)
+{
+	return track_number % num_partitions;
 }
 
 void init_graph(RRGraph &g)
@@ -48,22 +53,21 @@ void init_graph(RRGraph &g)
 		extern struct s_grid_tile **grid;
 		auto type = &grid[v.properties.xlow][v.properties.ylow];
 
-		v.properties.real_xlow = rr_node[i].xlow;
-		v.properties.real_ylow = rr_node[i].ylow;
-		v.properties.real_xhigh = rr_node[i].xhigh;
-		v.properties.real_yhigh = rr_node[i].ylow + type->offset;
+		//v.properties.real_xlow = rr_node[i].xlow;
+		//v.properties.real_ylow = rr_node[i].ylow;
+		//v.properties.real_xhigh = rr_node[i].xhigh;
+		//v.properties.real_yhigh = rr_node[i].ylow + type->offset;
 		v.properties.R = rr_node[i].R;
 		v.properties.C = rr_node[i].C;
 		v.properties.cost_index = rr_node[i].cost_index;
 		v.properties.capacity = rr_node[i].capacity;
-		v.properties.lock = new tbb::spin_mutex;
 
 		char buffer[256];
 		sprintf_rr_node(i, buffer);
-		zlog_debug(rr_log, "%s: real_xlow: %d real_xhigh: %d real_ylow: %d real_yhigh: %d\n", buffer, v.properties.real_xlow, v.properties.real_xhigh, v.properties.real_ylow, v.properties.real_yhigh);
+		//zlog_debug(rr_log, "%s: real_xlow: %d real_xhigh: %d real_ylow: %d real_yhigh: %d\n", buffer, v.properties.real_xlow, v.properties.real_xhigh, v.properties.real_ylow, v.properties.real_yhigh);
 
 		for (int j = 0; j < rr_node[i].num_edges; ++j) {
-			auto &e = add_edge(g, v, get_vertex(g, rr_node[i].edges[j]));
+			auto &e = add_edge(g, i, rr_node[i].edges[j]);
 
 			int si = rr_node[i].switches[j];
 			

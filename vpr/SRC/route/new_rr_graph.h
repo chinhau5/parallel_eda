@@ -12,19 +12,19 @@ typedef struct rr_node_property_t {
 	int ylow;
 	int xhigh;
 	int yhigh;
-	int real_xlow;
-	int real_ylow;
-	int real_xhigh;
-	int real_yhigh;
+	//int real_xlow;
+	//int real_ylow;
+	//int real_xhigh;
+	//int real_yhigh;
 	float R;
 	float C;
 	int cost_index;
 	int capacity;
-	int occ;
-	int recalc_occ;
-	float pres_cost;
-	float acc_cost;
-	tbb::spin_mutex *lock;
+	//int occ;
+	//int recalc_occ;
+	//float pres_cost;
+	//float acc_cost;
+	//tbb::spin_mutex *lock;
 } rr_node_property_t;
 
 //typedef struct rr_node_property_t {

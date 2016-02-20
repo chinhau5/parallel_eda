@@ -467,6 +467,8 @@ int get_seg_start(INP t_seg_details * seg_details, INP int itrack,
 		 * Unidirectional routing expects this to allow the N-to-N 
 		 * assumption to be made with respect to ending wires in the core. */
 		seg_start = seg_num - (seg_num + length + chan_num - start) % length;
+		//assert(chan_num >= 1);
+		assert(seg_num >= 1);
 		if (seg_start < 1) {
 			seg_start = 1;
 		}
