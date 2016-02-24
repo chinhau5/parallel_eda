@@ -143,24 +143,27 @@ RouteTreeEdge &route_tree_add_edge_between_rr_node(route_tree_t &rt, int rr_node
 	return edge;
 }
 
-void route_tree_remove_edge(route_tree_t &rt, const RouteTreeEdge &edge)
+void route_tree_remove_edge(route_tree_t &rt, int rt_edge)
 {
 	char s_from[256];
 	char s_to[256];
-	sprintf_rr_node(get_source(rt.graph, edge).properties.rr_node, s_from);
-	sprintf_rr_node(get_target(rt.graph, edge).properties.rr_node, s_to);
+	const auto &from = get_vertex(rt.graph, get_source(rt.graph, rt_edge));
+	const auto &to = get_vertex(rt.graph, get_target(rt.graph, rt_edge));
+	sprintf_rr_node(from.properties.rr_node, s_from);
+	sprintf_rr_node(to.properties.rr_node, s_to);
 	zlog_level(delta_log, ROUTER_V2, "Removing edge %s -> %s\n", s_from, s_to);
 
-	for (auto &rt_node: route_tree_get_nodes(rt)) {
-		if (rt_node.properties.rt_edge_to_parent > id(edge)) {
+	for (auto rt_node_id : route_tree_get_nodes(rt)) {
+		auto &rt_node = get_vertex(rt.graph, rt_node_id);
+		if (rt_node.properties.rt_edge_to_parent > rt_edge) {
 			--rt_node.properties.rt_edge_to_parent;
 			assert(rt_node.properties.rt_edge_to_parent >= 0);
 		}
 	}
 
-	auto &target = get_target(rt.graph, edge);
+	auto &target = get_vertex(rt.graph, get_target(rt.graph, rt_edge));
 	target.properties.rt_edge_to_parent = -1;
-	remove_edge(rt.graph, edge);
+	remove_edge(rt.graph, rt_edge);
 }
 
 template<typename RouteTree, typename RouteTreeNode>
@@ -194,44 +197,37 @@ const RouteTreeNode *route_tree_get_rt_node(const route_tree_t &rt, int rr_node)
 	return route_tree_get_rt_node_impl<const route_tree_t, const RouteTreeNode *>(rt, rr_node);
 }
 
-template<typename RouteTree, typename RouteTreeNodeIter>
-adapter_t<RouteTreeNodeIter> route_tree_get_nodes_impl(RouteTree &rt)
-{
-	const auto &vertices = get_vertices(rt.graph);
- 	auto b = begin(vertices);
-	const auto &e = end(vertices);
-	while (b != e && !b->properties.valid) {
-		++b;
-	}
-	return adapter_t<RouteTreeNodeIter>(RouteTreeNodeIter(b, e), RouteTreeNodeIter(e, e));
-}
+/*template<typename RouteTree, typename RouteTreeNodeIter>*/
+/*adapter_t<RouteTreeNodeIter> route_tree_get_nodes_impl(RouteTree &rt)*/
+/*{*/
+	/*const auto &vertices = get_vertices(rt.graph);*/
+     /*auto b = begin(vertices);*/
+	/*auto e = end(vertices);*/
+	/*const auto &ber = get_vertex(rt.graph, *b);*/
+	/*while (b != e && !ber.properties.valid) {*/
+		/*++b;*/
+	/*}*/
+	/*return adapter_t<RouteTreeNodeIter>(RouteTreeNodeIter(rt.graph, *b, *e), RouteTreeNodeIter(rt.graph, *e, *e));*/
+/*}*/
 
-adapter_t<route_tree_t::vertex_iterator>
-route_tree_get_nodes(route_tree_t &rt)
-{
-	return route_tree_get_nodes_impl<route_tree_t, route_tree_t::vertex_iterator>(rt);
-}
-
-adapter_t<route_tree_t::vertex_const_iterator>
+boost::iterator_range<boost::filter_iterator<valid_rt_node, route_tree_t::vertex_iterator>>
 route_tree_get_nodes(const route_tree_t &rt)
 {
-	return route_tree_get_nodes_impl<const route_tree_t, route_tree_t::vertex_const_iterator>(rt);
+	valid_rt_node validator(rt.graph);
+	const auto &nodes = get_vertices(rt.graph);
+
+	return boost::make_iterator_range(
+			boost::make_filter_iterator<valid_rt_node>(validator, begin(nodes), end(nodes)),
+			boost::make_filter_iterator<valid_rt_node>(validator, end(nodes), end(nodes))
+			);
+	/*return get_vertices(rt.graph) | boost::adaptors::filtered([&rt] (unsigned long rt_node) -> bool { return get_vertex(rt.graph, rt_node).properties.valid; }); */
+	/*return route_tree_get_nodes_impl<const route_tree_t, route_tree_t::vertex_iterator>(rt);*/
 }
 
-adapter_t<route_tree_t::branch_iterator>
-route_tree_get_branches(route_tree_t &rt, RouteTreeNode &rt_node)
+boost::iterator_range<route_tree_t::branch_iterator>
+route_tree_get_branches(const route_tree_t &rt, int rt_node)
 {
-	const auto &out_edges = get_out_edges(rt.graph, rt_node);
-	return adapter_t<route_tree_t::branch_iterator>(
-			route_tree_t::branch_iterator(begin(out_edges)), route_tree_t::branch_iterator(end(out_edges)));
-}
-
-adapter_t<route_tree_t::branch_const_iterator>
-route_tree_get_branches(const route_tree_t &rt, const RouteTreeNode &rt_node)
-{
-	const auto &out_edges = get_out_edges(rt.graph, rt_node);
-	return adapter_t<route_tree_t::branch_const_iterator>(
-			route_tree_t::branch_const_iterator(begin(out_edges)), route_tree_t::branch_const_iterator(end(out_edges)));
+	return get_out_edges(rt.graph, rt_node);
 }
 
 RouteTreeNode *route_tree_get_nearest_node(route_tree_t &rt, const point &p, const RRGraph &g, int *num_iters)
@@ -292,7 +288,8 @@ RouteTreeNode *route_tree_get_nearest_node(route_tree_t &rt, const point &p, con
 void route_tree_rip_up_marked(route_tree_t &rt, const RRGraph &g, congestion_t *congestion, float pres_fac, bool lock, lock_perf_t *lock_perf)
 {
 	char buffer[256];
-	for (auto &rt_node : route_tree_get_nodes(rt)) {
+	for (auto rt_node_id : route_tree_get_nodes(rt)) {
+		auto &rt_node = get_vertex(rt.graph, rt_node_id);
 		const auto &rr_node = get_vertex(g, rt_node.properties.rr_node);
 		sprintf_rr_node(id(rr_node), buffer);
 
@@ -301,7 +298,7 @@ void route_tree_rip_up_marked(route_tree_t &rt, const RRGraph &g, congestion_t *
 
 			if (rr_node.properties.type == SOURCE) {
 				/*assert(rt_node.properties.saved_num_out_edges > 0);*/
-				update_one_cost_internal(rr_node, congestion[rt_node.properties.rr_node], -num_out_edges(rt.graph, rt_node), pres_fac, lock, lock_perf); 
+				update_one_cost_internal(rr_node, congestion[rt_node.properties.rr_node], -num_out_edges(rt.graph, id(rt_node)), pres_fac, lock, lock_perf); 
 			} else {
 				update_one_cost_internal(rr_node, congestion[rt_node.properties.rr_node], -1, pres_fac, lock, lock_perf); 
 			}
@@ -310,8 +307,8 @@ void route_tree_rip_up_marked(route_tree_t &rt, const RRGraph &g, congestion_t *
 			rt_node.properties.ripped_up = true;
 
 			if (rt_node.properties.rt_edge_to_parent != -1) {
-				const auto &edge = get_edge(rt.graph, rt_node.properties.rt_edge_to_parent);
-				const auto &parent_rt_node = get_source(rt.graph, edge);
+				int edge = rt_node.properties.rt_edge_to_parent;
+				const auto &parent_rt_node = get_vertex(rt.graph, get_source(rt.graph, edge));
 				const auto &parent_rr_node = get_vertex(g, parent_rt_node.properties.rr_node);
 				/* since reconnection back to SOURCE always causes cost to be updated, we need to
 				 * update the cost when ripping up also.
@@ -334,7 +331,8 @@ void route_tree_rip_up_marked(route_tree_t &rt, const RRGraph &g, congestion_t *
 void route_tree_rip_up_marked_2(route_tree_t &rt, RRGraph &g, float pres_fac)
 {
 	char buffer[256];
-	for (auto &rt_node : route_tree_get_nodes(rt)) {
+	for (auto rt_node_id : route_tree_get_nodes(rt)) {
+		auto &rt_node = get_vertex(rt.graph, rt_node_id);
 		auto &rr_node = get_vertex(g, rt_node.properties.rr_node);
 		sprintf_rr_node(id(rr_node), buffer);
 		if (rt_node.properties.pending_rip_up) {
@@ -343,7 +341,7 @@ void route_tree_rip_up_marked_2(route_tree_t &rt, RRGraph &g, float pres_fac)
 			if (rr_node.properties.type == SOURCE) {
 				if (rr_node.properties.capacity > 1) {
 					assert(false);
-					for (const auto &e : route_tree_get_branches(rt, rt_node)) {
+					for (const auto &e : route_tree_get_branches(rt, rt_node_id)) {
 						/*auto &target = get_target(rt.graph, e);*/
 						/*update_one_cost_internal(rr_node, -1, pres_fac, false, nullptr); */
 					}
@@ -357,7 +355,7 @@ void route_tree_rip_up_marked_2(route_tree_t &rt, RRGraph &g, float pres_fac)
 			rt_node.properties.pending_rip_up = false;
 
 			if (rt_node.properties.rt_edge_to_parent != -1) {
-				auto &edge = get_edge(rt.graph, rt_node.properties.rt_edge_to_parent);
+				int edge = rt_node.properties.rt_edge_to_parent;
 				route_tree_remove_edge(rt, edge);
 			} 
 		} else {
@@ -372,13 +370,13 @@ bool route_tree_node_check_and_mark_for_rip_up(route_tree_t &rt, RouteTreeNode &
 
 	/* just a fast hack to handle the case for titan benchmark where SOURCE has capacity > 1 */
 	if (rr_node.properties.type == SOURCE) {
-		rt_node.properties.saved_num_out_edges = num_out_edges(rt.graph, rt_node);
+		rt_node.properties.saved_num_out_edges = num_out_edges(rt.graph, id(rt_node));
 	}
 
 	++rt_node.properties.num_iterations_fixed;
 
 	if (rt_node.properties.rt_edge_to_parent != -1) {
-		rt_node.properties.pending_rip_up = get_source(rt.graph, get_edge(rt.graph, rt_node.properties.rt_edge_to_parent)).properties.pending_rip_up;
+		rt_node.properties.pending_rip_up = get_vertex(rt.graph, get_source(rt.graph, rt_node.properties.rt_edge_to_parent)).properties.pending_rip_up;
 	} else {
 		rt_node.properties.pending_rip_up = false;
 	}
@@ -403,8 +401,8 @@ bool route_tree_mark_nodes_to_be_ripped_internal(route_tree_t &rt, const RRGraph
 
 	bool marked = route_tree_node_check_and_mark_for_rip_up(rt, rt_node, g, congestion[rt_node.properties.rr_node], num_iterations_fixed_threshold);
 
-	for (auto &branch : route_tree_get_branches(rt, rt_node)) {
-		auto &child = get_target(rt.graph, branch);
+	for (auto &branch : route_tree_get_branches(rt, id(rt_node))) {
+		auto &child = get_vertex(rt.graph, get_target(rt.graph, branch));
 
 		marked |= route_tree_mark_nodes_to_be_ripped_internal(rt, g, congestion, child, num_iterations_fixed_threshold);
 	}
@@ -429,7 +427,7 @@ bool route_tree_node_check_and_mark_congested_for_rip_up(route_tree_t &rt, Route
 	const auto &rr_node = get_vertex(g, rt_node.properties.rr_node);
 
 	if (rt_node.properties.rt_edge_to_parent != -1) {
-		rt_node.properties.pending_rip_up = get_source(rt.graph, get_edge(rt.graph, rt_node.properties.rt_edge_to_parent)).properties.pending_rip_up;
+		rt_node.properties.pending_rip_up = get_vertex(rt.graph, get_source(rt.graph, rt_node.properties.rt_edge_to_parent)).properties.pending_rip_up;
 	} else {
 		rt_node.properties.pending_rip_up = false;
 	}
@@ -452,8 +450,8 @@ bool route_tree_mark_congested_nodes_to_be_ripped_internal(route_tree_t &rt, con
 
 	bool marked = route_tree_node_check_and_mark_congested_for_rip_up(rt, rt_node, g, congestion[rt_node.properties.rr_node]);
 
-	for (auto &branch : route_tree_get_branches(rt, rt_node)) {
-		auto &child = get_target(rt.graph, branch);
+	for (auto &branch : route_tree_get_branches(rt, id(rt_node))) {
+		auto &child = get_vertex(rt.graph, get_target(rt.graph, branch));
 
 		marked |= route_tree_mark_congested_nodes_to_be_ripped_internal(rt, g, congestion, child);
 	}
@@ -477,7 +475,8 @@ void route_tree_mark_all_nodes_to_be_ripped(route_tree_t &rt, const RRGraph &g)
 {
 	rt.scheduler_bounding_box = bg::make_inverse<box>();
 
-	for (auto &rt_node : route_tree_get_nodes(rt)) {
+	for (auto rt_node_id : route_tree_get_nodes(rt)) {
+		auto &rt_node = get_vertex(rt.graph, rt_node_id);
 		rt_node.properties.pending_rip_up = true;
 		rt_node.properties.ripped_up = false;
 
@@ -493,7 +492,7 @@ void route_tree_rip_up_segment_2(route_tree_t &rt, int sink_rr_node, RRGraph &g,
 		return;
 	}
 
-	assert(num_out_edges(rt.graph, *current) == 0);
+	assert(num_out_edges(rt.graph, id(*current)) == 0);
 
 	bool stop;
 	do {
@@ -521,8 +520,8 @@ void route_tree_rip_up_segment_2(route_tree_t &rt, int sink_rr_node, RRGraph &g,
 
 		RouteTreeNode *parent;
 		if (current->properties.rt_edge_to_parent != -1) {
-			auto &edge = get_edge(rt.graph, current->properties.rt_edge_to_parent);
-			parent = &get_source(rt.graph, edge);
+			int edge = current->properties.rt_edge_to_parent;
+			parent = &get_vertex(rt.graph, get_source(rt.graph, edge));
 			for_all_vertices(rt.graph, [&current] (RouteTreeNode &node) -> void {
 					if (node.properties.rt_edge_to_parent > current->properties.rt_edge_to_parent) {
 					--node.properties.rt_edge_to_parent;
@@ -534,7 +533,7 @@ void route_tree_rip_up_segment_2(route_tree_t &rt, int sink_rr_node, RRGraph &g,
 		}
 
 		current = parent;
-	} while (current && num_out_edges(rt.graph, *current) == 0);
+	} while (current && num_out_edges(rt.graph, id(*current)) == 0);
 }
 
 void route_tree_rip_up_segment(route_tree_t &rt, int sink_rr_node, RRGraph &g, float pres_fac)
@@ -556,13 +555,13 @@ void route_tree_rip_up_segment(route_tree_t &rt, int sink_rr_node, RRGraph &g, f
 
 	for (auto ei = iter->second.begin(); ei != iter->second.end() && should_remove_src; ) {
 		auto &edge = get_edge(rt.graph, *ei);
-		src = &get_source(rt.graph, edge);
-		dst = &get_target(rt.graph, edge);
+		src = &get_vertex(rt.graph, get_source(rt.graph, *ei));
+		dst = &get_vertex(rt.graph, get_target(rt.graph, *ei));
 		sprintf_rr_node(src->properties.rr_node, s_src);
 		sprintf_rr_node(dst->properties.rr_node, s_dst);
-		zlog_level(delta_log, ROUTER_V3, "Current edge: %s -> %s, %s out edges: %d\n", s_src, s_dst, s_src, num_out_edges(rt.graph, *src));
+		zlog_level(delta_log, ROUTER_V3, "Current edge: %s -> %s, %s out edges: %d\n", s_src, s_dst, s_src, num_out_edges(rt.graph, id(*src)));
 
-		assert(num_out_edges(rt.graph, *dst) == 0);
+		assert(num_out_edges(rt.graph, id(*dst)) == 0);
 
 		zlog_level(delta_log, ROUTER_V2, "Ripping up node %s from route tree\n", s_dst);
 		/*update_one_cost_internal(get_vertex(g, dst->properties.rr_node), -1, pres_fac, false, nullptr);*/
@@ -578,13 +577,13 @@ void route_tree_rip_up_segment(route_tree_t &rt, int sink_rr_node, RRGraph &g, f
 				}
 			}
 		}
-		remove_edge(rt.graph, edge);
+		remove_edge(rt.graph, *ei);
 		ei = iter->second.erase(ei);
 
-		should_remove_src = num_out_edges(rt.graph, *src) == 0;
+		should_remove_src = num_out_edges(rt.graph, id(*src)) == 0;
 
 		if (!should_remove_src) {
-			zlog_level(delta_log, ROUTER_V2, "Stopping rip up because %s has %d out edges (> 0)\n", s_src, num_out_edges(rt.graph, *src));
+			zlog_level(delta_log, ROUTER_V2, "Stopping rip up because %s has %d out edges (> 0)\n", s_src, num_out_edges(rt.graph, id(*src)));
 		}
 	}
 
@@ -642,7 +641,7 @@ void route_tree_add_path(route_tree_t &rt, const RRGraph &g, const route_state_t
 		route_tree_set_node_properties(*current_rt_node, current_rr_node.properties.type != IPIN && current_rr_node.properties.type != SINK, state[current_rr_node_id].prev_edge, state[current_rr_node_id].upstream_R, state[current_rr_node_id].delay);
 
 		/* parent */
-		const RRNode &parent_rr_node = get_source(g, *state[current_rr_node_id].prev_edge);
+		const RRNode &parent_rr_node = get_vertex(g, get_source(g, state[current_rr_node_id].prev_edge));
 		int parent_rr_node_id = id(parent_rr_node);
 		assert(parent_rr_node_id == rr_nodes[i+1]);
 
@@ -655,7 +654,7 @@ void route_tree_add_path(route_tree_t &rt, const RRGraph &g, const route_state_t
 		e.properties.rr_edge = state[current_rr_node_id].prev_edge;
 		/*edges.push_back(id(e));*/
 
-		if (connection.first) {
+		if (connection.first != -1) {
 			assert(connection.second);
 			auto &e = route_tree_add_edge_between_rr_node(rt, id(*connection.second), parent_rr_node_id);
 			e.properties.rr_edge = connection.first;
@@ -699,9 +698,9 @@ void route_tree_add_path(route_tree_t &rt, const RRGraph &g, const route_state_t
 	current_rt_node->properties.owner = sink_rr_node;
 	route_tree_set_node_properties(*current_rt_node, current_rr_node.properties.type != IPIN && current_rr_node.properties.type != SINK, state[current_rr_node_id].prev_edge, state[current_rr_node_id].upstream_R, state[current_rr_node_id].delay);
 
-	while (state[current_rr_node_id].prev_edge && !stop_traceback) {
+	while (state[current_rr_node_id].prev_edge != -1 && !stop_traceback) {
 		/* parent */
-		const RRNode &parent_rr_node = get_source(g, *state[current_rr_node_id].prev_edge);
+		const RRNode &parent_rr_node = get_vertex(g, get_source(g, state[current_rr_node_id].prev_edge));
 		int parent_rr_node_id = id(parent_rr_node);
 
 		RouteTreeNode *parent_rt_node = route_tree_add_or_get_rr_node(rt, parent_rr_node_id, g, state, update_cost, stop_traceback);
@@ -709,7 +708,7 @@ void route_tree_add_path(route_tree_t &rt, const RRGraph &g, const route_state_t
 			rr_nodes_with_pending_cost_update.push_back(parent_rr_node_id);
 		}
 		parent_rt_node->properties.owner = sink_rr_node;
-		route_tree_set_node_properties(*parent_rt_node, parent_rr_node.properties.type != IPIN && parent_rr_node.properties.type != SINK, nullptr, state[parent_rr_node_id].upstream_R, state[parent_rr_node_id].delay);
+		route_tree_set_node_properties(*parent_rt_node, parent_rr_node.properties.type != IPIN && parent_rr_node.properties.type != SINK, -1, state[parent_rr_node_id].upstream_R, state[parent_rr_node_id].delay);
 
 		/* setting up edges */
 		auto &e = route_tree_add_edge_between_rr_node(rt, parent_rr_node_id, current_rr_node_id);
@@ -775,33 +774,33 @@ bool route_tree_is_only_path(const route_tree_t &rt, int sink_rr_node, const RRG
 	/*return is_only_path;*/
 }
 
-pair<const RREdge *, const RRNode *> route_tree_get_connection(const RRNode &current_rr_node, const RRGraph &g, const route_state_t *state, bool end)
+pair<int, const RRNode *> route_tree_get_connection(const RRNode &current_rr_node, const RRGraph &g, const route_state_t *state, bool end)
 {
-	pair<const RREdge *, const RRNode *> connection;
+	pair<int, const RRNode *> connection;
 	if (end) {
 		if (current_rr_node.properties.type == SOURCE) {
-			connection.first = nullptr;
+			connection.first = -1;
 			connection.second = nullptr;
 		} else {
 			connection.first = state[id(current_rr_node)].prev_edge;
-			connection.second = &get_source(g, *connection.first);
+			connection.second = &get_vertex(g, get_source(g, connection.first));
 			int connection_rr_node = id(*connection.second);
-			if (state[connection_rr_node].prev_edge != nullptr) {
+			if (state[connection_rr_node].prev_edge != -1) {
 				char p[256];
 				char c[256];
 				sprintf_rr_node(connection_rr_node, c);
-				sprintf_rr_node(id(get_source(g, *state[connection_rr_node].prev_edge)), p);
+				sprintf_rr_node(get_source(g, state[connection_rr_node].prev_edge), p);
 				zlog_warn(delta_log, "Warning: Connection %s is not from existing route tree because we found a shorter path to it via %s\n", c, p);
 			}
 		}
 	} else {
-		connection.first = nullptr;
+		connection.first = -1;
 		connection.second = nullptr;
 	}
 	return connection;
 }
 
-void route_tree_set_node_properties(RouteTreeNode &rt_node, bool reexpand, const RREdge *prev_edge, float upstream_R, float delay)
+void route_tree_set_node_properties(RouteTreeNode &rt_node, bool reexpand, int prev_edge, float upstream_R, float delay)
 {
 	rt_node.properties.reexpand = reexpand;
 	rt_node.properties.rr_edge_to_parent = prev_edge;
@@ -824,9 +823,9 @@ RouteTreeNode *route_tree_add_or_get_rr_node(route_tree_t &rt, int rr_node_id, c
 		char buffer[256];
 		sprintf_rr_node(rr_node_id, buffer);
 
-		if (rt_node->properties.rr_edge_to_parent != nullptr) {
+		if (rt_node->properties.rr_edge_to_parent != -1) {
 			char parent[256];
-			sprintf_rr_node(id(get_source(g, *rt_node->properties.rr_edge_to_parent)), parent);
+			sprintf_rr_node(get_source(g, rt_node->properties.rr_edge_to_parent), parent);
 			zlog_error(delta_log, "Error: Existing route tree node %s has non-null rr_edge_to_parent that connects to %s\n", buffer, parent);
 			assert(false);
 		}
@@ -834,7 +833,7 @@ RouteTreeNode *route_tree_add_or_get_rr_node(route_tree_t &rt, int rr_node_id, c
 		if (state[rr_node_id].prev_edge != rt_node->properties.rr_edge_to_parent) {
 			char s_state[256];
 			char s_rt[256];
-			sprintf_rr_node(id(get_source(g, *state[rr_node_id].prev_edge)), s_state);
+			sprintf_rr_node(get_source(g, state[rr_node_id].prev_edge), s_state);
 			/*sprintf_rr_node(id(get_source(g, *rt_node->properties.rr_edge_to_parent)), s_rt);*/
 			zlog_warn(delta_log, "Warning: Existing route tree node %s does not have a matching route state. (state.prev_edge: %s rt_node.properties.rr_edge_to_parent: ) because we have found a shorter path to that node\n", buffer, s_state);
 
@@ -913,11 +912,11 @@ void route_tree_add_to_heap_internal(const route_tree_t &rt, const RouteTreeNode
 			item.known_cost = criticality_fac * rt_node->properties.delay;
 			float expected_cost = get_timing_driven_expected_cost(get_vertex(g, rt_node->properties.rr_node), target, criticality_fac, rt_node->properties.upstream_R);
 			item.cost = item.known_cost + astar_fac * expected_cost;
-			item.prev_edge = nullptr;
+			item.prev_edge = -1;
 			item.upstream_R = rt_node->properties.upstream_R;
 			item.delay = rt_node->properties.delay;
 
-			zlog_level(delta_log, ROUTER_V2, "Adding route tree node %s prev: %d cost: %g known_cost: %g delay: %g crit_fac: %g expected_cost: %g astar_fac: %g upstream_R: %g to heap\n", buffer, rt_node->properties.rt_edge_to_parent != -1 ? get_source(rt.graph, get_edge(rt.graph, rt_node->properties.rt_edge_to_parent)).properties.rr_node : -1, item.cost, item.known_cost, item.delay, criticality_fac, expected_cost, astar_fac, item.upstream_R);
+			zlog_level(delta_log, ROUTER_V2, "Adding route tree node %s prev: %d cost: %g known_cost: %g delay: %g crit_fac: %g expected_cost: %g astar_fac: %g upstream_R: %g to heap\n", buffer, rt_node->properties.rt_edge_to_parent != -1 ? get_vertex(rt.graph, get_source(rt.graph, rt_node->properties.rt_edge_to_parent)).properties.rr_node : -1, item.cost, item.known_cost, item.delay, criticality_fac, expected_cost, astar_fac, item.upstream_R);
 
 			if (perf) {
 				++perf->num_heap_pushes;
@@ -929,8 +928,8 @@ void route_tree_add_to_heap_internal(const route_tree_t &rt, const RouteTreeNode
 	}
 
 	/*for_all_out_edges(rt.graph, *rt_node, [&rt, &heap, &criticality_fac, &astar_fac, &g, &target, &current_bounding_box, &perf] (const RouteTreeEdge &e) -> void {*/
-	for (const auto &branch : route_tree_get_branches(rt, *rt_node)) {
-		const auto &neighbor = get_target(rt.graph, branch);
+	for (const auto &branch : route_tree_get_branches(rt, id(*rt_node))) {
+		const auto &neighbor = get_vertex(rt.graph, get_target(rt.graph, branch));
 
 		route_tree_add_to_heap_internal(rt, &neighbor, g, target, criticality_fac, astar_fac, current_bounding_box, heap, perf);
 	}

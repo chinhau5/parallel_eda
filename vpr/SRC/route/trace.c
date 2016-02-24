@@ -53,7 +53,7 @@ const Segment &trace_add_path(trace_t &trace, const RRGraph &g, const route_stat
 		sprintf_rr_node(current_rr_node, buffer);
 		zlog_level(delta_log, ROUTER_V2, "Net %d trace: %s\n", vpr_net_id, buffer);
 
-		int parent_rr_node = id(get_source(g, *state[current_rr_node].prev_edge));
+		int parent_rr_node = get_source(g, state[current_rr_node].prev_edge);
 		prev_rr_node = current_rr_node;
 		current_rr_node = parent_rr_node;
 	}

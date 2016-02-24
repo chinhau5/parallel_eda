@@ -6,6 +6,8 @@
 #include "geometry.h"
 #include "new_rr_graph.h"
 #include "route.h"
+#include <boost/range/iterator_range.hpp>
+#include <boost/range/adaptor/filtered.hpp>
 
 typedef struct rt_node_property_t {
 	int rr_node;
@@ -19,7 +21,7 @@ typedef struct rt_node_property_t {
 	int owner;
 
 	bool reexpand;
-	const RREdge *rr_edge_to_parent;
+	int rr_edge_to_parent;
 	float upstream_R;	
 	float delay;
 
@@ -28,7 +30,7 @@ typedef struct rt_node_property_t {
 } rt_node_property_t;
 
 typedef struct rt_edge_property_t {
-	const RREdge *rr_edge;
+	int rr_edge;
 } rt_edge_property_t;
 
 typedef graph_t<rt_node_property_t, rt_edge_property_t> RouteTree;
@@ -47,19 +49,21 @@ typedef struct route_tree_t {
 	box scheduler_bounding_box;
 	std::map<int, std::vector<int>> sink_edges;
 
-	template<typename Value, typename Base>
+	template<typename Graph, typename Value, typename Base>
 	struct iterator : public std::iterator<
 					  typename std::forward_iterator_tag,
 					  Value,
 					  ptrdiff_t,
-					  Value *,
-					  Value & 
+					  Value,
+					  Value 
 					  > { 
+
+		const Graph &g;
 		Base c;
 		Base e;
 
-		iterator(const Base &c, const Base &e) 
-			: c(c), e(e)
+		iterator(const Graph &g, const Base &c, const Base &e) 
+			: g(g), c(c), e(e)
 	   	{
 		}
 
@@ -69,14 +73,14 @@ typedef struct route_tree_t {
 				if (c != e) {
 					++c;
 				}
-			} while (c != e && !c->properties.valid);
+			} while (c != e && get_vertex(g, c).properties.valid);
 		
 			return *this;
 		}
 
 		typename iterator::reference operator*() const
 		{
-			return *c;
+			return c;
 		}
 
 		bool operator==(const iterator &other) const
@@ -90,10 +94,11 @@ typedef struct route_tree_t {
 		}
 	};
 
-	typedef iterator<RouteTreeNode, typename RouteTree::vertex_iterator> vertex_iterator;
-	typedef iterator<const RouteTreeNode, typename RouteTree::vertex_const_iterator> vertex_const_iterator;
+	//typedef iterator<RouteTree, int, int> vertex_iterator;
+	typedef typename RouteTree::vertex_iterator vertex_iterator;
+	//typedef iterator<const RouteTreeNode, typename RouteTree::vertex_iterator> vertex_const_iterator;
 	typedef typename RouteTree::out_edges_iterator branch_iterator;
-	typedef typename RouteTree::out_edges_const_iterator branch_const_iterator;
+	//typedef typename RouteTree::out_edges_const_iterator branch_const_iterator;
 } route_tree_t;
 
 void route_tree_init(route_tree_t &rt);
@@ -112,17 +117,23 @@ RouteTreeNode *route_tree_get_rt_node(route_tree_t &rt, int rr_node);
 
 const RouteTreeNode *route_tree_get_rt_node(const route_tree_t &rt, int rr_node);
 
-adapter_t<route_tree_t::vertex_iterator>
-route_tree_get_nodes(route_tree_t &rt);
+struct valid_rt_node {
+	const RouteTree g;
+	valid_rt_node(const RouteTree &g) :
+		g(g) {}
 
-adapter_t<route_tree_t::vertex_const_iterator>
+	bool operator()(unsigned long rt_node) const
+	{
+		return get_vertex(g, rt_node).properties.valid; 
+	}
+};
+
+
+boost::iterator_range<boost::filter_iterator<valid_rt_node, route_tree_t::vertex_iterator>>
 route_tree_get_nodes(const route_tree_t &rt);
 
-adapter_t<route_tree_t::branch_iterator>
-route_tree_get_branches(route_tree_t &rt, RouteTreeNode &rt_node);
-
-adapter_t<route_tree_t::branch_const_iterator>
-route_tree_get_branches(const route_tree_t &rt, const RouteTreeNode &rt_node);
+boost::iterator_range<route_tree_t::branch_iterator>
+route_tree_get_branches(const route_tree_t &rt, int rt_node);
 
 bool route_tree_mark_nodes_to_be_ripped(route_tree_t &rt, const RRGraph &g, const congestion_t *congestion, int num_iterations_fixed_threshold);
 
@@ -146,9 +157,9 @@ void route_tree_set_root(route_tree_t &rt, int rr_node);
 
 bool route_tree_is_only_path(const route_tree_t &rt, int sink_rr_node, const RRGraph &g);
 
-pair<const RREdge *, const RRNode *> route_tree_get_connection(const RRNode &current_rr_node, const RRGraph &g, const route_state_t *state, bool end);
+pair<int, const RRNode *> route_tree_get_connection(const RRNode &current_rr_node, const RRGraph &g, const route_state_t *state, bool end);
 
-void route_tree_set_node_properties(RouteTreeNode &rt_node, bool reexpand, const RREdge *prev_edge, float upstream_R, float delay);
+void route_tree_set_node_properties(RouteTreeNode &rt_node, bool reexpand, int prev_edge, float upstream_R, float delay);
 
 RouteTreeNode *route_tree_add_or_get_rr_node(route_tree_t &rt, int rr_node_id, const RRGraph &g, const route_state_t *state, bool &update_cost, bool &stop_traceback);
 

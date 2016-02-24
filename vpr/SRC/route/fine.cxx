@@ -197,7 +197,7 @@ bool locking_route(t_router_opts *opts, int run)
 			states[i][j].rr_node = -1;
 			states[i][j].known_cost = std::numeric_limits<float>::max();
 			states[i][j].cost = std::numeric_limits<float>::max();
-			states[i][j].prev_edge = nullptr;
+			states[i][j].prev_edge = -1;
 			states[i][j].upstream_R = -1;
 			states[i][j].delay = std::numeric_limits<float>::max();
 		}
@@ -761,7 +761,7 @@ bool locking_route__1(t_router_opts *opts)
 			states[i][j].rr_node = -1;
 			states[i][j].known_cost = std::numeric_limits<float>::max();
 			states[i][j].cost = std::numeric_limits<float>::max();
-			states[i][j].prev_edge = nullptr;
+			states[i][j].prev_edge = -1;
 			states[i][j].upstream_R = -1;
 			states[i][j].delay = std::numeric_limits<float>::max();
 		}
@@ -1134,7 +1134,7 @@ bool locking_route_0(t_router_opts *opts)
 			states[i][j].rr_node = -1;
 			states[i][j].known_cost = std::numeric_limits<float>::max();
 			states[i][j].cost = std::numeric_limits<float>::max();
-			states[i][j].prev_edge = nullptr;
+			states[i][j].prev_edge = -1;
 			states[i][j].upstream_R = -1;
 			states[i][j].delay = std::numeric_limits<float>::max();
 		}
@@ -1441,7 +1441,7 @@ bool locking_route_2(t_router_opts *opts)
 			states[i][j].rr_node = -1;
 			states[i][j].known_cost = std::numeric_limits<float>::max();
 			states[i][j].cost = std::numeric_limits<float>::max();
-			states[i][j].prev_edge = nullptr;
+			states[i][j].prev_edge = -1;
 			states[i][j].upstream_R = -1;
 			states[i][j].delay = std::numeric_limits<float>::max();
 		}
@@ -1750,7 +1750,7 @@ bool locking_route_3(t_router_opts *opts)
 			states[i][j].rr_node = -1;
 			states[i][j].known_cost = std::numeric_limits<float>::max();
 			states[i][j].cost = std::numeric_limits<float>::max();
-			states[i][j].prev_edge = nullptr;
+			states[i][j].prev_edge = -1;
 			states[i][j].upstream_R = -1;
 			states[i][j].delay = std::numeric_limits<float>::max();
 		}

@@ -73,8 +73,8 @@ int schedule_nets_maximum_independent_set(const RRGraph &rr_g)
 
   int edge = 0;
   for_all_edges(rr_g, [&rr_g, &edges, &edge] (const RREdge &e) -> void {
-		  int from = id(get_source(rr_g, e));
-		  int to = id(get_source(rr_g, e));
+		  int from = get_source(rr_g, id(e));
+		  int to = get_source(rr_g, id(e));
 		  VECTOR(edges)[edge] = from;
 		  VECTOR(edges)[edge+1] = to;
 		  edge += 2;

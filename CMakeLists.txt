@@ -21,7 +21,7 @@ add_compile_options(
 	#-D TBB_USE_DEBUG=1
 	#-ferror-limit=0
 	-ftemplate-backtrace-limit=0
-	-std=c++11
+	-std=c++14
 	-g -O0
 	#-Bdynamic
 	-Wall

@@ -1102,7 +1102,7 @@ bool phased_greedy_route(t_router_opts *opts)
 		state[i].rr_node = -1;
 		state[i].known_cost = std::numeric_limits<float>::max();
 		state[i].cost = std::numeric_limits<float>::max();
-		state[i].prev_edge = nullptr;
+		state[i].prev_edge = -1;
 		state[i].upstream_R = -1;
 		state[i].delay = std::numeric_limits<float>::max();
 	}
@@ -1644,7 +1644,7 @@ bool phased_greedy_route_old(t_router_opts *opts)
 		state[i].rr_node = -1;
 		state[i].known_cost = std::numeric_limits<float>::max();
 		state[i].cost = std::numeric_limits<float>::max();
-		state[i].prev_edge = nullptr;
+		state[i].prev_edge = -1;
 		state[i].upstream_R = -1;
 		state[i].delay = std::numeric_limits<float>::max();
 	}

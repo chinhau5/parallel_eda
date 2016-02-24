@@ -288,10 +288,11 @@ template<typename ShouldExpandFunc>
 void expand_neighbors_fast(const RRGraph &g, const route_state_t &current, const RRNode &target, float criticality_fac, float astar_fac, std::priority_queue<route_state_t> &heap, const ShouldExpandFunc &should_expand, perf_t *perf)
 {
 	for_all_out_edges(g, get_vertex(g, current.rr_node), [&heap, &g, &current, &target, &criticality_fac, &astar_fac, &should_expand, &perf] (const RREdge &e) -> void {
-			auto &neighbor = get_target(g, e);
+			int neighbor_id = get_target(g, id(e));
+			auto &neighbor = get_vertex(g, neighbor_id);
 
 			char buffer[256];
-			sprintf_rr_node(id(neighbor), buffer);
+			sprintf_rr_node(neighbor_id, buffer);
 			zlog_level(delta_log, ROUTER_V3, "\tNeighbor: %s ", buffer);
 			
 			if (!should_expand(neighbor)) {
@@ -301,7 +302,7 @@ void expand_neighbors_fast(const RRGraph &g, const route_state_t &current, const
 			route_state_t item;
 
 			item.rr_node = id(neighbor);
-			item.prev_edge = &e;
+			item.prev_edge = id(e);
 
 			float unbuffered_upstream_R = current.upstream_R;
 			float upstream_R = e.properties.R + neighbor.properties.R;
@@ -332,10 +333,11 @@ template<typename ShouldExpandFunc>
 void expand_neighbors(const RRGraph &g, const RRNode &current, const route_state_t *state, const congestion_t *congestion, const RRNode &target, float criticality_fac, float astar_fac, std::priority_queue<route_state_t> &heap, const ShouldExpandFunc &should_expand, bool lock, perf_t *perf, lock_perf_t *lock_perf)
 {
 	for_all_out_edges(g, current, [&heap, &g, &current, &state, &congestion, &target, &criticality_fac, &astar_fac, &should_expand, &perf, &lock_perf, &lock] (const RREdge &e) -> void {
-			auto &neighbor = get_target(g, e);
+			int neighbor_id = get_target(g, id(e));
+			const auto &neighbor = get_vertex(g, neighbor_id);
 
 			char buffer[256];
-			sprintf_rr_node(id(neighbor), buffer);
+			sprintf_rr_node(neighbor_id, buffer);
 			zlog_level(delta_log, ROUTER_V3, "\tNeighbor: %s ", buffer);
 
 			if (perf) {
@@ -348,8 +350,8 @@ void expand_neighbors(const RRGraph &g, const RRNode &current, const route_state
 
 			route_state_t item;
 
-			item.rr_node = id(neighbor);
-			item.prev_edge = &e;
+			item.rr_node = neighbor_id;
+			item.prev_edge = id(e);
 
 			const route_state_t *current_state = &state[id(current)];
 
@@ -601,7 +603,9 @@ void update_one_cost_internal(const RRNode &rr_node, congestion_t &congestion, /
 			using clock = std::chrono::high_resolution_clock;
 			auto wait_start = clock::now();
 			congestion.lock.lock();
-			lock_perf->total_wait_time += clock::now()-wait_start;
+			if (lock_perf) {
+				lock_perf->total_wait_time += clock::now()-wait_start;
+			}
 		}
 		/*rr_node.properties.lock->lock();*/
 	}
@@ -659,7 +663,7 @@ void update_one_cost(const RRGraph &g, congestion_t *congestion, route_tree_t &r
 	update_one_cost_internal(rr_node, congestion[id(rr_node)], /*-1,*/ delta, pres_fac, lock, nullptr);
 
 	for_all_out_edges(rt.graph, node, [&g, &rt, &congestion, &delta, &pres_fac, &lock] (const RouteTreeEdge &e) -> void {
-			update_one_cost(g, congestion, rt, get_target(rt.graph, e), delta, pres_fac, lock);
+			update_one_cost(g, congestion, rt, get_vertex(rt.graph, get_target(rt.graph, id(e))), delta, pres_fac, lock);
 			});
 }
 
@@ -724,7 +728,7 @@ void get_overused_nodes(const route_tree_t &rt, const RouteTreeNode &node, const
 	}
 	
 	for_all_out_edges(rt.graph, node, [&rt, &g, &congestion, &overused_rr_node] (const RouteTreeEdge &e) -> void {
-			const auto &neighbor = get_target(rt.graph, e);
+			const auto &neighbor = get_vertex(rt.graph, get_target(rt.graph, id(e)));
 			get_overused_nodes(rt, neighbor, g, congestion, overused_rr_node);
 			});
 }
@@ -736,14 +740,14 @@ void recalculate_occ_internal(const route_tree_t &rt, const RouteTreeNode &node,
 	auto &rr_node = get_vertex(g, node.properties.rr_node);
 	int rr_node_id = id(rr_node);
 	if (rr_node.properties.type == SOURCE) {
-		congestion[rr_node_id].recalc_occ += num_out_edges(rt.graph, node);
+		congestion[rr_node_id].recalc_occ += num_out_edges(rt.graph, id(node));
 	} else {
 		++congestion[rr_node_id].recalc_occ;
 	}
 
-	for (const auto &branch : route_tree_get_branches(rt, node)) {
+	for (const auto &branch : route_tree_get_branches(rt, id(node))) {
 		/*for_all_out_edges(rt.graph, node, [&rt, &g, &visited_sinks, &visited_nodes] (const RouteTreeEdge &e) -> void {*/
-		const auto &child = get_target(rt.graph, branch);
+		const auto &child = get_vertex(rt.graph, get_target(rt.graph, branch));
 		recalculate_occ_internal(rt, child, g, congestion);
 	}
 }
@@ -769,9 +773,9 @@ void check_route_tree_internal(const route_tree_t &rt, const RouteTreeNode &node
 
 	visited_nodes.push_back(node.properties.rr_node);
 
-	for (const auto &branch : route_tree_get_branches(rt, node)) {
+	for (const auto &branch : route_tree_get_branches(rt, id(node))) {
 		/*for_all_out_edges(rt.graph, node, [&rt, &g, &visited_sinks, &visited_nodes] (const RouteTreeEdge &e) -> void {*/
-		const auto &child = get_target(rt.graph, branch);
+		const auto &child = get_vertex(rt.graph, get_target(rt.graph, branch));
 		check_route_tree_internal(rt, child, g, visited_sinks, visited_nodes);
 	}
 }
@@ -928,7 +932,7 @@ void route_net_fast(RRGraph &g, const net_t &net, const route_parameters_t &para
 			heap.pop();
 
 			sprintf_rr_node(item.rr_node, buffer);
-			zlog_level(delta_log, ROUTER_V2, "Current: %s prev: %d old_delay: %g new_delay: %g old_known: %g new_known: %g old_cost: %g new_cost: %g\n", buffer, item.prev_edge ? id(get_source(g, *item.prev_edge)) : -1, state[item.rr_node].delay, item.delay, state[item.rr_node].known_cost, item.known_cost, state[item.rr_node].cost, item.cost);
+			zlog_level(delta_log, ROUTER_V2, "Current: %s prev: %d old_delay: %g new_delay: %g old_known: %g new_known: %g old_cost: %g new_cost: %g\n", buffer, item.prev_edge != -1 ? get_source(g, item.prev_edge) : -1, state[item.rr_node].delay, item.delay, state[item.rr_node].known_cost, item.known_cost, state[item.rr_node].cost, item.cost);
 
 			if (item.rr_node == sink.rr_node) {
 				state[item.rr_node] = item;
@@ -947,7 +951,7 @@ void route_net_fast(RRGraph &g, const net_t &net, const route_parameters_t &para
 
 				for (const auto &e_i : get_vertex(g, item.rr_node).edges) {
 					auto &e = get_edge(g, e_i);
-					auto &neighbor = get_target(g, e);
+					auto &neighbor = get_vertex(g, get_target(g, e_i));
 
 					char buffer[256];
 					sprintf_rr_node(id(neighbor), buffer);
@@ -973,7 +977,7 @@ void route_net_fast(RRGraph &g, const net_t &net, const route_parameters_t &para
 					route_state_t new_item;
 
 					new_item.rr_node = id(neighbor);
-					new_item.prev_edge = &e;
+					new_item.prev_edge = id(e);
 
 					float unbuffered_upstream_R = item.upstream_R;
 					float upstream_R = e.properties.R + neighbor.properties.R;
@@ -1059,7 +1063,7 @@ int route_net_2(const RRGraph &g, int vpr_id, const source_t *source, const vect
 
 		const auto &source_rr_node = get_vertex(g, source->rr_node);
 		RouteTreeNode *root_rt_node = route_tree_add_rr_node(rt, source_rr_node);
-		route_tree_set_node_properties(*root_rt_node, true, nullptr, source_rr_node.properties.R, 0.5 * source_rr_node.properties.R * source_rr_node.properties.C);
+		route_tree_set_node_properties(*root_rt_node, true, -1, source_rr_node.properties.R, 0.5 * source_rr_node.properties.R * source_rr_node.properties.C);
 		route_tree_set_root(rt, source->rr_node);
 
 		/*update_one_cost_internal(source_rr_node, 1, params.pres_fac);*/
@@ -1097,7 +1101,7 @@ int route_net_2(const RRGraph &g, int vpr_id, const source_t *source, const vect
 
 			sprintf_rr_node(item.rr_node, buffer);
 			const auto &v = get_vertex(g, item.rr_node);
-			zlog_level(delta_log, ROUTER_V3, "Current: %s occ/cap: %d/%d prev: %d new_cost: %g new_known: %g new_delay: %g old_cost: %g old_known: %g old_delay: %g\n", buffer, congestion[item.rr_node].occ, v.properties.capacity, item.prev_edge ? id(get_source(g, *item.prev_edge)) : -1, item.cost, item.known_cost, item.delay, state[item.rr_node].cost, state[item.rr_node].known_cost, state[item.rr_node].delay);
+			zlog_level(delta_log, ROUTER_V3, "Current: %s occ/cap: %d/%d prev: %d new_cost: %g new_known: %g new_delay: %g old_cost: %g old_known: %g old_delay: %g\n", buffer, congestion[item.rr_node].occ, v.properties.capacity, item.prev_edge != -1 ? get_source(g, item.prev_edge) : -1, item.cost, item.known_cost, item.delay, state[item.rr_node].cost, state[item.rr_node].known_cost, state[item.rr_node].delay);
 
 			if (item.rr_node == sink->rr_node) {
 				state[item.rr_node] = item;
@@ -1196,7 +1200,7 @@ void route_net(RRGraph &g, int vpr_id, const source_t *source, const vector<sink
 		/*route_tree_set_source(rt, get_vertex(g, source->rr_node));*/
 		auto &source_rr_node = get_vertex(g, source->rr_node);
 		RouteTreeNode *root_rt_node = route_tree_add_rr_node(rt, source_rr_node);
-		route_tree_set_node_properties(*root_rt_node, true, nullptr, source_rr_node.properties.R, 0.5 * source_rr_node.properties.R * source_rr_node.properties.C);
+		route_tree_set_node_properties(*root_rt_node, true, -1, source_rr_node.properties.R, 0.5 * source_rr_node.properties.R * source_rr_node.properties.C);
 		route_tree_set_root(rt, source->rr_node);
 	} else {
 		RouteTreeNode rt_root = get_vertex(rt.graph, rt.root_rt_node_id);
@@ -1367,7 +1371,7 @@ void route_net(RRGraph &g, const net_t &net, const route_parameters_t &params, r
 			heap.pop();
 
 			sprintf_rr_node(item.rr_node, buffer);
-			zlog_level(delta_log, ROUTER_V2, "Current: %s prev: %d old_delay: %g new_delay: %g old_known: %g new_known: %g old_cost: %g new_cost: %g\n", buffer, item.prev_edge ? id(get_source(g, *item.prev_edge)) : -1, state[item.rr_node].delay, item.delay, state[item.rr_node].known_cost, item.known_cost, state[item.rr_node].cost, item.cost);
+			zlog_level(delta_log, ROUTER_V2, "Current: %s prev: %d old_delay: %g new_delay: %g old_known: %g new_known: %g old_cost: %g new_cost: %g\n", buffer, item.prev_edge != -1 ? get_source(g, item.prev_edge) : -1, state[item.rr_node].delay, item.delay, state[item.rr_node].known_cost, item.known_cost, state[item.rr_node].cost, item.cost);
 
 			if (item.rr_node == sink.rr_node) {
 				state[item.rr_node] = item;
@@ -1562,7 +1566,7 @@ void write_metis_file(const graph_t<int, int> &dep_g, const char *filename)
 	fprintf(file, "%d %d\n", num_vertices(dep_g), num_edges(dep_g)/2);
 	for_all_vertices(dep_g, [&dep_g, &file] (const vertex_t<int, int> &v) -> void {
 			for_all_out_edges(dep_g, v, [&dep_g, &file] (const edge_t<int> &e) -> void {
-					fprintf(file, "%d ", id(get_target(dep_g, e))+1);
+					fprintf(file, "%d ", get_target(dep_g, id(e))+1);
 					});
 			fprintf(file, "\n");
 			});
@@ -2517,7 +2521,7 @@ void update_virtual_net_bounding_box(virtual_net_t &virtual_net, route_tree_t &r
 
 	if (nearest_rt_node == nullptr) {
 		const auto &nodes = route_tree_get_nodes(rt);
-		if (route_tree_empty(rt) || all_of(begin(nodes), end(nodes), [] (const RouteTreeNode &node) -> bool { return node.properties.pending_rip_up; })) {
+		if (route_tree_empty(rt) || all_of(begin(nodes), end(nodes), [&rt] (int node) -> bool { return get_vertex(rt.graph, node).properties.pending_rip_up; })) {
 			virtual_net.nearest_rr_node = net.source.rr_node;
 			zlog_level(delta_log, ROUTER_V3, "Net %d empty route tree. Setting virtual net %d bounding box to start from source\n", net.vpr_id, virtual_net.id);
 		} else {
@@ -2608,7 +2612,7 @@ void update_sink_bounding_boxes_5(vector<virtual_net_t> &virtual_nets, route_tre
 
 			if (nearest_rt_node == nullptr) {
 				const auto &nodes = route_tree_get_nodes(rt);
-				if (route_tree_empty(rt) || all_of(begin(nodes), end(nodes), [] (const RouteTreeNode &node) -> bool { return node.properties.pending_rip_up; })) {
+				if (route_tree_empty(rt) || all_of(begin(nodes), end(nodes), [&rt] (int node) -> bool { return get_vertex(rt.graph, node).properties.pending_rip_up; })) {
 					vnet.nearest_rr_node = net.source.rr_node;
 					zlog_level(scheduler_log, ROUTER_V2, "Net %d empty route tree. Setting virtual net %d bounding box to start from source\n", net.vpr_id, vnet.id);
 				} else {
@@ -2646,7 +2650,8 @@ void update_sink_bounding_boxes_4(net_t &net, route_tree_t &rt, const RRGraph &g
 			sink.scheduler_bounding_box.ymin = std::numeric_limits<int>::max();
 			sink.scheduler_bounding_box.ymax = std::numeric_limits<int>::min();
 
-			for (const auto &rt_node : route_tree_get_nodes(rt)) {
+			for (const auto &rt_node_id : route_tree_get_nodes(rt)) {
+				const auto &rt_node = get_vertex(rt.graph, rt_node_id);
 				const auto &from_node = get_vertex(g, rt_node.properties.rr_node);
 
 				char s_source[256];
@@ -2699,7 +2704,7 @@ void update_sink_bounding_boxes_4(net_t &net, route_tree_t &rt, const RRGraph &g
 
 			if (new_from == nullptr) {
 				const auto &nodes = route_tree_get_nodes(rt);
-				if (route_tree_empty(rt) || all_of(begin(nodes), end(nodes), [] (const RouteTreeNode &node) -> bool { return node.properties.pending_rip_up; })) {
+				if (route_tree_empty(rt) || all_of(begin(nodes), end(nodes), [&rt] (int node) -> bool { return get_vertex(rt.graph, node).properties.pending_rip_up; })) {
 					new_from = &get_vertex(g, net.source.rr_node);
 					sink.current_bounding_box = get_bounding_box(net.source, sink, sink.bb_factor);
 					zlog_level(scheduler_log, ROUTER_V2, "Net %d empty route tree. Setting sink %d bounding box to start from source\n", net.vpr_id, sink.id);
@@ -3039,10 +3044,11 @@ void test_graph()
 	unsigned long long sum1 = 0;
 	auto time = std::chrono::high_resolution_clock::now();
 
-	for (auto &v : get_vertices(g)) {
+	for (auto v : get_vertices(g)) {
 		/*printf("%d\n", v.properties);*/
-		v.properties = 1;
-		sum1 += v.properties;
+		auto &ver = get_vertex(g, v);
+		ver.properties = 1;
+		sum1 += ver.properties;
 	}
 
 	auto elapsed = std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::high_resolution_clock::now()-time);
@@ -3129,7 +3135,7 @@ bool partitioning_route_bounding_box(t_router_opts *opts)
 		state[i].rr_node = -1;
 		state[i].known_cost = std::numeric_limits<float>::max();
 		state[i].cost = std::numeric_limits<float>::max();
-		state[i].prev_edge = nullptr;
+		state[i].prev_edge = -1;
 		state[i].upstream_R = -1;
 		state[i].delay = std::numeric_limits<float>::max();
 	}
@@ -4945,7 +4951,7 @@ bool tbb_greedy_route(t_router_opts *opts)
 		state[i].rr_node = -1;
 		state[i].known_cost = std::numeric_limits<float>::max();
 		state[i].cost = std::numeric_limits<float>::max();
-		state[i].prev_edge = nullptr;
+		state[i].prev_edge = -1;
 		state[i].upstream_R = -1;
 		state[i].delay = std::numeric_limits<float>::max();
 	}
@@ -5409,7 +5415,7 @@ bool greedy_route(t_router_opts *opts)
 		state[i].rr_node = -1;
 		state[i].known_cost = std::numeric_limits<float>::max();
 		state[i].cost = std::numeric_limits<float>::max();
-		state[i].prev_edge = nullptr;
+		state[i].prev_edge = -1;
 		state[i].upstream_R = -1;
 		state[i].delay = std::numeric_limits<float>::max();
 	}
@@ -5942,7 +5948,7 @@ bool _old_greedy_route_4(t_router_opts *opts)
 		state[i].rr_node = -1;
 		state[i].known_cost = std::numeric_limits<float>::max();
 		state[i].cost = std::numeric_limits<float>::max();
-		state[i].prev_edge = nullptr;
+		state[i].prev_edge = -1;
 		state[i].upstream_R = -1;
 		state[i].delay = std::numeric_limits<float>::max();
 	}
@@ -6336,7 +6342,7 @@ bool _old_greedy_route_3(t_router_opts *opts)
 		state[i].rr_node = -1;
 		state[i].known_cost = std::numeric_limits<float>::max();
 		state[i].cost = std::numeric_limits<float>::max();
-		state[i].prev_edge = nullptr;
+		state[i].prev_edge = -1;
 		state[i].upstream_R = -1;
 		state[i].delay = std::numeric_limits<float>::max();
 	}
@@ -6679,7 +6685,7 @@ bool _old_greedy_route_2(t_router_opts *opts)
 		state[i].rr_node = -1;
 		state[i].known_cost = std::numeric_limits<float>::max();
 		state[i].cost = std::numeric_limits<float>::max();
-		state[i].prev_edge = nullptr;
+		state[i].prev_edge = -1;
 		state[i].upstream_R = -1;
 		state[i].delay = std::numeric_limits<float>::max();
 	}
@@ -7020,7 +7026,7 @@ bool partitioning_route(t_router_opts *opts)
 		state[i].rr_node = -1;
 		state[i].known_cost = std::numeric_limits<float>::max();
 		state[i].cost = std::numeric_limits<float>::max();
-		state[i].prev_edge = nullptr;
+		state[i].prev_edge = -1;
 		state[i].upstream_R = -1;
 		state[i].delay = std::numeric_limits<float>::max();
 	}

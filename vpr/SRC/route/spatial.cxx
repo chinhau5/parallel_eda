@@ -19,17 +19,19 @@
 #include "init.h"
 #include "func.h"
 #include "partition.h"
+#include "fm.h"
 
 void get_stats(const RRGraph &g)
 {
 	for (const auto &v : get_vertices(g)) {
-		if (v.properties.type == CHANX || v.properties.type == CHANY) {
+		const auto &ver = get_vertex(g, v);
+		if (ver.properties.type == CHANX || ver.properties.type == CHANY) {
 		}
 	}
 }
 
 template<typename VertexProperties, typename EdgeProperties, typename EdgeFilter>
-void custom_minimum_spanning_tree(const graph_t<VertexProperties, EdgeProperties> &g, const EdgeFilter &edge_valid, vector<edge_t<EdgeProperties>> &edges)
+void custom_minimum_spanning_tree(const graph_t<VertexProperties, EdgeProperties> &g, const EdgeFilter &edge_valid, vector<int> &edges)
 {
 	vector<bool> in_tree(num_vertices(g), false);
 
@@ -38,12 +40,12 @@ void custom_minimum_spanning_tree(const graph_t<VertexProperties, EdgeProperties
 			continue;
 		}
 
-		const auto &from = get_source(g, e);
-		const auto &to = get_target(g, e);
-		if (!in_tree[id(from)] || !in_tree[id(to)]) {
+		int from = get_source(g, e);
+		int to = get_target(g, e);
+		if (!in_tree[from] || !in_tree[to]) {
 			edges.push_back(e);
-			in_tree[id(from)] = true;
-			in_tree[id(to)] = true;
+			in_tree[from] = true;
+			in_tree[to] = true;
 		}
 	}
 
@@ -55,17 +57,17 @@ static void dump_rr_graph(const RRGraph &g, const char *filename)
 	FILE *dump = fopen(filename, "w");
 	char buffer[256];
 	for (const auto &v : get_vertices(g)) {
-		sprintf_rr_node(id(v), buffer);
+		sprintf_rr_node(v, buffer);
 
 		fprintf(dump, "%s Num out edges: %d\n", buffer, num_out_edges(g, v));
 
 		for (const auto &e : get_out_edges(g, v)) {
-			const auto &to = get_target(g, e);
+			int to = get_target(g, e);
 
-			sprintf_rr_node(id(v), buffer);
+			sprintf_rr_node(v, buffer);
 			fprintf(dump, "\t%s -> ", buffer);
 
-			sprintf_rr_node(id(to), buffer);
+			sprintf_rr_node(to, buffer);
 			fprintf(dump, "%s\n", buffer);
 		}
 	}
@@ -77,8 +79,8 @@ static void dump_edges(const RRGraph &g, const char *filename)
 	FILE *dump = fopen(filename, "w");
 	char buffer[256];
 	for (const auto &e : get_edges(g)) {
-		int from = id(get_source(g, e));
-		int to = id(get_target(g, e));
+		int from = get_source(g, e);
+		int to = get_target(g, e);
 
 		sprintf_rr_node(from, buffer);
 		fprintf(dump, "%s -> ", buffer);
@@ -131,8 +133,8 @@ void partition_graph(const RRGraph &g, int num_partitions, const vector<int> &ve
 
 	vector<vector<int>> redundant_edges(num_vertices(g));
 	for (const auto &e : get_edges(g)) {
-		int from = id(get_source(g, e));
-		int to = id(get_target(g, e));
+		int from = get_source(g, e);
+		int to = get_target(g, e);
 	
 		redundant_edges[to].push_back(from);
 	}
@@ -141,8 +143,8 @@ void partition_graph(const RRGraph &g, int num_partitions, const vector<int> &ve
 	for (int i = 0; i < num_vertices(g); ++i) {
 		xadj[i] = edge;
 		const auto &v = get_vertex(g, i);
-		for (const auto &e : get_out_edges(g, v)) {
-			adjncy[edge] = id(get_target(g, e));
+		for (const auto &e : get_out_edges(g, i)) {
+			adjncy[edge] = get_target(g, e);
 			++edge;
 		}
 		for (const auto &v : redundant_edges[i]) {
@@ -214,27 +216,56 @@ void test_partition_graph()
 	}
 }
 
+void test_fm()
+{
+	struct imbalance_t {
+		bool is_imbalanced(int v, int to, int &imba) const
+		{
+			imba = 0;
+			return false;
+		}
+		
+		void move(int v, int to)
+		{
+		}
+	};
+	RRGraph g;
+	add_vertex(g, 4);
+
+	add_edge(g, 0, 1);
+	add_edge(g, 1, 0);
+
+	add_edge(g, 0, 2);
+	add_edge(g, 2, 0);
+
+	fm<RRGraph, imbalance_t> f;
+	imbalance_t imba;
+	vector<int> initial_partition = { 0, 0, 0, 0 };
+	f.init(g, initial_partition, imba);
+	f.run();
+}
+
 enum class VertexColor {
 	WHITE,
 	GRAY,
 	BLACK
 };
 
-template<typename Visitor>
+template<typename Graph, typename Visitor>
 //void bfs(const RRGraph &g, const RRNode &rr_node, bool horizontal, bool inc_direction, vector<bool> &visited, vector<int> &visited_edges) 
-void bfs(const RRGraph &g, const vector<RRNode> &rr_nodes, vector<VertexColor> &color, Visitor &visitor)
+void bfs(const Graph &g, const vector<unsigned long> &rr_nodes, vector<VertexColor> &color, Visitor &visitor)
 {
 	//struct queue_item {
 		//const RRNode *node;
 		//const RREdge *edge;
 	//};
 
-	std::queue<const RRNode *> s;
-	for (const auto &rr_node : rr_nodes) {
-		assert(color[id(rr_node)] == VertexColor::WHITE);
+	std::queue<int> s;
+	for (auto rr_node : rr_nodes) {
+		assert(color[rr_node] == VertexColor::WHITE);
 		visitor.discover_vertex(rr_node, g);
-		s.push(&rr_node);
-		color[id(rr_node)] = VertexColor::GRAY;
+		s.push(rr_node);
+		color[rr_node] = VertexColor::GRAY;
 	}
 
 	//extern int nx, ny;
@@ -249,9 +280,9 @@ void bfs(const RRGraph &g, const vector<RRNode> &rr_nodes, vector<VertexColor> &
 	//extern zlog_category_t *delta_log;
 
 	while (!s.empty()) {
-		const RRNode *current = s.front();
+		int current = s.front();
 		s.pop();
-		visitor.examine_vertex(*current, g);
+		visitor.examine_vertex(current, g);
 		//int rr_node_id = id(*current);
 		//sprintf_rr_node(rr_node_id, buffer);
 		//zlog_level(delta_log, ROUTER_V3, "Current: %s Add: %d\n", buffer, item.add ? 1 : 0);
@@ -267,21 +298,21 @@ void bfs(const RRGraph &g, const vector<RRNode> &rr_nodes, vector<VertexColor> &
 		//}
 		//}
 
-		for (const auto &e : get_out_edges(g, *current)) {
+		for (auto e : get_out_edges(g, current)) {
 			visitor.examine_edge(e, g);
-			const auto &neighbor = get_target(g, e);
+			int neighbor = get_target(g, e);
 			//if (!((current.properties.type == CHANX || current.properties.type == CHANY) &&
 			//(neighbor.properties.type == CHANX || neighbor.properties.type == CHANY))
 			//|| current.properties.inc_direction == neighbor.properties.inc_direction) {
 			//s.push({ &neighbor, &e });
 			//}
 
-			VertexColor vc = color[id(neighbor)];
+			VertexColor vc = color[neighbor];
 			if (vc == VertexColor::WHITE) {
 				visitor.tree_edge(e, g);
 				visitor.discover_vertex(neighbor, g);
-				s.push(&neighbor);
-				color[id(neighbor)] = VertexColor::GRAY;
+				s.push(neighbor);
+				color[neighbor] = VertexColor::GRAY;
 				//sprintf_rr_node(id(neighbor), buffer);
 				//zlog_level(delta_log, ROUTER_V3, "\tNeighbor: %s Parent add: %d Parent visit: %d\n", buffer, item.add ? 1 : 0, visit_current ? 1 : 0);
 			} else if (vc == VertexColor::GRAY) {
@@ -304,68 +335,186 @@ void bfs(const RRGraph &g, const vector<RRNode> &rr_nodes, vector<VertexColor> &
 			//s.push({ &neighbor, &e });
 			//}
 		} 
-		color[id(*current)] = VertexColor::BLACK;
+		color[current] = VertexColor::BLACK;
 	}
 }
 
-template<typename ValidVertex2>
+//template<typename ValidVertex2>
+//struct connected_components_visitor_t {
+	//vector<int> visited_edges;
+	////vector<int> visited_nodes;
+	//const ValidVertex2 &valid_vertex;
+
+	//connected_components_visitor_t(const ValidVertex2 &valid_vertex) :
+		//valid_vertex(valid_vertex)
+	//{
+	//}
+
+	//void tree_edge(int e, const RRGraph &g)
+	//{
+		//if (valid_vertex(get_vertex(g, get_source(g, e))) && valid_vertex(get_vertex(g, get_target(g, e)))) {
+			//visited_edges.push_back(e);
+		//}
+	//}
+
+	//void examine_edge(int e, const RRGraph &g)
+	//{
+	//}
+
+	//void discover_vertex(int v, const RRGraph &g)
+	//{
+		////if (valid_vertex(get_vertex(g, v))) {
+			////visited_nodes.push_back(v);
+		////}
+	//}
+
+	//void examine_vertex(int v, const RRGraph &g)
+	//{
+	//}
+//};
+
 struct connected_components_visitor_t {
 	vector<int> visited_edges;
 	vector<int> visited_nodes;
-	const ValidVertex2 &valid_vertex;
 
-	connected_components_visitor_t(const ValidVertex2 &valid_vertex) :
-		valid_vertex(valid_vertex)
+	template<typename Graph>
+	void tree_edge(int e, const Graph &g)
+	{
+		assert(find(begin(visited_edges), end(visited_edges), e) == end(visited_edges));
+		visited_edges.push_back(e);
+	}
+
+	template<typename Graph>
+	void examine_edge(int e, const Graph &g)
 	{
 	}
 
-	void tree_edge(const RREdge &e, const RRGraph &g)
+	template<typename Graph>
+	void discover_vertex(int v, const Graph &g)
 	{
-		if (valid_vertex(get_source(g, e)) && valid_vertex(get_target(g, e))) {
-			visited_edges.push_back(id(e));
-		}
+		assert(find(begin(visited_nodes), end(visited_nodes), v) == end(visited_nodes));
+		visited_nodes.push_back(v);
 	}
 
-	void examine_edge(const RREdge &e, const RRGraph &g)
-	{
-	}
-
-	void discover_vertex(const RRNode &v, const RRGraph &g)
-	{
-		if (valid_vertex(v)) {
-			visited_nodes.push_back(id(v));
-		}
-	}
-
-	void examine_vertex(const RRNode &v, const RRGraph &g)
+	template<typename Graph>
+	void examine_vertex(int v, const Graph &g)
 	{
 	}
 };
 
-template<typename VertexProperties, typename EdgeProperties, typename ValidVertex>
-void connected_components(const graph_t<VertexProperties, EdgeProperties> &g, const ValidVertex &valid_vertex, vector<vector<int>> &components)
+template<template<typename, typename> class Graph, typename VertexProperties, typename EdgeProperties>
+void connected_components_convert_to_undirected(const Graph<VertexProperties, EdgeProperties> &in, graph_t<VertexProperties, EdgeProperties> &out)
 {
-	graph_t<VertexProperties, EdgeProperties> temp_g = g;
-	//add_vertex(temp_g, num_vertices(g));
-	for (const auto &e : get_edges(g)) {
-		int from = id(get_source(g, e));
-		int to = id(get_target(g, e));
-		/* add reverse edge */
-		add_edge(temp_g, to, from);
+	add_vertex(out, num_vertices(in));
+	for (const auto &v : get_vertices(in)) {
+		get_vertex(out, v).properties = get_vertex(in, v).properties;
 	}
 
-	vector<VertexColor> color(num_vertices(temp_g), VertexColor::WHITE);
+	for (const auto &e : get_edges(in)) {
+		int from = get_source(in, e);
+		int to = get_target(in, e);
+		/* add reverse edge */
+		add_edge(out, from, to).properties = get_edge(in, e).properties;
+		add_edge(out, to, from).properties = get_edge(in, e).properties;
+	}
+}
 
-	for (const auto &v : get_vertices(temp_g)) {
-		if (valid_vertex(v) && color[id(v)] == VertexColor::WHITE) {
+template<template<typename, typename> class Graph, typename VertexProperties, typename EdgeProperties>
+void connected_components(const Graph<VertexProperties, EdgeProperties> &g, vector<vector<int>> &components)
+{
+	vector<VertexColor> color(num_vertices(g), VertexColor::WHITE);
 
-			connected_components_visitor_t<ValidVertex> visitor(valid_vertex);
-			bfs(temp_g, { v }, color, visitor);
+	for (const auto &v : get_vertices(g)) {
+		if (color[v] == VertexColor::WHITE) {
+			connected_components_visitor_t visitor;
+			bfs(g, { v }, color, visitor);
 			assert(visitor.visited_nodes.size() == visitor.visited_edges.size()+1);
 
 			components.emplace_back(visitor.visited_nodes);
 		}
 	}
+}
+
+//template<typename VertexProperties, typename EdgeProperties, typename ValidVertex>
+//void connected_components(const graph_t<VertexProperties, EdgeProperties> &g, const ValidVertex &valid_vertex, vector<vector<int>> &components)
+//{
+	//graph_t<VertexProperties, EdgeProperties> temp_g = g;
+	////add_vertex(temp_g, num_vertices(g));
+	//for (const auto &e : get_edges(g)) {
+		//int from = get_source(g, e);
+		//int to = get_target(g, e);
+		//[> add reverse edge <]
+		//add_edge(temp_g, to, from);
+	//}
+
+	//vector<VertexColor> color(num_vertices(temp_g), VertexColor::WHITE);
+
+	//for (const auto &v : get_vertices(temp_g)) {
+		//if (valid_vertex(get_vertex(g, v)) && color[v] == VertexColor::WHITE) {
+
+			//connected_components_visitor_t<ValidVertex> visitor(valid_vertex);
+			//bfs(temp_g, { v }, color, visitor);
+			//set<int> visited_nodes;
+			//for (const auto &e : visitor.visited_edges) {
+				//visited_nodes.insert(get_source(temp_g, e));
+				//visited_nodes.insert(get_target(temp_g, e));
+			//}
+			//assert(visited_nodes.size() == visitor.visited_edges.size()+1);
+
+			//components.emplace_back(vector<int>(begin(visited_nodes), end(visited_nodes)));
+		//}
+	//}
+//}
+
+void test_filter_graph()
+{
+	graph_t<int, int> g;
+
+	add_vertex(g, 4);
+
+	add_edge(g, 0, 1);
+	add_edge(g, 0, 2);
+	add_edge(g, 1, 3);
+
+	/* no filter */
+	filtered_graph_t<int, int> fg1(g, nullptr, nullptr);
+
+	const auto &viter1 = get_vertices(fg1);
+	vector<unsigned long> vs1(begin(viter1), end(viter1));
+
+	assert(vs1.size() == 4);
+	assert(vs1[0] == 0);
+	assert(vs1[1] == 1);
+	assert(vs1[2] == 2);
+	assert(vs1[3] == 3);
+
+	const auto &eiter1 = get_edges(fg1);
+	vector<int> es1(begin(eiter1), end(eiter1));
+
+	assert(es1.size() == 3);
+	assert(get_source(fg1, es1[0]) == 0 && get_target(fg1, es1[0]) == 1);
+	assert(get_source(fg1, es1[1]) == 0 && get_target(fg1, es1[1]) == 2);
+	assert(get_source(fg1, es1[2]) == 1 && get_target(fg1, es1[2]) == 3);
+
+	/* filtered */
+	vector<bool> vf1 = { true, false, false, true };
+	vector<bool> ef1 = { true, false, true };
+
+	filtered_graph_t<int, int> fg2(g, &vf1, &ef1);
+
+	const auto &viter2 = get_vertices(fg2);
+	vector<unsigned long> vs2(begin(viter2), end(viter2));
+
+	assert(vs2.size() == 2);
+	assert(vs2[0] == 0);
+	assert(vs2[1] == 3);
+
+	const auto &eiter2 = get_edges(fg2);
+	vector<int> es2(begin(eiter2), end(eiter2));
+
+	assert(es2.size() == 2);
+	assert(get_source(fg2, es2[0]) == 0 && get_target(fg2, es2[0]) == 1);
+	assert(get_source(fg2, es2[1]) == 1 && get_target(fg2, es2[1]) == 3);
 }
 
 void test_connected_components()
@@ -374,13 +523,19 @@ void test_connected_components()
 	add_vertex(g, 6);
 
 	add_edge(g, 0, 1);
+	add_edge(g, 1, 0);
+
 	add_edge(g, 1, 2);
+	add_edge(g, 2, 1);
 
 	add_edge(g, 3, 4);
+	add_edge(g, 4, 3);
+	
 	add_edge(g, 4, 5);
+	add_edge(g, 5, 4);
 
 	vector<vector<int>> components;
-	connected_components(g, [] (const RRNode &v) -> bool { return true; }, components);
+	connected_components(g, components);
 
 	assert(components.size() == 2);
 	assert(components[0] == vector<int>({ 0, 1, 2 }));
@@ -390,13 +545,19 @@ void test_connected_components()
 	add_vertex(g2, 6);
 
 	add_edge(g2, 1, 0);
+	add_edge(g2, 0, 1);
+
 	add_edge(g2, 1, 2);
+	add_edge(g2, 2, 1);
 
 	add_edge(g2, 5, 4);
+	add_edge(g2, 4, 5);
+
 	add_edge(g2, 3, 4);
+	add_edge(g2, 4, 3);
 
 	vector<vector<int>> components2;
-	connected_components(g2, [] (const RRNode &v) -> bool { return true; }, components2);
+	connected_components(g2, components2);
 
 	assert(components2.size() == 2);
 	assert(components2[0] == vector<int>({ 0, 1, 2 }));
@@ -486,28 +647,27 @@ struct visitor_2_t {
 	{
 	}
 
-	void tree_edge(const RREdge &e, const RRGraph &g)
+	void tree_edge(int e, const RRGraph &g)
 	{
-		int source_id = id(get_source(g, e));
+		int source_id = get_source(g, e);
 		assert((*color)[source_id] == VertexColor::GRAY);
 		if (find(begin(visited_nodes), end(visited_nodes), source_id) != end(visited_nodes)) {
-			if (record_source(get_target(g, e), distance[source_id]+1, source_id)) {
-				visited_edges.push_back(id(e));
+			if (record_source(g, get_target(g, e), distance[source_id]+1, source_id)) {
+				visited_edges.push_back(e);
 			}
 		}
 	}
 
-	void examine_edge(const RREdge &e, const RRGraph &g)
+	void examine_edge(int e, const RRGraph &g)
 	{
 	}
 
-	void discover_vertex(const RRNode &v, const RRGraph &g)
+	void discover_vertex(int v, const RRGraph &g)
 	{
-		int v_id = id(v);
-		int d = distance[v_id];
+		int d = distance[v];
 		if (d < std::numeric_limits<int>::max()) {
 			char buffer[256];
-			sprintf_rr_node(v_id, buffer);
+			sprintf_rr_node(v, buffer);
 			for (int i = 0; i < d; ++i) {
 				zlog_level(delta_log, ROUTER_V3, "\t");
 			}
@@ -516,17 +676,18 @@ struct visitor_2_t {
 		++num_nodes_discovered;
 	}
 
-	void examine_vertex(const RRNode &v, const RRGraph &g)
+	void examine_vertex(int v, const RRGraph &g)
 	{
 	}
 
-	bool record_source(const RRNode &v, int d, int p)
+	bool record_source(const RRGraph &g, int v, int d, int p)
 	{
-		int v_id = id(v);
-		assert((*color)[v_id] == VertexColor::WHITE);
+		assert((*color)[v] == VertexColor::WHITE);
 
-		const auto &start = get_node_start(v_id);
-		const auto &key = make_tuple(start.first, start.second, v.properties.type, v.properties.inc_direction);
+		const auto &ver = get_vertex(g, v);
+
+		const auto &start = get_node_start(v);
+		const auto &key = make_tuple(start.first, start.second, ver.properties.type, ver.properties.inc_direction);
 
 		auto d_iter = channel_distance.find(key);
 		auto iter = visited_channels.find(key);
@@ -545,13 +706,13 @@ struct visitor_2_t {
 		}
 
 		if (record) {
-			assert(all_visited_nodes->find(v_id) == all_visited_nodes->end());
-			assert(find(begin(visited_nodes), end(visited_nodes), v_id) == end(visited_nodes));
-			visited_nodes.push_back(v_id);
+			assert(all_visited_nodes->find(v) == all_visited_nodes->end());
+			assert(find(begin(visited_nodes), end(visited_nodes), v) == end(visited_nodes));
+			visited_nodes.push_back(v);
 		}
 
-		distance[v_id] = d;
-		pred[v_id] = p;
+		distance[v] = d;
+		pred[v] = p;
 
 		return record;
 	}
@@ -584,44 +745,45 @@ struct visitor_t {
 	{
 	}
 
-	void tree_edge(const RREdge &e, const RRGraph &g)
+	void tree_edge(int e, const RRGraph &g)
 	{
-		assert((*color)[id(get_source(g, e))] == VertexColor::GRAY);
-		if (find(begin(visited_nodes), end(visited_nodes), id(get_source(g, e))) != end(visited_nodes)) {
-			bool recorded_to = record(get_target(g, e));
+		assert((*color)[get_source(g, e)] == VertexColor::GRAY);
+		if (find(begin(visited_nodes), end(visited_nodes), get_source(g, e)) != end(visited_nodes)) {
+			bool recorded_to = record(g, get_target(g, e));
 			if (recorded_to) {
-				visited_edges.push_back(id(e));
+				visited_edges.push_back(e);
 			}
 		}
 	}
 
-	void examine_edge(const RREdge &e, const RRGraph &g)
+	void examine_edge(int e, const RRGraph &g)
 	{
 	}
 
-	void discover_vertex(const RRNode &v, const RRGraph &g)
+	void discover_vertex(int v, const RRGraph &g)
 	{
 		char buffer[256];
-		sprintf_rr_node(id(v), buffer);
+		sprintf_rr_node(v, buffer);
 		zlog_level(delta_log, ROUTER_V3, "Current: %s\n", buffer);
 		++num_nodes_discovered;
 	}
 
-	void examine_vertex(const RRNode &v, const RRGraph &g)
+	void examine_vertex(int v, const RRGraph &g)
 	{
 	}
 
-	bool record(const RRNode &v)
+	bool record(const RRGraph &g, int v)
 	{
-		const auto &start = get_node_start(id(v));
-		const auto &key = make_tuple(start.first, start.second, v.properties.type, v.properties.inc_direction);
+		const auto &ver = get_vertex(g, v);
+		const auto &start = get_node_start(v);
+		const auto &key = make_tuple(start.first, start.second, ver.properties.type, ver.properties.inc_direction);
 		bool recorded;
 		if (visited_channels.find(key) == visited_channels.end()) {
 			visited_channels.insert(key);
-			assert((*color)[id(v)] != VertexColor::BLACK);
-			assert(find(begin(visited_nodes), end(visited_nodes), id(v)) == end(visited_nodes));
-			assert(all_visited_nodes->find(id(v)) == all_visited_nodes->end());
-			visited_nodes.push_back(id(v));
+			assert((*color)[v] != VertexColor::BLACK);
+			assert(find(begin(visited_nodes), end(visited_nodes), v) == end(visited_nodes));
+			assert(all_visited_nodes->find(v) == all_visited_nodes->end());
+			visited_nodes.push_back(v);
 			recorded = true;
 		} else {
 			recorded = false;
@@ -629,32 +791,33 @@ struct visitor_t {
 		return recorded;
 	}
 
-	bool record_source(const RRNode &v, int d, int p)
-	{
-		const auto &start = get_node_start(id(v));
-		const auto &key = make_tuple(start.first, start.second, v.properties.type, v.properties.inc_direction);
+	bool record_source(const RRGraph &g, int v, int d, int p)
+	{	
+		const auto &ver = get_vertex(g, v);
+		const auto &start = get_node_start(v);
+		const auto &key = make_tuple(start.first, start.second, ver.properties.type, ver.properties.inc_direction);
 
 		if (visited_channels.find(key) == visited_channels.end()) {
 			visited_channels.insert(key);
 		} 
 
-		assert((*color)[id(v)] != VertexColor::BLACK);
-		assert(all_visited_nodes->find(id(v)) == all_visited_nodes->end());
-		assert(find(begin(visited_nodes), end(visited_nodes), id(v)) == end(visited_nodes));
-		visited_nodes.push_back(id(v));
+		assert((*color)[v] != VertexColor::BLACK);
+		assert(all_visited_nodes->find(v) == all_visited_nodes->end());
+		assert(find(begin(visited_nodes), end(visited_nodes), v) == end(visited_nodes));
+		visited_nodes.push_back(v);
 
 		return true;
 	}
 };
 
 template<typename Visitor>
-void bfs_checked(const RRGraph &g, const vector<RRNode> &nodes, vector<VertexColor> &color, Visitor &visitor, set<int> &all_visited_nodes, set<int> &all_visited_edges)
+void bfs_checked(const RRGraph &g, const vector<unsigned long> &nodes, vector<VertexColor> &color, Visitor &visitor, set<int> &all_visited_nodes, set<int> &all_visited_edges)
 {
 	visitor.color = &color;
 	visitor.all_visited_nodes = &all_visited_nodes;
 
 	for (const auto &node : nodes) {
-		assert(visitor.record_source(node, 0, -1));
+		assert(visitor.record_source(g, node, 0, -1));
 	}
 
 	bfs(g, nodes, color, visitor);
@@ -679,16 +842,16 @@ void bfs_checked(const RRGraph &g, const vector<RRNode> &nodes, vector<VertexCol
 	assert(visited_nodes_set.size() == visitor.visited_nodes.size());
 	/* make sure our starting points are inside the visited nodes */
 	for (const auto &node : nodes) {
-		assert(visited_nodes_set.find(id(node)) != visited_nodes_set.end());
+		assert(visited_nodes_set.find(node) != visited_nodes_set.end());
 	}
 	/* generate visited node set from edges just to double check */
 	set<int> visited_nodes_from_edges;
 	for (const auto &node : nodes) {
-		visited_nodes_from_edges.insert(id(node));
+		visited_nodes_from_edges.insert(node);
 	}
 	for (const auto &e : visitor.visited_edges) {
-		visited_nodes_from_edges.insert(id(get_source(g, get_edge(g, e))));
-		visited_nodes_from_edges.insert(id(get_target(g, get_edge(g, e))));
+		visited_nodes_from_edges.insert(get_source(g, e));
+		visited_nodes_from_edges.insert(get_target(g, e));
 	}
 	assert(visited_nodes_set == visited_nodes_from_edges);
 	/* check that sum of visited channels is equal to num of visited nodes */
@@ -763,13 +926,13 @@ void init_partitioned_graph_6(int num_partitions, const RRGraph &channel_with_in
 		//int inc = ceil((float)real_num_tracks/num_partitions);
 		for (int i = 0, batch = 0; i < starting_wires.size(); ++batch, ++part) {
 		//for (int i = 0, batch = 0; i < real_num_tracks; ++batch, ++part) {
-			vector<RRNode> sources;
+			vector<unsigned long> sources;
 			for (int j = 0; j < inc && i < starting_wires.size(); ++j, ++i) {
 			//for (int j = 0; j < inc && i < real_num_tracks; ++j, ++i) {
 				int source_rr_node_id = starting_wires[i];
 				//int source_rr_node_id = get_rr_node_index(source_x, source_y, pass == 0 ? CHANX : CHANY, i, rr_node_indices); 
 				assert(color[source_rr_node_id] == VertexColor::WHITE);
-				sources.push_back(get_vertex(channel_without_interior_g, source_rr_node_id));
+				sources.push_back(source_rr_node_id);
 				char buffer[256];
 				sprintf_rr_node(source_rr_node_id, buffer);
 				printf("first stage batch %d source %d: %s\n", batch, j, buffer);
@@ -837,7 +1000,8 @@ void init_partitioned_graph_6(int num_partitions, const RRGraph &channel_with_in
 
 	int num_channels = 0;
 	for (const auto &v : get_vertices(orig_g)) {
-		if (v.properties.type == CHANX || v.properties.type == CHANY) {
+		const auto &ver = get_vertex(orig_g, v);
+		if (ver.properties.type == CHANX || ver.properties.type == CHANY) {
 			++num_channels;
 		}
 	}
@@ -848,8 +1012,9 @@ void init_partitioned_graph_6(int num_partitions, const RRGraph &channel_with_in
 	FILE *file = fopen(filename, "w");
 	int num_unvisited_nodes = 0;
 	for (const auto &v : get_vertices(orig_g)) {
-		if ((v.properties.type == CHANX || v.properties.type == CHANY) && all_visited_nodes.find(id(v)) == all_visited_nodes.end()) {
-			const auto &start = get_node_start(id(v));
+		const auto &ver = get_vertex(orig_g, v);
+		if ((ver.properties.type == CHANX || ver.properties.type == CHANY) && all_visited_nodes.find(v) == all_visited_nodes.end()) {
+			const auto &start = get_node_start(v);
 			fprintf(file, "%d %d\n", start.first, start.second);
 			++num_unvisited_nodes;
 		}
@@ -871,9 +1036,9 @@ void init_partitioned_graph_6(int num_partitions, const RRGraph &channel_with_in
 	}
 
 	for (const auto &e : get_edges(channel_with_interior_g)) {
-		int from = id(get_source(channel_with_interior_g, e));
-		int to = id(get_target(channel_with_interior_g, e));
-		if (!has_edge(channel_without_interior_g, from, to) || all_visited_edges.find(id(get_edge(channel_without_interior_g, from, to))) ==
+		int from = get_source(channel_with_interior_g, e);
+		int to = get_target(channel_with_interior_g, e);
+		if (!has_edge(channel_without_interior_g, from, to) || all_visited_edges.find(get_edge(channel_without_interior_g, from, to)) ==
 					all_visited_edges.end()) {
 			if (!(partition[from] == -1 && partition[to] == -1)) {
 				char buffer[256];
@@ -923,8 +1088,8 @@ void init_partitioned_graph_6(int num_partitions, const RRGraph &channel_with_in
 		int num_intra_partiton_interior_edges = 0;
 		int num_interior_edges = 0;
 		for (const auto &e : get_edges(channel_with_interior_g)) {
-			int from = id(get_source(channel_with_interior_g, e));
-			int to = id(get_target(channel_with_interior_g, e));
+			int from = get_source(channel_with_interior_g, e);
+			int to = get_target(channel_with_interior_g, e);
 
 			if (!has_edge(channel_without_interior_g, from, to)) {
 				++num_interior_edges;
@@ -936,7 +1101,8 @@ void init_partitioned_graph_6(int num_partitions, const RRGraph &channel_with_in
 				}
 
 				RREdge &new_e = add_edge(new_g, from, to);
-				new_e.properties = e.properties;
+				const auto &edge = get_edge(channel_with_interior_g, e);
+				new_e.properties = edge.properties;
 			}
 		}
 
@@ -945,7 +1111,9 @@ void init_partitioned_graph_6(int num_partitions, const RRGraph &channel_with_in
 		printf("graph %d num intra partition interior edges/num interior edges = %d/%d (%g)\n", i, num_intra_partiton_interior_edges, num_interior_edges, (float)num_intra_partiton_interior_edges/num_interior_edges*100);
 
 		vector<vector<int>> components;
-		connected_components(new_g, [] (const RRNode &v) -> bool { return v.properties.type == CHANX || v.properties.type == CHANY; }, components);
+		vector<bool> vf(num_vertices(new_g));
+		vector<bool> ef(num_edges(new_g));
+		connected_components(make_filtered_graph(new_g, &vf, &ef), components);
 		int total_num_nodes_in_components = 0;
 		for (const auto &comp : components) {
 			total_num_nodes_in_components += comp.size();
@@ -972,8 +1140,8 @@ void init_partitioned_graph_6(int num_partitions, const RRGraph &channel_with_in
 
 		int temp_num_misc_edges = 0;
 		for (const auto &e : get_edges(orig_g)) {
-			const auto &from = get_source(orig_g, e);
-			const auto &to = get_target(orig_g, e);
+			const auto &from = get_vertex(orig_g, get_source(orig_g, e));
+			const auto &to = get_vertex(orig_g, get_target(orig_g, e));
 
 			if ((from.properties.type == CHANX || from.properties.type == CHANY) && 
 					(to.properties.type == CHANX || to.properties.type == CHANY)) {
@@ -981,7 +1149,8 @@ void init_partitioned_graph_6(int num_partitions, const RRGraph &channel_with_in
 			}
 
 			RREdge &new_e = add_edge(new_g, id(from), id(to));
-			new_e.properties = e.properties;
+			const auto &edge = get_edge(orig_g, e);
+			new_e.properties = edge.properties;
 
 			++temp_num_misc_edges;
 		}
@@ -1038,44 +1207,45 @@ void init_partitioned_graph_5(int num_partitions, const RRGraph &channel_with_in
 		{
 		}
 
-		void tree_edge(const RREdge &e, const RRGraph &g)
+		void tree_edge(int e, const RRGraph &g)
 		{
-			assert((*color)[id(get_source(g, e))] == VertexColor::GRAY);
-			if (find(begin(visited_nodes), end(visited_nodes), id(get_source(g, e))) != end(visited_nodes)) {
-				bool recorded_to = record(get_target(g, e));
+			assert((*color)[get_source(g, e)] == VertexColor::GRAY);
+			if (find(begin(visited_nodes), end(visited_nodes), get_source(g, e)) != end(visited_nodes)) {
+				bool recorded_to = record(g, get_target(g, e));
 				if (recorded_to) {
-					visited_edges.push_back(id(e));
+					visited_edges.push_back(e);
 				}
 			}
 		}
 
-		void examine_edge(const RREdge &e, const RRGraph &g)
+		void examine_edge(int e, const RRGraph &g)
 		{
 		}
 
-		void discover_vertex(const RRNode &v, const RRGraph &g)
+		void discover_vertex(int v, const RRGraph &g)
 		{
 			char buffer[256];
-			sprintf_rr_node(id(v), buffer);
+			sprintf_rr_node(v, buffer);
 			zlog_level(delta_log, ROUTER_V3, "Current: %s\n", buffer);
 			++num_nodes_discovered;
 		}
 
-		void examine_vertex(const RRNode &v, const RRGraph &g)
+		void examine_vertex(int v, const RRGraph &g)
 		{
 		}
 
-		bool record(const RRNode &v)
+		bool record(const RRGraph &g, int v)
 		{
-			const auto &start = get_node_start(id(v));
-			const auto &key = make_tuple(start.first, start.second, v.properties.type, v.properties.inc_direction);
+			const auto &ver = get_vertex(g, v);
+			const auto &start = get_node_start(v);
+			const auto &key = make_tuple(start.first, start.second, ver.properties.type, ver.properties.inc_direction);
 			bool recorded;
 			if (visited_channels.find(key) == visited_channels.end()) {
 				visited_channels.insert(key);
-				assert((*color)[id(v)] != VertexColor::BLACK);
-				assert(find(begin(visited_nodes), end(visited_nodes), id(v)) == end(visited_nodes));
-				assert(all_visited_nodes->find(id(v)) == all_visited_nodes->end());
-				visited_nodes.push_back(id(v));
+				assert((*color)[v] != VertexColor::BLACK);
+				assert(find(begin(visited_nodes), end(visited_nodes), v) == end(visited_nodes));
+				assert(all_visited_nodes->find(v) == all_visited_nodes->end());
+				visited_nodes.push_back(v);
 				recorded = true;
 			} else {
 				recorded = false;
@@ -1122,8 +1292,8 @@ void init_partitioned_graph_5(int num_partitions, const RRGraph &channel_with_in
 			visitor_t visitor;
 			visitor.color = &color;
 			visitor.all_visited_nodes = &all_visited_nodes;
-			assert(visitor.record(source));
-			bfs(channel_without_interior_g, { source }, color, visitor);
+			assert(visitor.record(channel_without_interior_g, source_rr_node_id));
+			bfs(channel_without_interior_g, { static_cast<unsigned long>(source_rr_node_id) }, color, visitor);
 
 			for (const auto &v : visitor.visited_nodes) {
 				assert(all_visited_nodes.find(v) == all_visited_nodes.end());
@@ -1138,13 +1308,13 @@ void init_partitioned_graph_5(int num_partitions, const RRGraph &channel_with_in
 			set<int> debug_visited_nodes(begin(visitor.visited_nodes), end(visitor.visited_nodes));
 			assert(debug_visited_nodes.size() == visitor.visited_nodes.size());
 
-			assert(debug_visited_nodes.find(id(source)) != debug_visited_nodes.end());
+			assert(debug_visited_nodes.find(source_rr_node_id) != debug_visited_nodes.end());
 
 			set<int> debug_visited_nodes_2;
-			debug_visited_nodes_2.insert(id(source));
+			debug_visited_nodes_2.insert(source_rr_node_id);
 			for (const auto &e : visitor.visited_edges) {
-				debug_visited_nodes_2.insert(id(get_source(channel_without_interior_g, get_edge(channel_without_interior_g, e))));
-				debug_visited_nodes_2.insert(id(get_target(channel_without_interior_g, get_edge(channel_without_interior_g, e))));
+				debug_visited_nodes_2.insert(get_source(channel_without_interior_g, e));
+				debug_visited_nodes_2.insert(get_target(channel_without_interior_g, e));
 			}
 			assert(debug_visited_nodes == debug_visited_nodes_2);
 
@@ -1201,7 +1371,8 @@ void init_partitioned_graph_5(int num_partitions, const RRGraph &channel_with_in
 
 	int num_channels = 0;
 	for (const auto &v : get_vertices(orig_g)) {
-		if (v.properties.type == CHANX || v.properties.type == CHANY) {
+		const auto &ver = get_vertex(orig_g, v);
+		if (ver.properties.type == CHANX || ver.properties.type == CHANY) {
 			++num_channels;
 		}
 	}
@@ -1212,8 +1383,9 @@ void init_partitioned_graph_5(int num_partitions, const RRGraph &channel_with_in
 	FILE *file = fopen(filename, "w");
 	int num_unvisited_nodes = 0;
 	for (const auto &v : get_vertices(orig_g)) {
-		if ((v.properties.type == CHANX || v.properties.type == CHANY) && all_visited_nodes.find(id(v)) == all_visited_nodes.end()) {
-			const auto &start = get_node_start(id(v));
+		const auto &ver = get_vertex(orig_g, v);
+		if ((ver.properties.type == CHANX || ver.properties.type == CHANY) && all_visited_nodes.find(v) == all_visited_nodes.end()) {
+			const auto &start = get_node_start(v);
 			fprintf(file, "%d %d\n", start.first, start.second);
 			++num_unvisited_nodes;
 		}
@@ -1229,12 +1401,13 @@ void init_partitioned_graph_5(int num_partitions, const RRGraph &channel_with_in
 	fclose(file);
 
 	for (const auto &v : get_vertices(channel_without_interior_g)) {
-		if ((v.properties.type == CHANX || v.properties.type == CHANY)) {
-			if (all_visited_nodes.find(id(v)) == all_visited_nodes.end()) {
+		const auto &ver = get_vertex(channel_without_interior_g, v);
+		if ((ver.properties.type == CHANX || ver.properties.type == CHANY)) {
+			if (all_visited_nodes.find(v) == all_visited_nodes.end()) {
 				visitor_t visitor;
 				visitor.color = &color;
 				visitor.all_visited_nodes = &all_visited_nodes;
-				assert(visitor.record(v));
+				assert(visitor.record(channel_without_interior_g, v));
 				bfs(channel_without_interior_g, { v }, color, visitor);
 
 				for (const auto &v : visitor.visited_nodes) {
@@ -1250,26 +1423,26 @@ void init_partitioned_graph_5(int num_partitions, const RRGraph &channel_with_in
 				set<int> debug_visited_nodes(begin(visitor.visited_nodes), end(visitor.visited_nodes));
 				assert(debug_visited_nodes.size() == visitor.visited_nodes.size());
 
-				assert(debug_visited_nodes.find(id(v)) != debug_visited_nodes.end());
+				assert(debug_visited_nodes.find(v) != debug_visited_nodes.end());
 
 				set<int> debug_visited_nodes_2;
-				debug_visited_nodes_2.insert(id(v));
+				debug_visited_nodes_2.insert(v);
 				for (const auto &e : visitor.visited_edges) {
-					debug_visited_nodes_2.insert(id(get_source(channel_without_interior_g, get_edge(channel_without_interior_g, e))));
-					debug_visited_nodes_2.insert(id(get_target(channel_without_interior_g, get_edge(channel_without_interior_g, e))));
+					debug_visited_nodes_2.insert(get_source(channel_without_interior_g, e));
+					debug_visited_nodes_2.insert(get_target(channel_without_interior_g, e));
 				}
 				assert(debug_visited_nodes == debug_visited_nodes_2);
 
 
 				int num_unvisited_nodes = (nx+2)*(ny+2)*4 - visitor.visited_nodes.size();
 
-				printf("source: %d\n", id(v));
+				printf("source: %d\n", v);
 				printf("num_nodes_discovered = %d\n", visitor.num_nodes_discovered);
 				printf("num_visited_nodes = %lu\n", visitor.visited_nodes.size());
 				printf("num_unvisited_nodes = %d\n", num_unvisited_nodes);
 				printf("num_visited_edge = %lu\n", visitor.visited_edges.size());
 			} else {
-				assert(color[id(v)] == VertexColor::BLACK);
+				assert(color[v] == VertexColor::BLACK);
 			}
 		}
 	}
@@ -1293,8 +1466,8 @@ void init_partitioned_graph_5(int num_partitions, const RRGraph &channel_with_in
 		int num_intra_partiton_interior_edges = 0;
 		int num_interior_edges = 0;
 		for (const auto &e : get_edges(channel_with_interior_g)) {
-			int from = id(get_source(channel_with_interior_g, e));
-			int to = id(get_target(channel_with_interior_g, e));
+			int from = get_source(channel_with_interior_g, e);
+			int to = get_target(channel_with_interior_g, e);
 
 			if (!has_edge(channel_without_interior_g, from, to)) {
 				++num_interior_edges;
@@ -1306,7 +1479,8 @@ void init_partitioned_graph_5(int num_partitions, const RRGraph &channel_with_in
 				}
 
 				RREdge &new_e = add_edge(new_g, from, to);
-				new_e.properties = e.properties;
+				const auto &edge = get_edge(channel_with_interior_g, e);
+				new_e.properties = edge.properties;
 			}
 		}
 
@@ -1315,7 +1489,9 @@ void init_partitioned_graph_5(int num_partitions, const RRGraph &channel_with_in
 		printf("graph %d num intra partition interior edges/num interior edges = %d/%d (%g)\n", i, num_intra_partiton_interior_edges, num_interior_edges, (float)num_intra_partiton_interior_edges/num_interior_edges*100);
 
 		vector<vector<int>> components;
-		connected_components(new_g, [] (const RRNode &v) -> bool { return v.properties.type == CHANX || v.properties.type == CHANY; }, components);
+		vector<bool> vf(num_vertices(new_g));
+		vector<bool> ef(num_edges(new_g));
+		connected_components(make_filtered_graph(new_g, &vf, &ef), components);
 		int total_num_nodes_in_components = 0;
 		for (const auto &comp : components) {
 			total_num_nodes_in_components += comp.size();
@@ -1342,8 +1518,8 @@ void init_partitioned_graph_5(int num_partitions, const RRGraph &channel_with_in
 
 		int temp_num_misc_edges = 0;
 		for (const auto &e : get_edges(orig_g)) {
-			const auto &from = get_source(orig_g, e);
-			const auto &to = get_target(orig_g, e);
+			const auto &from = get_vertex(orig_g, get_source(orig_g, e));
+			const auto &to = get_vertex(orig_g, get_target(orig_g, e));
 
 			if ((from.properties.type == CHANX || from.properties.type == CHANY) && 
 					(to.properties.type == CHANX || to.properties.type == CHANY)) {
@@ -1351,7 +1527,8 @@ void init_partitioned_graph_5(int num_partitions, const RRGraph &channel_with_in
 			}
 
 			RREdge &new_e = add_edge(new_g, id(from), id(to));
-			new_e.properties = e.properties;
+			const auto &edge = get_edge(orig_g, e);
+			new_e.properties = edge.properties;
 
 			++temp_num_misc_edges;
 		}
@@ -1371,7 +1548,7 @@ void init_partitioned_graph_5(int num_partitions, const RRGraph &channel_with_in
 	//assert(num_edges_spanned == num_edges(g));
 }
 
-void init_partitioned_graph_4(int num_partitions, RRGraph &channel_with_interior_g, RRGraph &channel_without_interior_g, const RRGraph &orig_g, vector<RRGraph *> &graphs)
+void init_partitioned_graph_4(int num_partitions, RRGraph &channel_with_interior_g, RRGraph &channel_without_interior_g, const RRGraph &orig_g, vector<RRGraph *> &graphs, vector<vector<vector<int>>> &all_partition_components)
 {
 	extern s_rr_node *rr_node;
 	extern int num_rr_nodes;
@@ -1389,10 +1566,11 @@ void init_partitioned_graph_4(int num_partitions, RRGraph &channel_with_interior
 	vector<int> partition;
 	vector<int> weights(num_vertices(channel_without_interior_g));
 	for (const auto &v : get_vertices(channel_without_interior_g)) {
-		if (v.properties.type == CHANX || v.properties.type == CHANY) {
-			weights[id(v)] = 1;
+		const auto &ver = get_vertex(channel_without_interior_g, v);
+		if (ver.properties.type == CHANX || ver.properties.type == CHANY) {
+			weights[v] = 1;
 		} else {
-			weights[id(v)] = 0;
+			weights[v] = 0;
 		}
 	}
 	partition_graph(channel_without_interior_g, num_partitions, weights, 1.001, partition);
@@ -1414,8 +1592,17 @@ void init_partitioned_graph_4(int num_partitions, RRGraph &channel_with_interior
 	}
 	assert(total_num_nodes == num_vertices(channel_without_interior_g));
 
+	for (int i = 0; i < num_vertices(orig_g); ++i) {
+		const auto &ver = get_vertex(orig_g, i);
+		if (ver.properties.type != CHANX && ver.properties.type != CHANY) {
+			partition[i] = -1;
+		}
+	}
+
 	int num_chan_edges = 0;
 	int num_non_chan_edges = -1;
+
+	
 
 	for (int i = 0; i < num_partitions; ++i) {
 		RRGraph &new_g = *new RRGraph;
@@ -1428,8 +1615,8 @@ void init_partitioned_graph_4(int num_partitions, RRGraph &channel_with_interior
 		int num_intra_partiton_interior_edges = 0;
 		int num_interior_edges = 0;
 		for (const auto &e : get_edges(channel_with_interior_g)) {
-			int from = id(get_source(channel_with_interior_g, e));
-			int to = id(get_target(channel_with_interior_g, e));
+			int from = get_source(channel_with_interior_g, e);
+			int to = get_target(channel_with_interior_g, e);
 
 			if (!has_edge(channel_without_interior_g, from, to)) {
 				++num_interior_edges;
@@ -1441,7 +1628,8 @@ void init_partitioned_graph_4(int num_partitions, RRGraph &channel_with_interior
 				}
 
 				RREdge &new_e = add_edge(new_g, from, to);
-				new_e.properties = e.properties;
+				const auto &edge = get_edge(channel_with_interior_g, e);
+				new_e.properties = edge.properties;
 			}
 		}
 
@@ -1449,13 +1637,63 @@ void init_partitioned_graph_4(int num_partitions, RRGraph &channel_with_interior
 
 		printf("graph %d num intra partition interior edges/num interior edges = %d/%d (%g)\n", i, num_intra_partiton_interior_edges, num_interior_edges, (float)num_intra_partiton_interior_edges/num_interior_edges*100);
 
-		vector<vector<int>> components;
-		connected_components(new_g, [&partition, &i] (const RRNode &v) -> bool { return partition[id(v)] == i && (v.properties.type == CHANX || v.properties.type == CHANY); }, components);
+		int local_num_non_chan_edges = 0;
+		for (const auto &e : get_edges(orig_g)) {
+			const auto &from = get_vertex(orig_g, get_source(orig_g, e));
+			const auto &to = get_vertex(orig_g, get_target(orig_g, e));
+
+			if ((from.properties.type == CHANX || from.properties.type == CHANY) && 
+					(to.properties.type == CHANX || to.properties.type == CHANY)) {
+				continue;
+			}
+
+			RREdge &new_e = add_edge(new_g, id(from), id(to));
+			const auto &edge = get_edge(orig_g, e);
+			new_e.properties = edge.properties;
+
+			++local_num_non_chan_edges;
+		}
+
+		if (num_non_chan_edges == -1) {
+			num_non_chan_edges = local_num_non_chan_edges;
+		}
+
+		assert(num_edges(new_g) <= num_edges(orig_g));
+
+		graphs.push_back(&new_g);
+
+		vector<vector<int>> &components = all_partition_components[i];
+		//connected_components(new_g, [&partition, &i] (const RRNode &v) -> bool { return partition[id(v)] == i && (v.properties.type == CHANX || v.properties.type == CHANY); }, components);
+		//connected_components(new_g, [&partition, &i] (const RRNode &v) -> bool { return partition[id(v)] == i || (v.properties.type != CHANX && v.properties.type != CHANY); }, components);
+		RRGraph temp_g;
+		connected_components_convert_to_undirected(new_g, temp_g);
+
+		int expected_total_num_nodes_in_components = 0;	
+		vector<bool> vf(num_vertices(temp_g));
+		for (const auto &v : get_vertices(temp_g)) {
+			const auto &ver = get_vertex(temp_g, v);
+			if (ver.properties.type != CHANX && ver.properties.type != CHANY) {
+				assert(partition[v] == -1);
+			}
+			vf[v] = partition[v] == i || (ver.properties.type != CHANX && ver.properties.type != CHANY);
+			if (vf[v]) {
+				++expected_total_num_nodes_in_components;
+			}
+		}
+		vector<bool> ef(num_edges(temp_g));
+		for (const auto &e : get_edges(temp_g)) {
+			int from = get_source(temp_g, e);
+			int to = get_target(temp_g, e);
+			ef[e] = vf[from] && vf[to];
+		}
+
+		connected_components(make_filtered_graph(temp_g, &vf, &ef), components);
 		int total_num_nodes_in_components = 0;
 		for (const auto &comp : components) {
 			total_num_nodes_in_components += comp.size();
 		}
-		assert(total_num_nodes_in_components == num_chan_nodes[i]);
+		//assert(total_num_nodes_in_components == num_chan_nodes[i]);
+		assert(total_num_nodes_in_components == expected_total_num_nodes_in_components);
 		printf("graph %d num connected components = %lu average num nodes = %g\n", i, components.size(), (float)total_num_nodes_in_components/components.size());
 
 		//assert(total_num_nodes_in_components == num_vertices(orig_g));
@@ -1477,29 +1715,6 @@ void init_partitioned_graph_4(int num_partitions, RRGraph &channel_with_interior
 		}
 		fclose(file);
 
-		int local_num_non_chan_edges = 0;
-		for (const auto &e : get_edges(orig_g)) {
-			const auto &from = get_source(orig_g, e);
-			const auto &to = get_target(orig_g, e);
-
-			if ((from.properties.type == CHANX || from.properties.type == CHANY) && 
-					(to.properties.type == CHANX || to.properties.type == CHANY)) {
-				continue;
-			}
-
-			RREdge &new_e = add_edge(new_g, id(from), id(to));
-			new_e.properties = e.properties;
-
-			++local_num_non_chan_edges;
-		}
-
-		if (num_non_chan_edges == -1) {
-			num_non_chan_edges = local_num_non_chan_edges;
-		}
-
-		assert(num_edges(new_g) <= num_edges(orig_g));
-
-		graphs.push_back(&new_g);
 	}
 
 	assert(num_non_chan_edges + num_chan_edges <= num_edges(orig_g));
@@ -1595,16 +1810,17 @@ void init_partitioned_graph_3(int num_partitions, RRGraph &g, vector<RRGraph *> 
 		add_vertex(new_g, num_vertices(g));
 
 		for (const auto &e : get_edges(g)) {
-			if (duplicate_edges.find(id(e)) != end(duplicate_edges)) {
+			if (duplicate_edges.find(e) != end(duplicate_edges)) {
 				continue;
 			}
 
-			int from = id(get_source(g, e));
-			int to = id(get_target(g, e));
+			int from = get_source(g, e);
+			int to = get_target(g, e);
 
 			if (partitions[from] == i && partitions[from] == partitions[to]) {
 				RREdge &new_e = add_edge(new_g, from, to);
-				new_e.properties = e.properties;
+				const auto &edge = get_edge(g, e);
+				new_e.properties = edge.properties;
 			}
 		}
 
@@ -1722,7 +1938,7 @@ void init_partitioned_graph_2(int num_partitions, RRGraph &g, vector<RRGraph *> 
 
 			for (const auto &e_id : visited_edges) {
 				const RREdge &e = get_edge(g, e_id);
-				RREdge &new_e = add_edge(new_g, id(get_source(g, e)), id(get_target(g, e)));
+				RREdge &new_e = add_edge(new_g, get_source(g, e_id), get_target(g, e_id));
 				new_e.properties = e.properties;
 			}
 			char filename[256];
@@ -1791,16 +2007,18 @@ void init_partitioned_graph(int num_partitions, RRGraph &g, vector<RRGraph *> &g
 	dump_rr_graph(g, "rr_graph.txt");
 	
 	vector<bool> edge_valid(num_edges(g), true);
-	vector<vector<RREdge>> trees;
+	vector<vector<int>> trees;
 	int num_edges_spanned = 0;
 	while (num_edges_spanned < num_edges(g)) {
-		trees.push_back(vector<RREdge>());
+		trees.push_back(vector<int>());
 
 		auto &edges = trees.back();
-		custom_minimum_spanning_tree(g, [&] (const RREdge &e) -> bool {
-				return edge_valid[id(e)] && 
-				(get_source(g, e).properties.type == CHANX || get_source(g, e).properties.type == CHANY) &&
-				 (get_target(g, e).properties.type == CHANX || get_target(g, e).properties.type == CHANY);
+		custom_minimum_spanning_tree(g, [&] (int e) -> bool {
+				const auto &from = get_vertex(g, get_source(g, e));
+				const auto &to = get_vertex(g, get_target(g, e));
+				return edge_valid[e] && 
+				(from.properties.type == CHANX || from.properties.type == CHANY) &&
+				 (to.properties.type == CHANX || to.properties.type == CHANY);
 
 				}, edges);
 		num_edges_spanned += edges.size();
@@ -1809,7 +2027,7 @@ void init_partitioned_graph(int num_partitions, RRGraph &g, vector<RRGraph *> &g
 		}
 		printf("mst edges size: %lu\n", edges.size());
 		for (const auto &e : edges) {
-			edge_valid[id(e)] = false;
+			edge_valid[e] = false;
 		}
 	}
 	//assert(all_of(begin(edge_valid), end(edge_valid), [] (bool val) -> bool { return !val; }));
@@ -1819,9 +2037,10 @@ void init_partitioned_graph(int num_partitions, RRGraph &g, vector<RRGraph *> &g
 		RRGraph new_g;
 		add_vertex(new_g, num_vertices(g));
 
-		for (const auto &e : trees[i]) {
-			RREdge &new_e = add_edge(new_g, id(get_source(g, e)), id(get_target(g, e)));
-			new_e.properties = e.properties;
+		for (auto e : trees[i]) {
+			RREdge &new_e = add_edge(new_g, get_source(g, e), get_target(g, e));
+			const auto &edge = get_edge(g, e);
+			new_e.properties = edge.properties;
 		}
 		char filename[256];
 		sprintf(filename, "rr_graph_%d.txt", i);
@@ -1841,18 +2060,20 @@ void init_partitioned_graph(int num_partitions, RRGraph &g, vector<RRGraph *> &g
 		for (int i = low; i < std::min(low+inc, high); ++i) {
 			assert(used[i] == 0);
 			++used[i];
-			for (const auto &e : trees[i]) {
-				RREdge &new_e = add_edge(new_g, id(get_source(g, e)), id(get_target(g, e)));
-				new_e.properties = e.properties;
+			for (auto e : trees[i]) {
+				RREdge &new_e = add_edge(new_g, get_source(g, e), get_target(g, e));
+				const auto &edge = get_edge(g, e);
+				new_e.properties = edge.properties;
 			}
 		}
 		low += inc;
 		for (int i = std::max(high-inc, low+1); i < high; ++i) {
 			assert(used[i] == 0);
 			++used[i];
-			for (const auto &e : trees[i]) {
-				RREdge &new_e = add_edge(new_g, id(get_source(g, e)), id(get_target(g, e)));
-				new_e.properties = e.properties;
+			for (auto e : trees[i]) {
+				RREdge &new_e = add_edge(new_g, get_source(g, e), get_target(g, e));
+				const auto &edge = get_edge(g, e);
+				new_e.properties = edge.properties;
 			}
 		}
 		high -= inc;
@@ -1864,14 +2085,15 @@ void init_partitioned_graph(int num_partitions, RRGraph &g, vector<RRGraph *> &g
 	assert(graphs.size() == num_partitions);
 
 	for (const auto e : get_edges(g)) {
-		if (get_source(g, e).properties.type == SOURCE || get_target(g, e).properties.type == SINK) {
+		if (get_vertex(g, get_source(g, e)).properties.type == SOURCE || get_vertex(g, get_target(g, e)).properties.type == SINK) {
 			for (auto &new_g : graphs) {
-				int from = id(get_source(g, e));
-				int to = id(get_target(g, e));
+				int from = get_source(g, e);
+				int to = get_target(g, e);
 
 				if (!has_edge(*new_g, from, to)) {
 					RREdge &new_e = add_edge(*new_g, from, to);
-					new_e.properties = e.properties;
+					const auto &edge = get_edge(g, e);
+					new_e.properties = edge.properties;
 				}
 			}
 		}
@@ -1886,7 +2108,7 @@ void init_partitioned_graph(int num_partitions, RRGraph &g, vector<RRGraph *> &g
 
 #define LOG_PATH_PREFIX "/Volumes/DATA/"
 
-vector<FILE *> custom_output_log_files;
+vector<FILE *> delta_log_files;
 vector<FILE *> missing_edge_log_files;
 
 static void concurrent_log_impl(zlog_msg_t *msg, vector<FILE *> &log_files, int tid)
@@ -1946,11 +2168,14 @@ bool spatial_route(t_router_opts *opts, struct s_det_routing_arch det_routing_ar
 	init_logging();
 	zlog_set_record("custom_output", delta_log_output);
 	zlog_set_record("missing_edge", missing_edge_log_output);
-	custom_output_log_files.resize(opts->num_threads, nullptr);
+	delta_log_files.resize(opts->num_threads, nullptr);
 	missing_edge_log_files.resize(opts->num_threads, nullptr);
 
 	//fclose(fopen(LOG_PATH_PREFIX"iter__tid_.log", "w"));
 
+	test_fm();
+	return;
+	test_filter_graph();
 	test_partition_graph();
 	test_connected_components();
 
@@ -2007,13 +2232,14 @@ bool spatial_route(t_router_opts *opts, struct s_det_routing_arch det_routing_ar
 	dump_rr_graph(channel_without_interior_g, "/Volumes/DATA/rr_graph_channel_without_interior.txt");
 
 	vector<RRGraph *> graphs;
+	vector<vector<vector<int>>> all_partition_components(opts->num_threads);
 	//for (int x = 0; x < nx+1; ++x) {
 		//for (int y = 0; y < ny+1; ++y) {
 			//init_partitioned_graph_5(opts->num_threads, channel_with_interior_g, channel_without_interior_g, orig_g, graphs, x, y);
 		//}
 	//}
 	//init_partitioned_graph_4(opts->num_threads, channel_with_interior_g, channel_without_interior_g, orig_g, graphs, 14, 14);
-	init_partitioned_graph_4(opts->num_threads, channel_with_interior_g, channel_without_interior_g, orig_g, graphs);
+	init_partitioned_graph_4(opts->num_threads, channel_with_interior_g, channel_without_interior_g, orig_g, graphs, all_partition_components);
 
 	for (int i = 0; i < graphs.size(); ++i) {
 		char filename[256];
@@ -2045,7 +2271,7 @@ bool spatial_route(t_router_opts *opts, struct s_det_routing_arch det_routing_ar
 			states[i][j].rr_node = -1;
 			states[i][j].known_cost = std::numeric_limits<float>::max();
 			states[i][j].cost = std::numeric_limits<float>::max();
-			states[i][j].prev_edge = nullptr;
+			states[i][j].prev_edge = -1;
 			states[i][j].upstream_R = -1;
 			states[i][j].delay = std::numeric_limits<float>::max();
 		}
@@ -2146,6 +2372,8 @@ bool spatial_route(t_router_opts *opts, struct s_det_routing_arch det_routing_ar
 		vector<int> thread_num_nets_to_route(opts->num_threads);
 		vector<int> thread_num_sinks_routed(opts->num_threads);
 		vector<int> thread_num_sinks_to_route(opts->num_threads);
+		vector<int> thread_bfs_num_sinks_routed(opts->num_threads);
+		vector<int> graph_used_by_net(nets.size(), -1);
 
 		auto greedy_route_start = clock::now();
 
@@ -2180,6 +2408,7 @@ bool spatial_route(t_router_opts *opts, struct s_det_routing_arch det_routing_ar
 				int local_num_nets_routed = 0;
 				int local_num_sinks_routed = 0;
 				int local_num_sinks_to_route = 0;
+				int local_bfs_num_sinks_routed = 0;
 
 				int i;
 				while ((i = net_index++) < nets_to_route.size()) {
@@ -2215,17 +2444,101 @@ bool spatial_route(t_router_opts *opts, struct s_det_routing_arch det_routing_ar
 						} else {
 							route_tree_t temp_route_tree;
 							route_tree_init(temp_route_tree);
-							int num_sinks_routed = route_net_2(orig_g, net->vpr_id, &net->source, sinks, params, states[tid], temp_congestion, temp_route_tree, net_timing[net->vpr_id], true, nullptr, nullptr);
-							assert(num_sinks_routed == sinks.size());
-							for (const auto &rt_edge : get_edges(temp_route_tree.graph)) {
-								const RREdge *rr_edge = rt_edge.properties.rr_edge;
-								int from = id(get_source(orig_g, *rr_edge));
-								int to = id(get_target(orig_g, *rr_edge));
+
+							zlog_level(delta_log, ROUTER_V1, "Routing net %d with original RR graph\n", net->vpr_id);
+
+							int orig_num_sinks_routed = route_net_2(orig_g, net->vpr_id, &net->source, sinks, params, states[tid], temp_congestion, temp_route_tree, net_timing[net->vpr_id], true, nullptr, nullptr);
+
+							assert(orig_num_sinks_routed == sinks.size());
+
+							int num_missing_edges = 0;
+							int num_missing_interior_edges = 0;
+							zlog_debug(missing_edge_log, "Net %d routed in graph %d requires edges below: \n", tid, net->vpr_id);
+							for (const auto &rt_edge_id : get_edges(temp_route_tree.graph)) {
+								int rr_edge = get_edge(temp_route_tree.graph, rt_edge_id).properties.rr_edge;
+								int from = get_source(orig_g, rr_edge);
+								int to = get_target(orig_g, rr_edge);
 								if (!has_edge(*graphs[tid], from, to)) {
-									zlog_debug(missing_edge_log, 
+									int found = -1;
+									int num_found = 0;
+									for (int i = 0; i < opts->num_threads; ++i) {
+										if (i != tid && has_edge(*graphs[i], from, to)) {
+											found = i;
+											++num_found;
+										}
+									}
+									assert(num_found == 1 || num_found == 0);
+
+									if (has_edge(channel_with_interior_g, from, to) && !has_edge(channel_without_interior_g, from, to)) {
+										++num_missing_interior_edges;
+									}
+									char buffer[256];
+
+									sprintf_rr_node(from, buffer);
+									zlog_debug(missing_edge_log, "\t Edge %d %s ->", rr_edge, buffer);
+
+									sprintf_rr_node(to, buffer);
+									zlog_debug(missing_edge_log, " %s is in graph %d\n", buffer, found);
+
+									++num_missing_edges;
 								}
 							}
+							zlog_debug(missing_edge_log, "Net %d num missing edges = %d/%d (%g) num missing interior edges = %d/%d (%g)\n\n", net->vpr_id, num_missing_edges, num_edges(temp_route_tree.graph), num_missing_edges*100.0/num_edges(temp_route_tree.graph), num_missing_interior_edges, num_missing_edges, num_missing_interior_edges*100.0/num_missing_edges);
+
+							struct bfs_router_t {
+								set<int> visited_nodes;
+								set<int> visited_edges;
+								vector<int> pred;
+
+								bfs_router_t(int num_vertices) :
+									pred(num_vertices, -1)
+								{
+								}
+
+								void tree_edge(int e, const RRGraph &g)
+								{
+									int to = get_target(g, e);
+									assert(pred[to] == -1);
+									pred[to] = get_source(g, e);
+									assert(visited_edges.find(e) == visited_edges.end());
+									visited_edges.insert(e);
+								}
+
+								void examine_edge(int e, const RRGraph &g)
+								{
+								}
+
+								void discover_vertex(int v, const RRGraph &g)
+								{
+									assert(visited_nodes.find(v) == visited_nodes.end());
+									visited_nodes.insert(v);
+								}
+
+								void examine_vertex(int v, const RRGraph &g)
+								{
+								}
+							} router_visitor(num_vertices(*graphs[tid]));
+
+							vector<VertexColor> color(num_vertices(*graphs[tid]), VertexColor::WHITE);
+							bfs(*graphs[tid], { static_cast<unsigned long>(net->source.rr_node) }, color, router_visitor);
+							assert(router_visitor.visited_edges.size()+1 == router_visitor.visited_nodes.size());
+							int lmao = router_visitor.visited_nodes.size();
+							for (int i = 0; i < sinks.size(); ++i) {
+								if (router_visitor.visited_nodes.find(sinks[i]->rr_node) != router_visitor.visited_nodes.end()) {
+									++local_bfs_num_sinks_routed;
+								} else {
+									//for (const auto &c : all_partition_components[tid]) {
+										//assert(find(begin(c), end(c), net->source.rr_node) == end(c)
+												//|| find(begin(c), end(c), sinks[i]->rr_node) == end(c));
+									//}
+								}
+							}
+							//assert(local_bfs_num_sinks_routed == sinks.size());
+							//assert(local_bfs_num_sinks_routed == num_sinks_routed);
+
+							graph_used_by_net[net->vpr_id] = tid;
 						}
+
 						++local_num_nets_to_route;
 
 						local_num_sinks_to_route += sinks.size();
@@ -2243,6 +2556,7 @@ bool spatial_route(t_router_opts *opts, struct s_det_routing_arch det_routing_ar
 				thread_num_nets_to_route[tid] = local_num_nets_to_route;
 				thread_num_sinks_routed[tid] = local_num_sinks_routed;
 				thread_num_sinks_to_route[tid] = local_num_sinks_to_route;
+				thread_bfs_num_sinks_routed[tid] = local_bfs_num_sinks_routed;
 
 				//debug_lock[tid].unlock();
 				});
@@ -2263,6 +2577,7 @@ bool spatial_route(t_router_opts *opts, struct s_det_routing_arch det_routing_ar
 		int total_num_nets_to_route = 0;
 		int total_num_sinks_routed = 0;
 		int total_num_sinks_to_route = 0;
+		int total_bfs_num_sinks_routed = 0;
 		for (int i = 0; i < opts->num_threads; ++i) {
 			printf("Thread %d num nets routed: %d/%d (%g)\n", i, thread_num_nets_routed[i], thread_num_nets_to_route[i], thread_num_nets_routed[i]*100.0/thread_num_nets_to_route[i]);
 			printf("Thread %d num sinks routed: %d/%d (%g)\n", i, thread_num_sinks_routed[i], thread_num_sinks_to_route[i], thread_num_sinks_routed[i]*100.0/thread_num_sinks_to_route[i]);
@@ -2270,9 +2585,11 @@ bool spatial_route(t_router_opts *opts, struct s_det_routing_arch det_routing_ar
 			total_num_nets_routed += thread_num_nets_routed[i];
 			total_num_sinks_routed += thread_num_sinks_routed[i];
 			total_num_sinks_to_route += thread_num_sinks_to_route[i];
+			total_bfs_num_sinks_routed += thread_bfs_num_sinks_routed[i];
 		}
 		printf("Total num nets routed: %d/%d (%g)\n", total_num_nets_routed, total_num_nets_to_route, total_num_nets_routed*100.0/total_num_nets_to_route);
 		printf("Total num sinks routed: %d/%d (%g)\n", total_num_sinks_routed, total_num_sinks_to_route, total_num_sinks_routed*100.0/total_num_sinks_to_route);
+		printf("Total BFS num sinks routed: %d/%d (%g)\n", total_bfs_num_sinks_routed, total_num_sinks_to_route, total_bfs_num_sinks_routed*100.0/total_num_sinks_to_route);
 
 		/* checking */
 		for (int i = 0; i < num_vertices(*graphs[0]); ++i) {

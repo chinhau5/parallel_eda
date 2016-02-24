@@ -3,6 +3,8 @@
 
 #include <vector>
 #include <algorithm>
+#include <boost/iterator/counting_iterator.hpp>
+#include <boost/range/counting_range.hpp>
 
 using namespace std;
 
@@ -28,156 +30,244 @@ struct graph_t {
 	Vertices vertices;
 	Edges edges;
 
-	struct out_edges_iterator : public std::iterator<
-					  typename std::forward_iterator_tag,
-					  edge_t<EdgeProperties>,
-					  ptrdiff_t,
-					  edge_t<EdgeProperties> *,
-					  edge_t<EdgeProperties> & 
-					  > {
-		graph_t &g;
-		vector<int>::const_iterator iter;
+	//struct out_edges_iterator : public std::iterator<
+					  //typename std::forward_iterator_tag,
+					  //edge_t<EdgeProperties>,
+					  //ptrdiff_t,
+					  //edge_t<EdgeProperties> *,
+					  //edge_t<EdgeProperties> & 
+					  //> {
+		//graph_t &g;
+		//vector<int>::const_iterator iter;
 
-		out_edges_iterator(graph_t &g, const vector<int>::const_iterator &iter) 
-			: g(g), iter(iter)
-	   	{
-		}
-
-		out_edges_iterator &operator++()
-		{
-			++iter;
-			return *this;
-		}
-
-		typename out_edges_iterator::reference operator*() const
-		{
-			return g.edges[*iter];
-		}
-
-		typename out_edges_iterator::pointer operator->() const
-		{
-			return &g.edges[*iter];
-		}
-
-		bool operator==(const out_edges_iterator &other) const
-		{
-			return other.iter == iter;
-		}
-
-		bool operator!=(const out_edges_iterator &other) const
-		{
-			return other.iter != iter;
-		}
-	};
-
-	struct out_edges_const_iterator : public std::iterator<
-					  typename std::forward_iterator_tag,
-					  edge_t<EdgeProperties>,
-					  ptrdiff_t,
-					  const edge_t<EdgeProperties> *,
-					  const edge_t<EdgeProperties> & 
-					  > {
-		const graph_t &g;
-		vector<int>::const_iterator iter;
-
-		out_edges_const_iterator(const graph_t &g, const vector<int>::const_iterator &iter) 
-			: g(g), iter(iter)
-	   	{
-		}
-
-		out_edges_const_iterator &operator++()
-		{
-			++iter;
-			return *this;
-		}
-
-		typename out_edges_const_iterator::reference operator*() const
-		{
-			return g.edges[*iter];
-		}
-
-		typename out_edges_const_iterator::pointer operator->() const
-		{
-			return &g.edges[*iter];
-		}
-
-		bool operator==(const out_edges_const_iterator &other) const
-		{
-			return other.iter == iter;
-		}
-
-		bool operator!=(const out_edges_const_iterator &other) const
-		{
-			return other.iter != iter;
-		}
-	};
-
-	template<typename Value, typename Base>
-	struct iterator : public std::iterator<
-					  typename std::forward_iterator_tag,
-					  Value,
-					  ptrdiff_t,
-					  Value *,
-					  Value & 
-					  > {
-		Base iter;
-
-		iterator(const Base &iter) 
-			: iter(iter)
-	   	{
-			//printf("iterator constructor\n");
-		}
-
-		//iterator(const iterator &other) 
-			//: iter(other.iter)
+		//out_edges_iterator(graph_t &g, const vector<int>::const_iterator &iter) 
+			//: g(g), iter(iter)
 		   //{
-			//printf("iterator copy constructor\n");
 		//}
 
-		//void operator=(const iterator &other) 
-		   //{
-			//iter = other.iter;
-			//printf("iterator assignment\n");
+		//out_edges_iterator &operator++()
+		//{
+			//++iter;
+			//return *this;
 		//}
 
-		iterator &operator++()
-		{
-			++iter;
-			return *this;
-		}
+		//typename out_edges_iterator::reference operator*() const
+		//{
+			//return g.edges[*iter];
+		//}
 
-		typename iterator::reference operator*() const
-		{
-			return *iter;
-		}
+		//typename out_edges_iterator::pointer operator->() const
+		//{
+			//return &g.edges[*iter];
+		//}
 
-		typename iterator::pointer operator->() const
-		{
-			return &(*iter);
-		}
+		//bool operator==(const out_edges_iterator &other) const
+		//{
+			//return other.iter == iter;
+		//}
 
-		bool operator==(const iterator &other) const
-		{
-			return other.iter == iter;
-		}
+		//bool operator!=(const out_edges_iterator &other) const
+		//{
+			//return other.iter != iter;
+		//}
+	//};
 
-		bool operator!=(const iterator &other) const
-		{
-			return other.iter != iter;
-		}
-	};
+	//struct out_edges_const_iterator : public std::iterator<
+					  //typename std::forward_iterator_tag,
+					  //edge_t<EdgeProperties>,
+					  //ptrdiff_t,
+					  //const edge_t<EdgeProperties> *,
+					  //const edge_t<EdgeProperties> & 
+					  //> {
+		//const graph_t &g;
+		//vector<int>::const_iterator iter;
 
-	typedef iterator<edge_t<EdgeProperties>, typename Edges::iterator> edge_iterator;
-	typedef iterator<const edge_t<EdgeProperties>, typename Edges::const_iterator> const_edge_iterator;
+		//out_edges_const_iterator(const graph_t &g, const vector<int>::const_iterator &iter) 
+			//: g(g), iter(iter)
+		   //{
+		//}
 
-	typedef iterator<vertex_t<VertexProperties, EdgeProperties>, typename Vertices::iterator> vertex_iterator;
-	typedef iterator<const vertex_t<VertexProperties, EdgeProperties>, typename Vertices::const_iterator> const_vertex_iterator;
+		//out_edges_const_iterator &operator++()
+		//{
+			//++iter;
+			//return *this;
+		//}
+
+		//typename out_edges_const_iterator::reference operator*() const
+		//{
+			//return g.edges[*iter];
+		//}
+
+		//typename out_edges_const_iterator::pointer operator->() const
+		//{
+			//return &g.edges[*iter];
+		//}
+
+		//bool operator==(const out_edges_const_iterator &other) const
+		//{
+			//return other.iter == iter;
+		//}
+
+		//bool operator!=(const out_edges_const_iterator &other) const
+		//{
+			//return other.iter != iter;
+		//}
+	//};
+
+	//template<typename Value, typename Base>
+	//struct iterator : public std::iterator<
+					  //typename std::forward_iterator_tag,
+					  //Value,
+					  //ptrdiff_t,
+					  //Value,
+					  //Value 
+					  //> {
+		//Base iter;
+
+		//iterator(const Base &iter) 
+			//: iter(iter)
+		   //{
+			////printf("iterator constructor\n");
+		//}
+
+		////iterator(const iterator &other) 
+			////: iter(other.iter)
+		   ////{
+			////printf("iterator copy constructor\n");
+		////}
+
+		////void operator=(const iterator &other) 
+		   ////{
+			////iter = other.iter;
+			////printf("iterator assignment\n");
+		////}
+
+		//iterator &operator++()
+		//{
+			//++iter;
+			//return *this;
+		//}
+
+		//typename iterator::reference operator*() const
+		//{
+			//return iter;
+		//}
+
+		////typename iterator::pointer operator->() const
+		////{
+			////return &(*iter);
+		////}
+
+		//bool operator==(const iterator &other) const
+		//{
+			//return other.iter == iter;
+		//}
+
+		//bool operator!=(const iterator &other) const
+		//{
+			//return other.iter != iter;
+		//}
+	//};
+
+	typedef boost::counting_iterator<unsigned long> vertex_iterator;
+	//typedef iterator<int, int> vertex_iterator;
+	//typedef iterator<int, int> const_vertex_iterator;
+
+	typedef boost::counting_iterator<unsigned long> edge_iterator;
+	//typedef iterator<int, int> edge_iterator;
+	//typedef iterator<int, int> const_edge_iterator;
+
+	typedef vector<int>::const_iterator out_edges_iterator;
+
 	//typedef typename Edges::iterator edge_iterator;
 	//typedef typename Edges::const_iterator edge_const_iterator;
 
 	//typedef typename Vertices::iterator vertex_iterator;
 	//typedef typename Vertices::const_iterator vertex_const_iterator;
 };
+
+template<typename VertexProperties, typename EdgeProperties>
+struct filtered_graph_t {
+	using base = graph_t<VertexProperties, EdgeProperties>;
+
+	const base &g;
+	const vector<bool> *valid_vertex;
+	const vector<bool> *valid_edge;
+
+	filtered_graph_t(const base &g, const vector<bool> *valid_vertex, const vector<bool> *valid_edge)
+		: g(g), valid_vertex(valid_vertex), valid_edge(valid_edge)
+	{
+	}
+};
+
+struct graph_filter_t {
+	const vector<bool> *valid;
+
+	graph_filter_t(const vector<bool> *valid) 
+		: valid(valid)
+	{
+	}
+
+	bool operator()(unsigned long v) const
+	{
+		if (valid == nullptr) {
+			return true;
+		} else {
+			assert(v < valid->size());
+			return (*valid)[v]; 
+		}
+	}
+};
+
+template<typename VertexProperties, typename EdgeProperties>
+filtered_graph_t<VertexProperties, EdgeProperties> make_filtered_graph(const graph_t<VertexProperties, EdgeProperties> &g, const vector<bool> *valid_vertex, const vector<bool> *valid_edge)
+{
+	return filtered_graph_t<VertexProperties, EdgeProperties>(g, valid_vertex, valid_edge);
+}
+
+template<typename VertexProperties, typename EdgeProperties>
+boost::iterator_range<boost::filter_iterator<graph_filter_t, typename graph_t<VertexProperties, EdgeProperties>::edge_iterator>>
+get_edges(const filtered_graph_t<VertexProperties, EdgeProperties> &fg) 
+{
+	graph_filter_t filter(fg.valid_edge);
+
+	using edge_iterator = typename graph_t<VertexProperties, EdgeProperties>::edge_iterator;
+
+	return boost::make_iterator_range(
+			boost::make_filter_iterator<graph_filter_t>(filter, edge_iterator(0ul), edge_iterator(fg.g.edges.size())),
+			boost::make_filter_iterator<graph_filter_t>(filter, edge_iterator(fg.g.edges.size()), edge_iterator(fg.g.edges.size()))
+			);
+}
+
+template<typename VertexProperties, typename EdgeProperties>
+boost::iterator_range<boost::filter_iterator<graph_filter_t, typename graph_t<VertexProperties, EdgeProperties>::vertex_iterator>>
+get_vertices(const filtered_graph_t<VertexProperties, EdgeProperties> &fg) 
+{
+	graph_filter_t filter(fg.valid_vertex);
+
+	using vertex_iterator = typename graph_t<VertexProperties, EdgeProperties>::vertex_iterator;
+
+	return boost::make_iterator_range(
+			boost::make_filter_iterator<graph_filter_t>(filter, vertex_iterator(0ul), vertex_iterator(fg.g.vertices.size())),
+			boost::make_filter_iterator<graph_filter_t>(filter, vertex_iterator(fg.g.vertices.size()), vertex_iterator(fg.g.vertices.size()))
+				);
+}
+
+template<typename VertexProperties, typename EdgeProperties>
+boost::iterator_range<boost::filter_iterator<graph_filter_t, typename graph_t<VertexProperties, EdgeProperties>::out_edges_iterator>>
+get_out_edges(const filtered_graph_t<VertexProperties, EdgeProperties> &fg, int v)
+{
+	assert(v < fg.g.vertices.size());
+	
+	const auto &edges = fg.g.vertices[v].edges;
+
+	graph_filter_t filter(fg.valid_edge);
+
+	return boost::make_iterator_range(
+			boost::make_filter_iterator<graph_filter_t>(filter, edges.begin(), edges.end()),
+			boost::make_filter_iterator<graph_filter_t>(filter, edges.end(), edges.end())
+				);
+}
 
 //template<typename VertexProperties, typename EdgeProperties>
 //bool operator!=(typename graph_t<VertexProperties, EdgeProperties>::const_vertex_iterator &a,
@@ -200,98 +290,65 @@ struct graph_t {
 	//return a.iter != b.iter;
 //}
 
-template<typename VertexProperties, typename EdgeProperties, typename Value, typename Base>
-bool operator==(const typename graph_t<VertexProperties, EdgeProperties>::template iterator<Value, Base> &a,
-		const typename graph_t<VertexProperties, EdgeProperties>::template iterator<Value, Base> &b)
-{
-	return a.iter != b.iter;
-}
+//template<typename VertexProperties, typename EdgeProperties, typename Value, typename Base>
+//bool operator==(const typename graph_t<VertexProperties, EdgeProperties>::template iterator<Value, Base> &a,
+		//const typename graph_t<VertexProperties, EdgeProperties>::template iterator<Value, Base> &b)
+//{
+	//return a.iter != b.iter;
+//}
 
-template<typename VertexProperties, typename EdgeProperties, typename Value, typename Base>
-bool operator==(typename graph_t<VertexProperties, EdgeProperties>::template iterator<Value, Base> &a,
-		typename graph_t<VertexProperties, EdgeProperties>::template iterator<Value, Base> &b)
-{
-	return a.iter != b.iter;
-}
+//template<typename VertexProperties, typename EdgeProperties, typename Value, typename Base>
+//bool operator==(typename graph_t<VertexProperties, EdgeProperties>::template iterator<Value, Base> &a,
+		//typename graph_t<VertexProperties, EdgeProperties>::template iterator<Value, Base> &b)
+//{
+	//return a.iter != b.iter;
+//}
 
 
-template<typename Iterator>
-struct adapter_t {
-	Iterator b;
-	Iterator e;
+//template<typename Iterator>
+//struct adapter_t {
+	//Iterator b;
+	//Iterator e;
 
-	adapter_t(Iterator b, Iterator e)
-		: b(b), e(e)
-	{
-	}
+	//adapter_t(Iterator b, Iterator e)
+		//: b(b), e(e)
+	//{
+	//}
 
-	Iterator begin() const
-	{
-		return b;
-	}
+	//Iterator begin() const
+	//{
+		//return b;
+	//}
 
-	Iterator end() const
-	{
-		return e;
-	}
-};
+	//Iterator end() const
+	//{
+		//return e;
+	//}
+//};
 
 template<typename VertexProperties, typename EdgeProperties>
-adapter_t<typename graph_t<VertexProperties, EdgeProperties>::Edges::const_iterator>
+boost::iterator_range<typename graph_t<VertexProperties, EdgeProperties>::edge_iterator>
 get_edges(const graph_t<VertexProperties, EdgeProperties> &g) 
 {
-	return
-		adapter_t<typename graph_t<VertexProperties, EdgeProperties>::Edges::const_iterator>
-		(g.edges.cbegin(), g.edges.cend());
+	return boost::counting_range(0ul, g.edges.size());
 }
 
 template<typename VertexProperties, typename EdgeProperties>
-adapter_t<typename graph_t<VertexProperties, EdgeProperties>::Edges::iterator>
-get_edges(graph_t<VertexProperties, EdgeProperties> &g) 
-{
-	return
-		adapter_t<typename graph_t<VertexProperties, EdgeProperties>::Edges::iterator>
-		(g.edges.begin(), g.edges.end());
-}
-
-template<typename VertexProperties, typename EdgeProperties>
-adapter_t<typename graph_t<VertexProperties, EdgeProperties>::Vertices::const_iterator>
+boost::iterator_range<typename graph_t<VertexProperties, EdgeProperties>::vertex_iterator>
 get_vertices(const graph_t<VertexProperties, EdgeProperties> &g) 
 {
-	return
-		adapter_t<typename graph_t<VertexProperties, EdgeProperties>::Vertices::const_iterator>
-		(g.vertices.cbegin(), g.vertices.cend());
+	return boost::counting_range(0ul, g.vertices.size());
 }
 
 template<typename VertexProperties, typename EdgeProperties>
-adapter_t<typename graph_t<VertexProperties, EdgeProperties>::Vertices::iterator>
-get_vertices(graph_t<VertexProperties, EdgeProperties> &g) 
-{
-	return
-		adapter_t<typename graph_t<VertexProperties, EdgeProperties>::Vertices::iterator>
-		(g.vertices.begin(), g.vertices.end());
-}
-
-template<typename VertexProperties, typename EdgeProperties>
-adapter_t<typename graph_t<VertexProperties, EdgeProperties>::out_edges_iterator>
-get_out_edges(graph_t<VertexProperties, EdgeProperties> &g, int v)
-{
-	const auto &edges = g.vertices[v].edges;
-
-	return adapter_t<typename graph_t<VertexProperties, EdgeProperties>::out_edges_iterator>
-		(typename graph_t<VertexProperties, EdgeProperties>::out_edges_iterator(g, edges.begin()),
-		 typename graph_t<VertexProperties, EdgeProperties>::out_edges_iterator(g, edges.end()));
-}
-
-template<typename VertexProperties, typename EdgeProperties>
-adapter_t<typename graph_t<VertexProperties, EdgeProperties>::out_edges_const_iterator>
+boost::iterator_range<typename graph_t<VertexProperties, EdgeProperties>::out_edges_iterator>
 get_out_edges(const graph_t<VertexProperties, EdgeProperties> &g, int v)
 {
+	assert(v < g.vertices.size());
+	
 	const auto &edges = g.vertices[v].edges;
 
-	return adapter_t<typename graph_t<VertexProperties, EdgeProperties>::out_edges_const_iterator>
-		(typename graph_t<VertexProperties, EdgeProperties>::out_edges_const_iterator(g, edges.begin()),
-		 typename graph_t<VertexProperties, EdgeProperties>::out_edges_const_iterator(g, edges.end()));
+	return boost::make_iterator_range(edges.begin(), edges.end()); 
 }
 
 template<typename VertexProperties, typename EdgeProperties>
@@ -316,6 +373,18 @@ template<typename VertexProperties, typename EdgeProperties>
 int num_edges(const graph_t<VertexProperties, EdgeProperties> &g)
 {
 	return g.edges.size();
+}
+
+template<typename VertexProperties, typename EdgeProperties>
+int num_vertices(const filtered_graph_t<VertexProperties, EdgeProperties> &fg)
+{
+	return fg.g.vertices.size();
+}
+
+template<typename VertexProperties, typename EdgeProperties>
+int num_edges(const filtered_graph_t<VertexProperties, EdgeProperties> &fg)
+{
+	return fg.g.edges.size();
 }
 
 template<typename VertexProperties, typename EdgeProperties>
@@ -388,27 +457,29 @@ edge_t<EdgeProperties> &add_edge(graph_t<VertexProperties, EdgeProperties> &g, i
 //}
 
 template<typename VertexProperties, typename EdgeProperties>
-void remove_edge(graph_t<VertexProperties, EdgeProperties> &g, const edge_t<EdgeProperties> &e_del)
+void remove_edge(graph_t<VertexProperties, EdgeProperties> &g, int e)
 {
 	for (auto &v : g.vertices) {
-		for (auto &e : v.edges) {
-			if (e > e_del.m_id) {
+		for (auto &other_e : v.edges) {
+			if (other_e > e) {
 				--e;
 			}
 		}
 	}
 
-	for (auto &e : g.edges) {
-		if (e.m_id > e_del.m_id) {
-			--e.m_id;
+	for (auto &other_e : g.edges) {
+		if (other_e.m_id > e) {
+			--other_e.m_id;
 		}
 	}
 
-	auto iter = find_if(g.vertices[e_del.a].edges.begin(), g.vertices[e_del.a].edges.end(), [&g, &e_del] (int e) -> bool { return g.edges[e].b == e_del.b; });
-	assert(iter != g.vertices[e_del.a].edges.end());
+	const auto &edge = get_edge(g, e);
 
-	g.vertices[e_del.a].edges.erase(iter);
-	g.edges.erase(g.edges.begin() + e_del.m_id);
+	auto iter = find_if(g.vertices[edge.a].edges.begin(), g.vertices[edge.a].edges.end(), [&g, &edge] (int e) -> bool { return g.edges[e].b == edge.b; });
+	assert(iter != g.vertices[edge.a].edges.end());
+
+	g.vertices[edge.a].edges.erase(iter);
+	g.edges.erase(g.edges.begin() + e);
 }
 
 //template<typename VertexProperties, typename EdgeProperties>
@@ -450,21 +521,12 @@ const edge_t<EdgeProperties> &get_edge(const graph_t<VertexProperties, EdgePrope
 }
 
 template<typename VertexProperties, typename EdgeProperties>
-const edge_t<EdgeProperties> &get_edge(const graph_t<VertexProperties, EdgeProperties> &g, int a, int b)
+int get_edge(const graph_t<VertexProperties, EdgeProperties> &g, int a, int b)
 {
 	const auto &v_a = get_vertex(g, a);
 	auto iter = find_if(v_a.edges.begin(), v_a.edges.end(), [&g, &b] (int e) -> bool { return g.edges[e].b == b; });
 	assert(iter != v_a.edges.end());
-	return g.edges[*iter];
-}
-
-template<typename VertexProperties, typename EdgeProperties>
-edge_t<EdgeProperties> &get_edge(graph_t<VertexProperties, EdgeProperties> &g, int a, int b)
-{
-	const auto &v_a = get_vertex(g, a);
-	auto iter = find_if(v_a.edges.begin(), v_a.edges.end(), [&g, &b] (int e) -> bool { return g.edges[e].b == b; });
-	assert(iter != v_a.edges.end());
-	return g.edges[*iter];
+	return *iter;
 }
 
 template<typename VertexProperties, typename EdgeProperties>
@@ -490,31 +552,59 @@ bool has_edge(const graph_t<VertexProperties, EdgeProperties> &g, int a, int b)
 //}
 
 template<typename VertexProperties, typename EdgeProperties>
-const vertex_t<VertexProperties, EdgeProperties> &get_source(const graph_t<VertexProperties, EdgeProperties> &g, const edge_t<EdgeProperties> &e)
+int get_source(const graph_t<VertexProperties, EdgeProperties> &g, int e)
 {
-	assert(e.a < g.vertices.size());
-	return g.vertices[e.a];
+	assert(e < g.edges.size());
+	return g.edges[e].a;
 }
 
 template<typename VertexProperties, typename EdgeProperties>
-vertex_t<VertexProperties, EdgeProperties> &get_source(graph_t<VertexProperties, EdgeProperties> &g, const edge_t<EdgeProperties> &e)
+int get_source(graph_t<VertexProperties, EdgeProperties> &g, int e)
 {
-	assert(e.a < g.vertices.size());
-	return g.vertices[e.a];
+	assert(e < g.edges.size());
+	return g.edges[e].a;
 }
 
 template<typename VertexProperties, typename EdgeProperties>
-const vertex_t<VertexProperties, EdgeProperties> &get_target(const graph_t<VertexProperties, EdgeProperties> &g, const edge_t<EdgeProperties> &e)
+int get_source(const filtered_graph_t<VertexProperties, EdgeProperties> &fg, int e)
 {
-	assert(e.b < g.vertices.size());
-	return g.vertices[e.b];
+	assert(e < fg.g.edges.size());
+	return fg.g.edges[e].a;
 }
 
 template<typename VertexProperties, typename EdgeProperties>
-vertex_t<VertexProperties, EdgeProperties> &get_target(graph_t<VertexProperties, EdgeProperties> &g, const edge_t<EdgeProperties> &e)
+int get_source(filtered_graph_t<VertexProperties, EdgeProperties> &fg, int e)
 {
-	assert(e.b < g.vertices.size());
-	return g.vertices[e.b];
+	assert(e < fg.g.edges.size());
+	return fg.g.edges[e].a;
+}
+
+template<typename VertexProperties, typename EdgeProperties>
+int get_target(const graph_t<VertexProperties, EdgeProperties> &g, int e)
+{
+	assert(e < g.edges.size());
+	return g.edges[e].b;
+}
+
+template<typename VertexProperties, typename EdgeProperties>
+int get_target(graph_t<VertexProperties, EdgeProperties> &g, int e)
+{
+	assert(e < g.edges.size());
+	return g.edges[e].b;
+}
+
+template<typename VertexProperties, typename EdgeProperties>
+int get_target(const filtered_graph_t<VertexProperties, EdgeProperties> &fg, int e)
+{
+	assert(e < fg.g.edges.size());
+	return fg.g.edges[e].b;
+}
+
+template<typename VertexProperties, typename EdgeProperties>
+int get_target(filtered_graph_t<VertexProperties, EdgeProperties> &fg, int e)
+{
+	assert(e < fg.g.edges.size());
+	return fg.g.edges[e].b;
 }
 
 template<typename VertexProperties, typename EdgeProperties, typename Func>
@@ -605,8 +695,8 @@ void write_graph(const graph_t<VertexProperties, EdgeProperties> &g, const char 
 		}
 	});
 	for_all_edges(g, [&g, &edge_label, &vertex_filter, &file] (const edge_t<EdgeProperties> &e) -> void {
-		const auto &from = get_source(g, e);
-		const auto &to = get_target(g, e);
+		const auto &from = get_vertex(g, get_source(g, id(e)));
+		const auto &to = get_vertex(g, get_target(g, id(e)));
 		if (!vertex_filter(from) && !vertex_filter(to)) {
 			fprintf(file, "%d -> %d [label=\"%s\"];\n", id(from), id(to), edge_label(e).c_str());
 		}
