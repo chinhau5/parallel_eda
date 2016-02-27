@@ -16,7 +16,8 @@
 //};
 //
 
-#define fm_debug(...) printf(__VA_ARGS__)
+//#define fm_debug(...) printf(__VA_ARGS__)
+#define fm_debug(...)
 
 template<typename Graph, typename Imbalance>
 class fm_partition_builder;
@@ -288,7 +289,12 @@ class fm {
 			return gain >= -max_possible_gain && gain <= max_possible_gain;
 		}
 
-		void swap(int v)
+		const vector<int> &get_pid() const
+		{
+			return pid;
+		}
+
+		void move(int v)
 		{
 			int from = pid[v];
 			int to = (from+1) % 2;
@@ -314,7 +320,11 @@ class fm {
 
 			max_possible_gain = std::numeric_limits<int>::min();
 			for (const auto &v : get_vertices(_g)) {
-				max_possible_gain = std::max(max_possible_gain, num_out_edges(_g, v));
+				int num_out_edges = 0;
+				for (const auto &e : get_out_edges(_g, v)) {
+					++num_out_edges;
+				}
+				max_possible_gain = std::max(max_possible_gain, num_out_edges);
 			}
 
 			fm_partition_builder<Graph, Imbalance> builder;
@@ -335,6 +345,7 @@ class fm {
 				int p = initial_pid[v];
 				assert(p == 0 || p == 1);
 				part[p]->raw_add(v);	
+				imbalance->add(v, p);
 			}
 
 			for (const auto &v : get_vertices(_g)) {
@@ -359,7 +370,7 @@ class fm {
 			return best_prefix;
 		}
 
-		int get_node_to_swap(int &gain)
+		int get_node_to_move(int &gain)
 		{
 			int p0_node, p0_gain, p1_node, p1_gain;
 
@@ -394,16 +405,17 @@ class fm {
 			return node;
 		}
 
-		bool has_node_to_swap()
+		bool has_node_to_move()
 		{
 			return part[0]->has_unlocked() || part[1]->has_unlocked();
 		}
 
-		void swap_all()
+		void move_all()
 		{
 			int node, gain;
-			while (has_node_to_swap() && (node = get_node_to_swap(gain)) != -1) {
-				swap(node);
+			while (has_node_to_move() && (node = get_node_to_move(gain)) != -1) {
+				move(node);
+				imbalance->move(node, pid[node]);
 				moves.emplace_back(node, gain);
 				fm_debug("Moved node %d from %d to %d with gain %d\n", node, (pid[node]+1)%2, pid[node], gain);
 			}
@@ -418,7 +430,7 @@ class fm {
 			}
 			for (const auto &v : get_vertices(*g)) {
 				if (pid[v] != initial_pid[v]) {
-					swap(v);
+					move(v);
 					imbalance->move(v, initial_pid[v]);
 				}
 			}
@@ -439,7 +451,10 @@ class fm {
 					++cut_size;
 				}
 			}
-			return cut_size;
+			assert(cut_size % 2 == 0);
+			/* dividing cut size by 2 because of duplicate edges created during conversion
+			 * from directed to undirected graph */
+			return cut_size/2;
 		}
 
 		int get_num_nodes(int p)
@@ -458,8 +473,12 @@ class fm {
 			int cut_size = get_cut_size();
 			int p0_size = get_num_nodes(0);
 			int p1_size = get_num_nodes(1);
+			int num_vertices = 0;
+			for (const auto &v : get_vertices(*g)) {
+				++num_vertices;
+			}
 
-			assert(p0_size + p1_size == num_vertices(*g));
+			assert(p0_size + p1_size == num_vertices);
 
 			printf("Cut size = %d Partition sizes = (%d,%d)\n", cut_size, p0_size, p1_size);
 		}
@@ -467,13 +486,17 @@ class fm {
 		void run()
 		{
 			int best_prefix;
+			int num_rounds = 0;
+			printf("Initial stats\n");
+			print_stats();
 			do {
-				swap_all();
+				move_all();
 				best_prefix = get_best_prefix();
 				commit(best_prefix);
+				printf("Round %d num moves = %d\n", num_rounds, best_prefix);
+				print_stats();
+				++num_rounds;
 			} while (best_prefix != -1);
-
-			print_stats();
 		}
 };
 

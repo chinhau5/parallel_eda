@@ -16,6 +16,7 @@
 #include <ctime>
 #include <chrono>
 #include <mutex>
+#include <cmath>
 
 //#define TBB_USE_DEBUG 1
 #include <tbb/task_scheduler_init.h>
@@ -29,5 +30,7 @@
 
 #include <boost/numeric/interval.hpp>
 #include <boost/geometry.hpp>
+#include <boost/iterator/counting_iterator.hpp>
+#include <boost/range/counting_range.hpp>
 
 #endif
