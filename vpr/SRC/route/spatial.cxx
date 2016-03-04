@@ -18,7 +18,8 @@
 #include "cluster.h"
 #include "args.h"
 #include "init.h"
-#include "func.h"
+#include "router.h"
+#include "congestion.h"
 #include "partition.h"
 #include "fm.h"
 
@@ -203,6 +204,33 @@ void partition_graph(const RRGraph &g, int num_partitions, const vector<int> &ve
 	//delete [] vwgt;
 }
 
+template<typename Graph>
+void topological_sort(const Graph &g, vector<int> &sorted)
+{
+	vector<int> num_incoming_edges(num_vertices(g), 0);
+	for (const auto &e : get_edges(g)) {
+		int to = get_target(g, e);
+		++num_incoming_edges[to];
+	}
+	queue<int> s;
+	for (int i = 0; i < num_incoming_edges.size(); ++i) {
+		if (num_incoming_edges[i] == 0) {
+			s.push(i);
+		}
+	}
+	while (!s.empty()) {
+		int item = s.front(); s.pop();
+		sorted.push_back(item);
+		for (const auto &e : get_out_edges(g, item)) {
+			int to = get_target(g, e);
+			if (--num_incoming_edges[to] == 0) {
+				s.push(to);
+			}
+		}
+	}
+	assert(all_of(begin(num_incoming_edges), end(num_incoming_edges), [] (int val) -> bool { return val == 0; }));
+}
+
 void test_partition_graph()
 {
 	vector<int> partitions;
@@ -215,6 +243,24 @@ void test_partition_graph()
 	for (int i = 0; i < num_vertices(g); ++i) {
 		printf("v %d part %d\n", i, partitions[i]);
 	}
+}
+
+void test_topo()
+{
+	graph_t<int, int> g;
+	add_vertex(g, 5);
+	add_edge(g, 0, 2);
+	add_edge(g, 1, 2);
+	add_edge(g, 2, 3);
+	add_edge(g, 2, 4);
+	add_edge(g, 1, 4);
+	vector<int> sorted;
+	topological_sort(g, sorted);
+	assert(sorted[0] == 0);
+	assert(sorted[1] == 1);
+	assert(sorted[2] == 2);
+	assert(sorted[3] == 3);
+	assert(sorted[4] == 4);
 }
 
 void test_fm()
@@ -922,15 +968,157 @@ struct subgraph_edge_predicate_t {
 	}
 };
 
+template<typename Graph>
+void routability(const Graph &g)
+{
+	struct routability_visitor_t {
+		vector<set<int>> visited_sinks;
+		vector<set<int>> link_to_previous_visited_sinks;
+		vector<int> first_visited_source;
+		int current_source;
+		bool pending;
+		int pending_to;
+
+		routability_visitor_t(int num_vertices)
+			: visited_sinks(num_vertices), link_to_previous_visited_sinks(num_vertices), first_visited_source(num_vertices, -1), current_source(-1)
+		{
+		}
+
+		bool tree_edge(int e, const RRGraph &g)
+		{
+			int to = get_target(g, e);
+			if (pending) {
+				assert(pending_to == to);
+				assert(link_to_previous_visited_sinks[current_source].find(first_visited_source[to]) != 
+						link_to_previous_visited_sinks[current_source].end());
+				link_to_previous_visited_sinks[current_source].erase(first_visited_source[to]);
+				pending = false;
+			}
+			return true;
+		}
+
+		void examine_edge(int e, const RRGraph &g)
+		{
+			int to = get_target(g, e);
+			if (first_visited_source[to] != -1 && first_visited_source[to] != current_source) {
+				if (link_to_previous_visited_sinks[current_source].find(first_visited_source[to]) == 
+link_to_previous_visited_sinks[current_source].end()) {
+					link_to_previous_visited_sinks[current_source].insert(first_visited_source[to]);
+					pending = true;
+					pending_to = to;
+				} else {
+					pending = false;
+				}
+			} else {
+				pending = false;
+			}
+		}
+
+		void discover_vertex(int v, const RRGraph &g)
+		{
+			assert(first_visited_source[v] == -1);
+			first_visited_source[v] = current_source;
+
+			const auto &ver = get_vertex(g, v);
+			if (ver.properties.type == SINK) {
+				assert(visited_sinks[current_source].find(v) == visited_sinks[current_source].end());
+				visited_sinks[current_source].insert(v);
+				//for (const auto &links : link_to_previous_visited_sinks[current_source]) {
+
+				//}
+			}
+		}
+
+		void examine_vertex(int v, const RRGraph &g)
+		{
+		}
+	};
+
+	int num_sinks = 0;
+	for (const auto &v : get_vertices(g)) {
+		const auto &ver = get_vertex(g, v);
+
+		if (ver.properties.type == SINK) {
+			++num_sinks;
+		}
+	}
+
+	vector<VertexColor> color(num_vertices(g), VertexColor::WHITE);
+	routability_visitor_t visitor(num_vertices(g));
+
+	for (const auto &v : get_vertices(g)) {
+		const auto &ver = get_vertex(g, v);
+
+		if (ver.properties.type == SOURCE) {
+			visitor.current_source = v;
+			bfs(g, { static_cast<unsigned long>(v) }, color, visitor);
+
+			set<int> all_visited_sinks;
+			for (const auto &s : visitor.visited_sinks[v]) {
+				all_visited_sinks.insert(s);
+			}
+			for (const auto &link : visitor.link_to_previous_visited_sinks[v]) {
+				for (const auto &s : visitor.visited_sinks[link]) {
+					assert(all_visited_sinks.find(s) == all_visited_sinks.end());
+					all_visited_sinks.insert(s);
+				}
+			}
+
+			struct simple_sink_visitor_t {
+				set<int> visited_sinks;
+
+				bool tree_edge(int e, const RRGraph &g)
+				{
+					//int to = get_target(g, e);
+					//if (pending) {
+					//assert(pending_to == to);
+					//link_to_previous_visited_sinks[current_source].insert(first_visited_source[to]);
+					//pending = false;
+					//}
+					return true;
+				}
+
+				void examine_edge(int e, const RRGraph &g)
+				{
+				}
+
+				void discover_vertex(int v, const RRGraph &g)
+				{
+					const auto &ver = get_vertex(g, v);
+					if (ver.properties.type == SINK) {
+						assert(visited_sinks.find(v) == visited_sinks.end());
+						visited_sinks.insert(v);
+					}
+				}
+
+				void examine_vertex(int v, const RRGraph &g)
+				{
+				}
+			};
+
+			simple_sink_visitor_t sv;
+			vector<VertexColor> temp_color(num_vertices(g), VertexColor::WHITE);
+			bfs(g, { static_cast<unsigned long>(v) }, temp_color, sv);
+
+			assert(sv.visited_sinks == all_visited_sinks);
+
+			//printf("Source %d visited %d/%d (%g) sinks\n", v, all_visited_sinks.size(), num_sinks, 100.0*all_visited_sinks.size()/num_sinks);
+		}
+	}
+}
+
 class rr_graph_partitioner {
 	private:
 		int num_tracks;
 
+	public:
 		RRGraph orig_g;
 		RRGraph undirected_orig_g;
 		RRGraph channel_with_interior_g;
 		RRGraph channel_without_interior_g;
+		vector<int> result_pid;
 
+	private:
 		vector<vector<vector<int>>> num_starting_tracks; // [type][x][y]
 		vector<int> real_track_num; // [rr_node]
 
@@ -939,7 +1127,6 @@ class rr_graph_partitioner {
 		//int partition_index_offset;
 		vector<vector<vector<vector<int>>>> num_tracks_in_partition; //[type][part][x][y]
 
-		vector<int> result_pid;
 		int total_num_chans;
 
 	public:
@@ -1146,11 +1333,12 @@ class rr_graph_partitioner {
 
 			int average = num_starting_tracks[type_index(v)][x][y] / num_partitions;
 			int after = num_tracks_in_partition[type_index(v)][from][x][y] - 1; 
-			imba = after-average;
+			imba = abs(after-average);
 
 			assert(after >= 0);
 
-			return after == 0;
+			//return after == 0;
+			return imba > 3;
 		}
 
 		void move(int v, int to)
@@ -1216,7 +1404,7 @@ class rr_graph_partitioner {
 			}
 
 		template<typename Graph>
-			void grow_initial_partition(const Graph &g, vector<int> &initial_partition)
+			void grow_initial_partition_2(const Graph &g, vector<int> &initial_partition)
 			{
 				struct visitor_t {
 					set<int> visited_edges;
@@ -1297,11 +1485,10 @@ class rr_graph_partitioner {
 
 				using clock = std::chrono::high_resolution_clock;
 
-				int current_pid = 0;
-				vector<int> num_nodes_in_partition(2, 0);
 				vector<VertexColor> color(num_vertices(g), VertexColor::WHITE);
 				int num_nodes = 0;
 				set<int> all_visited_nodes;
+				vector<vector<int>> visited_nodes;
 				for (const auto &v : get_vertices(g)) {
 					if (color[v] == VertexColor::WHITE) {
 						visitor_t visitor;
@@ -1313,12 +1500,14 @@ class rr_graph_partitioner {
 
 						start = clock::now();
 						assert(visitor.visited_nodes.size() == visitor.visited_edges.size()+1);
+						assert(visitor.visited_nodes.find(v) != end(visitor.visited_nodes));
 						for (const auto &v : visitor.visited_nodes) {
-							initial_partition[v] = current_pid;
-							color[v] = VertexColor::BLACK;
+							//initial_partition[v] = current_pid;
+							assert(color[v] == VertexColor::BLACK);
 							assert(all_visited_nodes.find(v) == all_visited_nodes.end());
 							all_visited_nodes.insert(v);
 						}
+						visited_nodes.emplace_back(begin(visitor.visited_nodes), end(visitor.visited_nodes));
 						//for (const auto &v : get_vertices(g)) {
 							//if (all_visited_nodes.find(v) == end(all_visited_nodes)) {
 								//assert(color[v] == VertexColor::WHITE);
@@ -1328,10 +1517,171 @@ class rr_graph_partitioner {
 						//}
 						auto update_time = clock::now()-start;
 
-						num_nodes_in_partition[current_pid] += visitor.visited_nodes.size();
-						current_pid = (current_pid+1) % 2;
+						//num_nodes_in_partition[current_pid] += visitor.visited_nodes.size();
+						//current_pid = (current_pid+1) % 2;
 
 						//printf("ver: %d time = %lld ms update time = %lld ms visited nodes = %lu\n", v, std::chrono::duration_cast<std::chrono::milliseconds>(time).count(), std::chrono::duration_cast<std::chrono::milliseconds>(update_time).count(), visitor.visited_nodes.size());
+						//if (visitor.visited_nodes.size() == 1) {
+							//printf("
+						//}
+					}
+					++num_nodes;
+				}
+				std::sort(begin(visited_nodes), end(visited_nodes), [] (const auto &a, const auto &b) -> bool { return a.size()>b.size(); });
+				vector<int> num_nodes_in_partition(2, 0);
+				int current_pid = 0;
+				for (const auto &nodes : visited_nodes) {
+					num_nodes_in_partition[current_pid] += nodes.size();
+					for (const auto &v : nodes) {
+						initial_partition[v] = current_pid;
+					}
+					current_pid = (current_pid+1) % 2;
+				}
+				assert(num_nodes_in_partition[0] + num_nodes_in_partition[1] == num_nodes);
+				printf("P0 Size = %d P1 Size = %d Imbalance: %d\n", num_nodes_in_partition[0], num_nodes_in_partition[1], num_nodes_in_partition[0]-num_nodes_in_partition[1]);
+			}
+
+		template<typename Graph>
+			void grow_initial_partition(const Graph &g, vector<int> &initial_partition)
+			{
+				struct visitor_t {
+					set<int> visited_edges;
+					set<int> visited_nodes;
+					set<tuple<int, int, t_rr_type, bool>> visited_channels;
+					int num_nodes_discovered;
+					const vector<int> &pid;
+					bool reachable_partition[2];
+
+					visitor_t(const vector<int> &pid) :
+						num_nodes_discovered(0) , pid(pid)
+					{
+						std::fill(begin(reachable_partition), end(reachable_partition), false);
+						assert(!reachable_partition[0]);
+						assert(!reachable_partition[1]);
+					}
+
+					bool tree_edge(int e, const Graph &g)
+					{
+						bool expand = false;
+						if (visited_nodes.find(get_source(g, e)) != end(visited_nodes)) {
+							bool recorded_to = record(g, get_target(g, e));
+							if (recorded_to) {
+								assert(visited_edges.find(e) == end(visited_edges));
+								visited_edges.insert(e);
+								expand = true;
+							}
+						}
+						return expand;
+					}
+
+					void examine_edge(int e, const Graph &g)
+					{
+						int to = get_target(g, e);
+						int to_pid = pid[to];
+						if (to_pid != -1) {
+							assert(to_pid == 0 || to_pid == 1);
+							if (!reachable_partition[to_pid]) {
+								reachable_partition[to_pid] = true;
+							}
+						}
+					}
+
+					void discover_vertex(int v, const Graph &g)
+					{
+						char buffer[256];
+						sprintf_rr_node(v, buffer);
+						zlog_level(delta_log, ROUTER_V3, "Current: %s\n", buffer);
+						++num_nodes_discovered;
+					}
+
+					void examine_vertex(int v, const Graph &g)
+					{
+					}
+
+					bool record_impl(const Graph &g, int v)
+					{
+						const auto &ver = get_vertex(g, v);
+						const auto &start = get_node_start(v);
+						const auto &key = make_tuple(start.first, start.second, ver.properties.type, ver.properties.inc_direction);
+						bool recorded;
+						if (visited_channels.find(key) == visited_channels.end()) {
+							visited_channels.insert(key);
+							recorded = true;
+						} else {
+							recorded = false;
+						}
+						return recorded;
+					}
+
+					bool record(const Graph &g, int v)
+					{
+						bool recorded = record_impl(g, v);
+						if (recorded) {
+							assert(visited_nodes.find(v) == end(visited_nodes));
+							visited_nodes.insert(v);
+						}
+						return recorded;
+					}
+
+					bool record_source(const Graph &g, int v)
+					{	
+						record_impl(g, v);
+
+						assert(visited_nodes.find(v) == end(visited_nodes));
+						visited_nodes.insert(v);
+
+						return true;
+					}
+				};
+
+				using clock = std::chrono::high_resolution_clock;
+
+				vector<VertexColor> color(num_vertices(g), VertexColor::WHITE);
+				int num_nodes = 0;
+				set<int> all_visited_nodes;
+				vector<int> num_nodes_in_partition(2, 0);
+				//vector<int> sorted;
+				//topological_sort(g, sorted);
+				for (const auto &v : get_vertices(g)) {
+					if (color[v] == VertexColor::WHITE) {
+						visitor_t visitor(initial_partition);
+						visitor.record_source(g, v);
+
+						auto start = clock::now();
+						bfs(g, { static_cast<unsigned long>(v) }, color, visitor);
+						auto time = clock::now()-start;
+
+						assert(visitor.visited_nodes.size() == visitor.visited_edges.size()+1);
+						assert(visitor.visited_nodes.find(v) != end(visitor.visited_nodes));
+						int target_partition;
+						if (num_nodes_in_partition[0] == 0) {
+							target_partition = 0;
+						} else if (num_nodes_in_partition[1] == 0) {
+							target_partition = 1;
+						} else {
+							if ((visitor.reachable_partition[0] && visitor.reachable_partition[1]) ||
+									(!visitor.reachable_partition[0] && !visitor.reachable_partition[1])) {
+								if (num_nodes_in_partition[0] < num_nodes_in_partition[1]) {
+									target_partition = 0;
+								} else {
+									target_partition = 1;
+								}
+							} else {
+								if (visitor.reachable_partition[0]) {
+									target_partition = 0;
+								} else {
+									assert(visitor.reachable_partition[1]); 
+									target_partition = 1;
+								} 
+							}
+						}
+						for (const auto &v : visitor.visited_nodes) {
+							assert(color[v] == VertexColor::BLACK);
+							assert(all_visited_nodes.find(v) == all_visited_nodes.end());
+							initial_partition[v] = target_partition;
+							all_visited_nodes.insert(v);
+						}
+						num_nodes_in_partition[target_partition] += visitor.visited_nodes.size();
 					}
 					++num_nodes;
 				}
@@ -1350,11 +1700,12 @@ class rr_graph_partitioner {
 				grow_initial_partition(g, initial_partition);
 
 				/* refine partition */
-				fm<Graph, rr_graph_partitioner> fm;
-				fm.init(undirected_g, initial_partition, *this);
-				fm.run();
+				//fm<Graph, rr_graph_partitioner> fm;
+				//fm.init(undirected_g, initial_partition, *this);
+				//fm.run();
 
-				const vector<int> &pid = fm.get_pid();
+				//const vector<int> &pid = fm.get_pid();
+				const vector<int> &pid = initial_partition;
 
 				if (level > 0) {
 					//auto valid_vertex_0 = [] (unsigned long v) -> bool { return true; };
@@ -1376,7 +1727,7 @@ class rr_graph_partitioner {
 				}
 			}
 
-		void partition(int _num_partitions)
+		void partition(int _num_partitions, vector<RRGraph *> &graphs)
 		{
 			assert(std::pow(2, std::log2(_num_partitions)) == _num_partitions);
 
@@ -1385,11 +1736,10 @@ class rr_graph_partitioner {
 			std::fill(begin(result_pid), end(result_pid), -1);
 
 			vector<int> pid(num_vertices(orig_g), 0);
-			
+
 			recursive_bipartition(
-					make_subgraph(orig_g, partition_vertex_predicate_t<typename decltype(orig_g)::base>(orig_g, pid, 0)), 
-					make_subgraph(undirected_orig_g, partition_vertex_predicate_t<typename decltype(orig_g)::base>(undirected_orig_g, pid, 0)), 
-					std::log2(num_partitions)-1, 0);
+								make_subgraph(orig_g.base_graph(), partition_vertex_predicate_t<typename decltype(orig_g)::base>(orig_g.base_graph(), pid, 0)),
+								make_subgraph(undirected_orig_g.base_graph(), partition_vertex_predicate_t<typename decltype(undirected_orig_g)::base>(undirected_orig_g.base_graph(), pid, 0)), std::log2(num_partitions)-1, 0);
 
 			int num_nodes_partitioned = 0;
 			vector<int> num_nodes_in_partition(num_partitions, 0);
@@ -1403,6 +1753,52 @@ class rr_graph_partitioner {
 			assert(num_nodes_partitioned == total_num_chans);
 			for (int i = 0; i < num_partitions; ++i) {
 				printf("Num nodes in partition %d = %d\n", i, num_nodes_in_partition[i]);
+				char filename[256];
+				sprintf(filename, "/Volumes/DATA/graph_part_%d.txt", i);
+				FILE *file = fopen(filename, "w");
+				for (const auto &v : get_vertices(orig_g)) {
+					if (result_pid[v] != i) {
+						continue;
+					}
+					const auto &ver = get_vertex(orig_g, v);
+					if ((ver.properties.type == CHANX || ver.properties.type == CHANY)) {
+						const auto &start = get_node_start(v);
+						fprintf(file, "%d %d\n", start.first, start.second);
+					}
+				}
+				fclose(file);
+
+				RRGraph &new_g = *new RRGraph;
+
+				add_vertex(new_g, num_vertices(orig_g));
+				for (const auto &v : get_vertices(orig_g)) {
+					get_vertex(new_g, v).properties = get_vertex(orig_g, v).properties;
+				}
+
+				for (const auto &e : get_edges(orig_g)) {
+					int from = get_source(orig_g, e);
+					int to = get_target(orig_g, e);
+
+					const auto &from_ver = get_vertex(orig_g, from);
+					const auto &to_ver = get_vertex(orig_g, to);
+
+					if ((from_ver.properties.type == CHANX || from_ver.properties.type == CHANY)
+							&& (to_ver.properties.type == CHANX || to_ver.properties.type == CHANY)) {
+						assert(result_pid[from] != -1 && result_pid[to] != -1);
+						if (result_pid[from] == i && result_pid[from] == result_pid[to]) {
+							RREdge &new_e = add_edge(new_g, from, to);
+							const auto &edge = get_edge(orig_g, e);
+							new_e.properties = edge.properties;
+						}
+					} else {
+						assert(result_pid[from] == -1 || result_pid[to] == -1);
+						RREdge &new_e = add_edge(new_g, from, to);
+						const auto &edge = get_edge(orig_g, e);
+						new_e.properties = edge.properties;
+					}
+				}
+
+				graphs.push_back(&new_g);
 			}
 		}
 };
@@ -2656,6 +3052,23 @@ void init_partitioned_graph(int num_partitions, RRGraph &g, vector<RRGraph *> &g
 
 vector<FILE *> delta_log_files;
 vector<FILE *> missing_edge_log_files;
+FILE *ss_log_file = nullptr;
+
+static void log_impl(zlog_msg_t *msg, FILE *&file)
+{
+	if (!file) {
+		char filename[256];
+		sprintf(filename, "%s%s", LOG_PATH_PREFIX, msg->path);
+
+		file = fopen(filename, "w");
+		if (!file) {
+			perror(nullptr);
+			assert(false);
+		}
+	}
+	fprintf(file, "%s", msg->buf);
+	fflush(file);
+}
 
 static void concurrent_log_impl(zlog_msg_t *msg, vector<FILE *> &log_files, int tid)
 {
@@ -2675,6 +3088,16 @@ static void concurrent_log_impl(zlog_msg_t *msg, vector<FILE *> &log_files, int 
 	}
 	fprintf(file, "%s", msg->buf);
 	fflush(file);
+}
+
+static int ss_log_output(zlog_msg_t *msg)
+{
+	int tid;
+	int iter;
+
+	log_impl(msg, ss_log_file);
+
+	return 0;
 }
 
 static int delta_log_output(zlog_msg_t *msg)
@@ -2705,7 +3128,773 @@ static int missing_edge_log_output(zlog_msg_t *msg)
 	return 0;
 }
 
+bool is_channel(const RRNode &node)
+{
+	return node.properties.type == CHANX || node.properties.type == CHANY;
+}
+
+typedef struct pseudo_net_t {
+	net_t *net;
+	vector<int> pseudo_sources;
+	vector<int> pseudo_sources_prev_edge;
+	vector<sink_t *> sinks;
+	vector<sink_t *> routed_sinks;
+} pseudo_net_t;
+
+pseudo_net_t *get_pseudo_net(const vector<vector<int>> &unrouted_sinks_boundary_nodes, const vector<sink_t *> &unrouted_sinks, const vector<bool> &unrouted_sinks_valid, net_t *net, const RRGraph &orig_g, const vector<int> &pid, int &net_next_pid, int num_partitions)
+{
+	assert(unrouted_sinks_boundary_nodes.size() == unrouted_sinks.size());
+	assert(unrouted_sinks.size() == unrouted_sinks_valid.size());
+	
+	pseudo_net_t *pnet = new pseudo_net_t;
+	pnet->net = net;
+	for (int isink = 0; isink < unrouted_sinks_boundary_nodes.size(); ++isink) {
+		if (!unrouted_sinks_valid[isink]) {
+			continue;
+		}
+		pnet->sinks.push_back(unrouted_sinks[isink]);
+	}
+
+	do {
+		zlog_level(delta_log, ROUTER_V3, "Getting pseudo net for net %d in partition %d\n", net->vpr_id, net_next_pid);
+
+		set<int> added_pseudo_sources;
+		for (int isink = 0; isink < unrouted_sinks_boundary_nodes.size(); ++isink) {
+			if (!unrouted_sinks_valid[isink]) {
+				continue;
+			}
+			for (int inode = 0; inode < unrouted_sinks_boundary_nodes[isink].size(); ++inode) {
+				int bnode = unrouted_sinks_boundary_nodes[isink][inode];
+				zlog_level(delta_log, ROUTER_V3, "Looking at neighbors of boundary node %d of sink %d\n", bnode, unrouted_sinks[isink]->rr_node);
+
+				for (const auto &e : get_out_edges(orig_g, bnode)) {
+					int to = get_target(orig_g, e);
+					const auto &to_ver = get_vertex(orig_g, to);
+					//if () {
+					//assert(to_ver.properties.type != SOURCE);
+					//if (to_ver.properties.type == OPIN) {
+					//pnet->pseudo_sources.push_back(to);
+					//pnet->pseudo_sources_prev_edge.push_back(e);
+					//}
+					//} else if (pid[to] == to_pid) {
+					if (pid[to] == -1) {
+						assert(to_ver.properties.type == IPIN);
+					} else if (pid[to] == net_next_pid) {
+						assert(to_ver.properties.type == CHANX || to_ver.properties.type == CHANY); 
+						if (added_pseudo_sources.find(to) == added_pseudo_sources.end()) {
+							pnet->pseudo_sources.push_back(to);
+							pnet->pseudo_sources_prev_edge.push_back(e);
+							added_pseudo_sources.insert(to);
+							zlog_level(delta_log, ROUTER_V3, "\tAdding node %d\n", to);
+						} else {
+							zlog_level(delta_log, ROUTER_V3, "\tNode %d already added\n", to);
+						}
+					} else {
+						zlog_level(delta_log, ROUTER_V3, "\tNode %d is in partition %d\n", to, pid[to]);
+					}
+				}
+			}
+		} 
+
+		if (pnet->pseudo_sources.empty()) {
+			net_next_pid = (net_next_pid+1) % num_partitions;
+		}
+	} while (pnet->pseudo_sources.empty());
+		//{
+		//zlog_level(delta_log, ROUTER_V3, "Net %d has no pseudo sources in partition %d\n", net->vpr_id, to_pid);
+		//delete pnet;
+		//pnet = nullptr;
+		//}
+
+	return pnet;	
+}
+
 bool spatial_route(t_router_opts *opts, struct s_det_routing_arch det_routing_arch, t_direct_inf *directs, int num_directs, t_segment_inf *segment_inf, t_timing_inf timing_inf)
+{
+	using std::chrono::duration_cast;
+	using std::chrono::nanoseconds;
+	using clock = std::chrono::high_resolution_clock;
+
+	init_logging();
+	zlog_set_record("custom_output", delta_log_output);
+	zlog_set_record("missing_edge", missing_edge_log_output);
+	zlog_set_record("ss", ss_log_output);
+	delta_log_files.resize(opts->num_threads, nullptr);
+	missing_edge_log_files.resize(opts->num_threads, nullptr);
+
+	//fclose(fopen(LOG_PATH_PREFIX"iter__tid_.log", "w"));
+
+	test_topo();
+	test_fm();
+	test_filter_graph();
+	test_partition_graph();
+	test_connected_components();
+
+	vector<RRGraph *> graphs;
+	rr_graph_partitioner partitioner;
+	partitioner.init(opts, &det_routing_arch, directs, num_directs, segment_inf, &timing_inf);
+	partitioner.partition(opts->num_threads, graphs);
+	//for (const auto &g : graphs) {
+		//routability(*g);
+	//}
+	//
+	RRGraph combined_g;
+	add_vertex(combined_g, num_vertices(partitioner.orig_g));
+
+	for (const auto &g : graphs) {
+		for (const auto &e : get_edges(*g)) {
+			int from = get_source(*g, e);
+			int to = get_target(*g, e);
+			const auto &from_ver = get_vertex(*g, from);
+			const auto &to_ver = get_vertex(*g, to);
+
+			if (is_channel(from_ver) && is_channel(to_ver)) {
+				assert(!has_edge(combined_g, from, to));
+				add_edge(combined_g, from, to);
+			}
+		}
+	}
+
+	for (const auto &e : get_edges(partitioner.orig_g)) {
+		int from = get_source(partitioner.orig_g, e);
+		int to = get_target(partitioner.orig_g, e);
+		const auto &from_ver = get_vertex(partitioner.orig_g, from);
+		const auto &to_ver = get_vertex(partitioner.orig_g, to);
+		if (!is_channel(from_ver) || !is_channel(to_ver)) {
+			assert(!has_edge(combined_g, from, to));
+			add_edge(combined_g, from, to);
+		}
+	}
+
+	printf("Combined/Orig graph has %d/%d (%g) edges.\n", num_edges(combined_g), num_edges(partitioner.orig_g), 100.0*num_edges(combined_g)/num_edges(partitioner.orig_g));
+
+	//goto lol;
+
+	//extern int num_types;
+	//extern struct s_type_descriptor *type_descriptors;
+	//extern int nx, ny;
+	//extern struct s_grid_tile **grid;
+
+	//free_rr_graph();
+
+	//int warnings;
+
+	//build_rr_graph(GRAPH_UNIDIR, num_types, type_descriptors, nx, ny, grid,
+			//opts->fixed_channel_width, NULL, det_routing_arch.switch_block_type,
+			//det_routing_arch.Fs, det_routing_arch.num_segment,
+			//det_routing_arch.num_switch, segment_inf,
+			//det_routing_arch.global_route_switch,
+			//det_routing_arch.delayless_switch, timing_inf,
+			//det_routing_arch.wire_to_ipin_switch, opts->base_cost_type,
+			//directs, num_directs, FALSE,
+			//&warnings);
+
+	//RRGraph channel_with_interior_g;
+	//init_channel_only_graph(channel_with_interior_g);
+
+	//dump_rr_graph(channel_with_interior_g, "/Volumes/DATA/rr_graph_channel_with_interior.txt");
+
+	//RRGraph orig_g;
+	//init_graph(orig_g);
+
+	//dump_rr_graph(orig_g, "/Volumes/DATA/rr_graph.txt");
+
+	//free_rr_graph();
+	//for (int i = 0; i < det_routing_arch.num_segment; ++i) {
+		//for (int j = 0; j < segment_inf[i].sb_len; ++j) {
+			//if (j != 0 && j != segment_inf[i].sb_len-1) {
+				//segment_inf[i].sb[j] = FALSE;
+			//}
+		//}
+	//}
+	//build_rr_graph(GRAPH_UNIDIR, num_types, type_descriptors, nx, ny, grid,
+			//opts->fixed_channel_width, NULL, det_routing_arch.switch_block_type,
+			//det_routing_arch.Fs, det_routing_arch.num_segment,
+			//det_routing_arch.num_switch, segment_inf,
+			//det_routing_arch.global_route_switch,
+			//det_routing_arch.delayless_switch, timing_inf,
+			//det_routing_arch.wire_to_ipin_switch, opts->base_cost_type,
+			//directs, num_directs, FALSE,
+			//&warnings);
+
+	//RRGraph channel_without_interior_g;
+	//init_channel_only_graph(channel_without_interior_g);
+
+	//dump_rr_graph(channel_without_interior_g, "/Volumes/DATA/rr_graph_channel_without_interior.txt");
+
+	//vector<vector<vector<int>>> all_partition_components(opts->num_threads);
+	////for (int x = 0; x < nx+1; ++x) {
+		////for (int y = 0; y < ny+1; ++y) {
+			////init_partitioned_graph_5(opts->num_threads, channel_with_interior_g, channel_without_interior_g, orig_g, graphs, x, y);
+		////}
+	////}
+	////init_partitioned_graph_4(opts->num_threads, channel_with_interior_g, channel_without_interior_g, orig_g, graphs, 14, 14);
+	//init_partitioned_graph_4(opts->num_threads, channel_with_interior_g, channel_without_interior_g, orig_g, graphs, all_partition_components);
+
+	//for (int i = 0; i < graphs.size(); ++i) {
+		//char filename[256];
+
+		//sprintf(filename, "/Volumes/DATA/rr_graph_%d.txt", i);
+		//dump_rr_graph(*graphs[i], filename);
+
+		//sprintf(filename, "/Volumes/DATA/rr_graph_%d_edges.txt", i);
+		//dump_edges(*graphs[i], filename);
+	//}
+
+	vector<net_t> nets;
+	vector<net_t> global_nets;
+	init_nets(nets, global_nets, opts->bb_factor);	
+
+	t_net_timing *net_timing = new t_net_timing[nets.size()+global_nets.size()];
+	init_net_timing(nets, global_nets, net_timing);
+
+	vector<route_tree_t> route_trees(nets.size());
+	for (int i = 0; i < nets.size(); ++i) {
+		route_tree_init(route_trees[i]);
+	}
+
+	vector<route_state_t *> states(opts->num_threads);
+
+	for (int i = 0; i < opts->num_threads; ++i) {
+		states[i] = new route_state_t[num_vertices(*graphs[0])];
+		for (int j = 0; j < num_vertices(*graphs[0]); ++j) {
+			states[i][j].rr_node = -1;
+			states[i][j].known_cost = std::numeric_limits<float>::max();
+			states[i][j].cost = std::numeric_limits<float>::max();
+			states[i][j].prev_edge = -1;
+			states[i][j].upstream_R = -1;
+			states[i][j].delay = std::numeric_limits<float>::max();
+		}
+	}
+
+	congestion_t *congestion = new congestion_t[num_vertices(*graphs[0])];
+	for (int i = 0; i < num_vertices(*graphs[0]); ++i) {
+		congestion[i].acc_cost = 1;
+		congestion[i].pres_cost = 1;
+		congestion[i].occ = 0;
+	}
+
+	congestion_t *temp_congestion = new congestion_t[num_vertices(*graphs[0])];
+	for (int i = 0; i < num_vertices(*graphs[0]); ++i) {
+		temp_congestion[i].acc_cost = 1;
+		temp_congestion[i].pres_cost = 1;
+		temp_congestion[i].occ = 0;
+	}
+
+	route_parameters_t params;
+	params.criticality_exp = opts->criticality_exp;
+	params.astar_fac = opts->astar_fac;
+	params.max_criticality = opts->max_criticality;
+	params.bend_cost = opts->bend_cost;
+	params.pres_fac = opts->first_iter_pres_fac; /* Typically 0 -> ignore cong. */
+
+	char buffer[256];
+
+	vector<pair<box, net_t *>> nets_to_route;
+	vector<pair<box, net_t *>> nets_to_partition;
+	//vector<vector<int>> overlaps;
+	vector<vector<pair<int, int>>> overlaps;
+	vector<vector<int>> partitions;
+	vector<bool> has_interpartition_overlap;
+	
+	for (auto &net : nets) {
+		box b = bg::make_inverse<box>();
+
+		bg::expand(b, point(net.source.x, net.source.y));
+		for (const auto &sink : net.sinks) {
+			bg::expand(b, point(sink.x, sink.y));
+		}
+		bg::subtract_value(b.min_corner(), 1+opts->bb_factor);
+		bg::add_value(b.max_corner(), opts->bb_factor);
+
+		nets_to_route.push_back(make_pair(b, &net));
+	}
+	std::sort(begin(nets_to_route), end(nets_to_route), [] (const pair<box, net_t *> &a, const pair<box, net_t *> &b) -> bool {
+			return a.second->sinks.size() > b.second->sinks.size();
+			});
+
+	bool routed = false;
+
+	vector<perf_t> perfs(opts->num_threads);
+	vector<lock_perf_t> lock_perfs(opts->num_threads);
+	vector<clock::time_point> greedy_end_time(opts->num_threads);
+	vector<clock::time_point> partitioned_end_time(opts->num_threads);
+	clock::duration total_greedy_route_time = clock::duration::zero();
+	clock::duration total_partitioned_route_time = clock::duration::zero();
+	clock::duration total_update_cost_time = clock::duration::zero();
+	clock::duration total_partitioning_time = clock::duration::zero();
+	clock::duration total_analyze_timing_time = clock::duration::zero();
+	clock::duration total_iter_time = clock::duration::zero();
+
+	int iter;
+	float crit_path_delay;
+
+
+	for (iter = 0; iter < opts->max_router_iterations && !routed; ++iter) {
+		clock::duration greedy_route_time = clock::duration::zero();
+		clock::duration partitioned_route_time = clock::duration::zero();
+		clock::duration update_cost_time = clock::duration::zero();
+		clock::duration partitioning_time = clock::duration::zero();
+		clock::duration analyze_timing_time = clock::duration::zero();
+		clock::duration iter_time = clock::duration::zero();
+
+		//for (int i = 0; i < opts->num_threads; ++i) {
+			//sprintf(buffer, LOG_PATH_PREFIX"iter_%d_tid_%d.log", iter, i);
+			//fclose(fopen(buffer, "w"));
+		//}
+
+		zlog_info(delta_log, "Routing iteration: %d\n", iter);
+		printf("Routing iteration: %d\n", iter);
+		
+		auto iter_start = clock::now();
+
+		//auto route_start = clock::now();
+
+		for (auto &net : nets) {
+			update_sink_criticalities(net, net_timing[net.vpr_id], params);
+		}
+
+		//tbb::enumerable_thread_specific<state_t *> state_tls;
+		//
+		tbb::atomic<int> net_index = 0;
+		vector<tbb::spin_mutex> debug_lock(opts->num_threads);
+		vector<int> thread_num_nets_routed(opts->num_threads);
+		vector<int> thread_num_nets_to_route(opts->num_threads);
+		vector<int> thread_num_sinks_routed(opts->num_threads);
+		vector<int> thread_num_sinks_to_route(opts->num_threads);
+		vector<int> thread_bfs_num_sinks_routed(opts->num_threads);
+		vector<int> graph_used_by_net(nets.size(), -1);
+		vector<vector<pseudo_net_t *>> partition_pseudo_nets_0(opts->num_threads);
+		vector<vector<pseudo_net_t *>> partition_pseudo_nets_1(opts->num_threads);
+		vector<vector<pseudo_net_t *>> *current_partition_pseudo_nets = &partition_pseudo_nets_0;
+		vector<vector<pseudo_net_t *>> *new_partition_pseudo_nets = &partition_pseudo_nets_1;
+		vector<tbb::spin_mutex> pseudo_nets_locks(opts->num_threads);
+		vector<vector<pseudo_net_t *>> net_pseudo_nets(nets.size());
+		tbb::atomic<bool> has_unrouted_sinks = false;
+		vector<vector<vector<int>>> unrouted_sinks_boundary_nodes(nets.size()); 
+		vector<vector<sink_t *>> unrouted_sinks(nets.size()); 
+		vector<vector<bool>> unrouted_sinks_valid(nets.size()); 
+		vector<int> net_next_pid(nets.size(), -1);
+		vector<int> net_initial_pid(nets.size(), -1);
+
+		auto greedy_route_start = clock::now();
+
+		tbb::parallel_for(tbb::blocked_range<int>(0, opts->num_threads, 1),
+				[&] (const tbb::blocked_range<int> &range) {
+
+				assert(range.end()-range.begin() == 1);
+
+				int tid = range.begin();
+
+				char local_buffer[256];
+
+				sprintf(local_buffer, "%d", iter);
+				zlog_put_mdc("iter", local_buffer);
+
+				sprintf(local_buffer, "%d", tid);
+				zlog_put_mdc("tid", local_buffer);
+
+				//assert(debug_lock[tid].try_lock());
+				
+				perf_t local_perf;
+				local_perf.num_heap_pushes = 0;
+				local_perf.num_heap_pops = 0;
+				local_perf.num_neighbor_visits = 0;
+
+				lock_perf_t local_lock_perf;
+				local_lock_perf.num_lock_tries = 0;
+				local_lock_perf.num_lock_waits = 0;
+				local_lock_perf.total_wait_time = clock::duration::zero();
+
+				int local_num_nets_to_route = 0;
+				int local_num_nets_routed = 0;
+				int local_num_sinks_routed = 0;
+				int local_num_sinks_to_route = 0;
+				int local_bfs_num_sinks_routed = 0;
+
+				int i;
+				while ((i = net_index++) < nets_to_route.size()) {
+					net_t *net = nets_to_route[i].second;
+
+					net_initial_pid[net->local_id] = tid;
+					net_next_pid[net->local_id] = (tid+1) % opts->num_threads;
+
+					//auto rip_up_start = clock::now();
+					//if (greedy_rip_up_all) {
+						//route_tree_mark_all_nodes_to_be_ripped(route_trees[net->local_id], g);
+					//} else {
+						route_tree_mark_congested_nodes_to_be_ripped(route_trees[net->local_id], *graphs[tid], congestion);
+					//}
+					route_tree_rip_up_marked(route_trees[net->local_id], *graphs[tid], congestion, params.pres_fac, true, &local_lock_perf);
+
+					//local_perf.total_rip_up_time += clock::now()-rip_up_start;
+
+					//auto route_start = clock::now();
+
+					vector<sink_t *> sinks;	
+					sinks.reserve(net->sinks.size());
+					for (auto &sink : net->sinks) {
+						const RouteTreeNode *sink_rt_node = route_tree_get_rt_node(route_trees[net->local_id], sink.rr_node);
+						if (!sink_rt_node)  {
+							sinks.push_back(&sink);
+						} else {
+							assert(!sink_rt_node->properties.pending_rip_up);
+						}
+					}
+
+					if (!sinks.empty()) {
+						unrouted_sinks[net->local_id] = route_net_3(partitioner.orig_g, partitioner.result_pid, tid, net->vpr_id, &net->source, sinks, params, states[tid], congestion, route_trees[net->local_id], net_timing[net->vpr_id], unrouted_sinks_boundary_nodes[net->local_id], opts->num_threads, true, &local_perf, &local_lock_perf);
+
+						unrouted_sinks_valid[net->local_id]	.resize(unrouted_sinks[net->local_id].size());
+						std::fill(begin(unrouted_sinks_valid[net->local_id]), end(unrouted_sinks_valid[net->local_id]), true);
+
+						if (unrouted_sinks[net->local_id].empty()) {
+							++local_num_nets_routed;
+						} else {
+							auto pnet = get_pseudo_net(unrouted_sinks_boundary_nodes[net->local_id], unrouted_sinks[net->local_id], unrouted_sinks_valid[net->local_id], net, partitioner.orig_g, partitioner.result_pid, net_next_pid[net->local_id], opts->num_threads);
+							int to_pid = net_next_pid[net->local_id];
+							net_next_pid[net->local_id] = (net_next_pid[net->local_id]+1) % opts->num_threads;
+
+							assert(pnet);
+
+							if (pnet) {
+								pseudo_nets_locks[to_pid].lock();
+								(*current_partition_pseudo_nets)[to_pid].push_back(pnet);
+								pseudo_nets_locks[to_pid].unlock();
+
+								net_pseudo_nets[net->local_id].push_back(pnet);
+
+								zlog_level(delta_log, ROUTER_V3, "Generated pseudo net [pid = %d net = %d %lu sources %lu sinks]\n", to_pid, pnet->net->vpr_id, pnet->pseudo_sources.size(), pnet->sinks.size());
+
+								for (const auto &s : pnet->sinks) {
+									zlog_level(delta_log, ROUTER_V3, "\t%d\n", s->rr_node);
+								}
+
+							} else {
+								zlog_level(delta_log, ROUTER_V3, "Failed to generate pnet for [pid = %d net = %d]\n", to_pid, net->vpr_id);
+							}
+
+							has_unrouted_sinks = true;
+						}
+
+						++local_num_nets_to_route;
+						local_num_sinks_to_route += sinks.size();
+
+						local_num_sinks_routed += sinks.size()-unrouted_sinks.size();
+					}
+
+					//local_perf.total_route_time += clock::now()-rip_up_start;
+				}
+
+				greedy_end_time[tid] = clock::now();
+
+				perfs[tid] = local_perf;
+				lock_perfs[tid] = local_lock_perf; 
+				thread_num_nets_routed[tid] = local_num_nets_routed;
+				thread_num_nets_to_route[tid] = local_num_nets_to_route;
+				thread_num_sinks_routed[tid] = local_num_sinks_routed;
+				thread_num_sinks_to_route[tid] = local_num_sinks_to_route;
+				thread_bfs_num_sinks_routed[tid] = local_bfs_num_sinks_routed;
+
+				//debug_lock[tid].unlock();
+				});
+
+		greedy_route_time = clock::now()-greedy_route_start;
+
+		while (has_unrouted_sinks) {
+			has_unrouted_sinks = false;
+
+			for (int pid = 0; pid < opts->num_threads; ++pid) {
+				for (int inet = 0; inet < (*current_partition_pseudo_nets)[pid].size(); ++inet) {
+					pseudo_net_t *pnet = (*current_partition_pseudo_nets)[pid][inet];
+
+					assert(!pnet->pseudo_sources.empty());
+					assert(!pnet->sinks.empty());
+
+					zlog_level(ss_log, ROUTER_V1, "Routing pseudo net [pid = %d, net = %d, %lu sources, %lu sinks]\n", pid, pnet->net->vpr_id, pnet->pseudo_sources.size(), pnet->sinks.size());
+					zlog_level(ss_log, ROUTER_V1, "Pseudo sources:  ");
+
+					route_tree_t rt;
+					route_tree_init(rt);
+					for (const auto &s : pnet->pseudo_sources) {
+						zlog_level(ss_log, ROUTER_V1, "%d ", s);
+						const auto &rt_node = route_tree_add_rr_node(rt, get_vertex(*graphs[pid], s));
+						const auto &rr_node = get_vertex(*graphs[pid], s);
+						route_tree_set_node_properties(*rt_node, true, -1, rr_node.properties.R, 0.5 * rr_node.properties.R * rr_node.properties.C);
+						route_tree_add_root(rt, s);
+					}
+					zlog_level(ss_log, ROUTER_V1, "\n");
+
+					vector<vector<int>> dummy;
+					const auto &local_unrouted_sinks = route_net_3(partitioner.orig_g, partitioner.result_pid, pid, pnet->net->vpr_id, nullptr, pnet->sinks, params, states[pid], congestion, rt, net_timing[pnet->net->vpr_id], dummy, opts->num_threads, true, nullptr, nullptr);
+
+					for (const auto &s : pnet->sinks) {
+						if (find(begin(local_unrouted_sinks), end(local_unrouted_sinks), s) == end(local_unrouted_sinks)) {
+							assert(find(begin(pnet->routed_sinks), end(pnet->routed_sinks), s) == end(pnet->routed_sinks));
+							pnet->routed_sinks.push_back(s);
+	
+							int isink;
+							for (isink = 0; isink < unrouted_sinks[pnet->net->local_id].size(); ++isink) {
+								if (unrouted_sinks[pnet->net->local_id][isink] == s) {
+									break;
+								}
+							}
+							assert(isink < unrouted_sinks[pnet->net->local_id].size());
+
+							unrouted_sinks_valid[pnet->net->local_id][isink] = false;
+						}
+					}
+
+					if (!local_unrouted_sinks.empty()) {
+						auto new_pnet = get_pseudo_net(unrouted_sinks_boundary_nodes[pnet->net->local_id], unrouted_sinks[pnet->net->local_id], unrouted_sinks_valid[pnet->net->local_id], pnet->net, partitioner.orig_g, partitioner.result_pid, net_next_pid[pnet->net->local_id], opts->num_threads);
+
+						int to_pid = net_next_pid[pnet->net->local_id];
+						assert(to_pid != net_initial_pid[pnet->net->local_id]);
+						net_next_pid[pnet->net->local_id] = (net_next_pid[pnet->net->local_id]+1) % opts->num_threads;
+
+						assert(new_pnet);
+
+						if (new_pnet) {
+							pseudo_nets_locks[to_pid].lock();
+							(*new_partition_pseudo_nets)[to_pid].push_back(new_pnet);
+							pseudo_nets_locks[to_pid].unlock();
+
+							net_pseudo_nets[new_pnet->net->local_id].push_back(new_pnet);
+
+							zlog_level(ss_log, ROUTER_V3, "Generated pseudo net [pid = %d, net = %d, %lu sources, %lu sinks]\n", to_pid, new_pnet->net->vpr_id, new_pnet->pseudo_sources.size(), new_pnet->sinks.size());
+							for (const auto &s : new_pnet->sinks) {
+								zlog_level(ss_log, ROUTER_V3, "\t%d\n", s->rr_node);
+							}
+						} else {
+							zlog_level(ss_log, ROUTER_V3, "Failed to generate pnet for [pid = %d net = %d]\n", to_pid, pnet->net->vpr_id);
+						}
+
+						has_unrouted_sinks = true;
+					} else {
+						zlog_level(ss_log, ROUTER_V3, "Routed all sinks of net %d\n", pnet->net->vpr_id);
+					}
+
+				}
+				(*current_partition_pseudo_nets)[pid].clear();
+			}
+			
+			std::swap(current_partition_pseudo_nets, new_partition_pseudo_nets);
+		}
+
+		int lol = 0;
+		for (const auto &pnets : net_pseudo_nets) {
+			if (!pnets.empty()) {
+				vector<sink_t *> all_routed_sinks;
+				for (const auto &pnet : pnets) {
+					for (const auto &rs : pnet->routed_sinks) {
+						all_routed_sinks.push_back(rs);
+					}
+				}
+				//int tid = 0;
+				//while (tid < pnets.size() && pnets[tid]->sinks.empty()) {
+					//++tid;
+				//}
+				vector<sink_t *> debug(begin(pnets[0]->sinks), end(pnets[0]->sinks));
+				sort(begin(debug), end(debug));
+				sort(begin(all_routed_sinks), end(all_routed_sinks));
+
+				//assert(all_routed_sinks == debug);
+				assert(debug.size()>=all_routed_sinks.size());
+				lol += debug.size()-all_routed_sinks.size();
+			}
+		}
+
+		printf("Num unrouted sinks: %d\n", lol);
+
+		//if (greedy_rip_up_all) {
+			//next_greedy_rip_up_iter += greedy_rip_up_all_period;
+			//++greedy_rip_up_all_period;
+			//prev_num_overused_nodes = std::numeric_limits<unsigned long>::max();
+		//}
+
+		//route_time = clock::now()-route_start;
+
+		iter_time = clock::now()-iter_start;
+
+		int total_num_nets_routed = 0;
+		int total_num_nets_to_route = 0;
+		int total_num_sinks_routed = 0;
+		int total_num_sinks_to_route = 0;
+		int total_bfs_num_sinks_routed = 0;
+		for (int i = 0; i < opts->num_threads; ++i) {
+			printf("Thread %d num nets routed: %d/%d (%g)\n", i, thread_num_nets_routed[i], thread_num_nets_to_route[i], thread_num_nets_routed[i]*100.0/thread_num_nets_to_route[i]);
+			printf("Thread %d num sinks routed: %d/%d (%g)\n", i, thread_num_sinks_routed[i], thread_num_sinks_to_route[i], thread_num_sinks_routed[i]*100.0/thread_num_sinks_to_route[i]);
+			total_num_nets_to_route += thread_num_nets_to_route[i];
+			total_num_nets_routed += thread_num_nets_routed[i];
+			total_num_sinks_routed += thread_num_sinks_routed[i];
+			total_num_sinks_to_route += thread_num_sinks_to_route[i];
+			total_bfs_num_sinks_routed += thread_bfs_num_sinks_routed[i];
+		}
+		printf("Total num nets routed: %d/%d (%g)\n", total_num_nets_routed, total_num_nets_to_route, total_num_nets_routed*100.0/total_num_nets_to_route);
+		printf("Total partition num sinks routed: %d/%d (%g)\n", total_num_sinks_routed, total_num_sinks_to_route, total_num_sinks_routed*100.0/total_num_sinks_to_route);
+		printf("Total BFS num sinks routed: %d/%d (%g)\n", total_bfs_num_sinks_routed, total_num_sinks_to_route, total_bfs_num_sinks_routed*100.0/total_num_sinks_to_route);
+
+		printf("Total num sinks routed: %d/%d (%g)\n", total_bfs_num_sinks_routed+total_num_sinks_routed, total_num_sinks_to_route, (total_bfs_num_sinks_routed+total_num_sinks_routed)*100.0/total_num_sinks_to_route);
+
+		/* checking */
+		for (int i = 0; i < num_vertices(*graphs[0]); ++i) {
+			congestion[i].recalc_occ = 0; 
+		}
+
+		for (const auto &net : nets) {
+			check_route_tree(route_trees[net.local_id], net, *graphs[0]);
+			recalculate_occ(route_trees[net.local_id], *graphs[0], congestion);
+		}
+
+		bool valid = true;
+		for (int i = 0; i < num_vertices(*graphs[0]); ++i) {
+			sprintf_rr_node(i, buffer);
+			if (congestion[i].recalc_occ != congestion[i].occ) {
+				zlog_error(delta_log, "Node %s occ mismatch, recalc: %d original: %d\n", buffer, congestion[i].recalc_occ, congestion[i].occ);
+				valid = false;
+			}
+		}
+		assert(valid);
+
+		for (const auto &net : nets) {
+			vector<int> overused_rr_node;
+			get_overused_nodes(route_trees[net.local_id], get_vertex(route_trees[net.local_id].graph, route_trees[net.local_id].root_rt_node_id), *graphs[0], congestion, overused_rr_node);
+			if (!overused_rr_node.empty()) {
+				zlog_level(delta_log, ROUTER_V1, "Net %d bb_rank %d overused nodes:\n", net.vpr_id, net.bb_area_rank);
+				for (const auto &item : overused_rr_node) {
+					zlog_level(delta_log, ROUTER_V1, "%d ", item);
+				}
+				zlog_level(delta_log, ROUTER_V1, "\n");
+			}
+		}
+
+		iter_start = clock::now();
+
+		if (feasible_routing(*graphs[0], congestion)) {
+			//dump_route(*current_traces_ptr, "route.txt");
+			routed = true;
+		} else {
+			unsigned long num_overused_nodes = 0;
+			for (int i = 0; i < num_vertices(*graphs[0]); ++i) {
+				if (congestion[i].occ > get_vertex(*graphs[0], i).properties.capacity) {
+					++num_overused_nodes;
+				}
+			}
+			zlog_info(delta_log, "Num overused nodes: %lu/%d (%.2f)\n", num_overused_nodes, num_vertices(*graphs[0]), num_overused_nodes*100.0/num_vertices(*graphs[0]));
+			printf("Num overused nodes: %lu/%d (%.2f)\n", num_overused_nodes, num_vertices(*graphs[0]), num_overused_nodes*100.0/num_vertices(*graphs[0]));
+
+			auto update_cost_start = clock::now();
+
+			if (iter == 0) {
+				params.pres_fac = opts->initial_pres_fac;
+				update_costs(*graphs[0], congestion, params.pres_fac, 0);
+			} else {
+				params.pres_fac *= opts->pres_fac_mult;
+
+				/* Avoid overflow for high iteration counts, even if acc_cost is big */
+				params.pres_fac = std::min(params.pres_fac, static_cast<float>(HUGE_POSITIVE_FLOAT / 1e5));
+
+				update_costs(*graphs[0], congestion, params.pres_fac, opts->acc_fac);
+			}
+
+			update_cost_time = clock::now()-update_cost_start;
+		}
+
+		auto analyze_timing_start = clock::now();
+
+		crit_path_delay = analyze_timing(net_timing);
+
+		analyze_timing_time = clock::now()-analyze_timing_start;
+
+		iter_time += clock::now()-iter_start;
+
+		//total_route_time += route_time;
+		total_greedy_route_time += greedy_route_time;
+		total_partitioned_route_time += partitioned_route_time;
+		total_update_cost_time += update_cost_time;
+		total_partitioning_time += partitioning_time;
+		total_analyze_timing_time += analyze_timing_time;
+		total_iter_time += iter_time;
+
+		printf("Iteration time: %g s.\n", duration_cast<nanoseconds>(iter_time).count() / 1e9);
+			printf("\tRoute time: %g s.\n", duration_cast<nanoseconds>(greedy_route_time+partitioned_route_time).count() / 1e9);
+				printf("\t\tGreedy route time: %g s.\n", duration_cast<nanoseconds>(greedy_route_time).count() / 1e9);
+				printf("\t\tPartitioned route time: %g s.\n", duration_cast<nanoseconds>(partitioned_route_time).count() / 1e9);
+			printf("\tUpdate cost time: %g s.\n", duration_cast<nanoseconds>(update_cost_time).count() / 1e9);
+			printf("\tPartitioning time: %g s.\n", duration_cast<nanoseconds>(partitioning_time).count() / 1e9);
+			printf("\tAnalyze timing time: %g s.\n", duration_cast<nanoseconds>(analyze_timing_time).count() / 1e9);
+		printf("Critical path: %g ns\n", crit_path_delay);
+
+		unsigned long total_num_heap_pushes = 0;
+		unsigned long total_num_heap_pops = 0;
+		unsigned long total_num_neighbor_visits = 0;
+
+		for (int i = 0; i < opts->num_threads; ++i) {
+			total_num_heap_pushes += perfs[i].num_heap_pushes;
+			total_num_heap_pops += perfs[i].num_heap_pops;
+			total_num_neighbor_visits += perfs[i].num_neighbor_visits;
+		}
+
+		for (int i = 0; i < opts->num_threads; ++i) {
+			printf("Thread %d num lock waits/tries: %lu/%lu (%g)\n", i, lock_perfs[i].num_lock_waits, lock_perfs[i].num_lock_tries, (float)lock_perfs[i].num_lock_waits*100/lock_perfs[i].num_lock_tries);
+			printf("Thread %d total wait time: %g (%g)\n", i, duration_cast<nanoseconds>(lock_perfs[i].total_wait_time).count() / 1e9, 100.0*lock_perfs[i].total_wait_time/(greedy_route_time+partitioned_route_time));
+			printf("Thread %d num_heap_pushes: %lu\n", i, perfs[i].num_heap_pushes);
+			printf("Thread %d num_heap_pops: %lu\n", i, perfs[i].num_heap_pops);
+			printf("Thread %d num_neighbor_visits: %lu\n", i, perfs[i].num_neighbor_visits);
+		}
+
+		printf("total_num_heap_pushes: %lu\n", total_num_heap_pushes);
+		printf("total_num_heap_pops: %lu\n", total_num_heap_pops); 
+		printf("total_num_neighbor_visits: %lu\n", total_num_neighbor_visits);
+
+		clock::time_point greedy_earliest_end_time = *std::min_element(begin(greedy_end_time), end(greedy_end_time));
+		clock::time_point partitioned_earliest_end_time = *std::min_element(begin(partitioned_end_time), end(partitioned_end_time));
+
+		for (int i = 0; i < opts->num_threads; ++i) {
+			printf("Thread %d greedy wait time %g (%g)\n", i, duration_cast<nanoseconds>(greedy_end_time[i]-greedy_earliest_end_time).count() / 1e9, 100.0*(greedy_end_time[i]-greedy_earliest_end_time)/greedy_route_time);
+		}
+		for (int i = 0; i < opts->num_threads; ++i) {
+			if (partitioned_route_time > clock::duration::zero()) {
+				printf("Thread %d partitioned wait time %g (%g)\n", i, duration_cast<nanoseconds>(partitioned_end_time[i]-partitioned_earliest_end_time).count() / 1e9, 100.0*(partitioned_end_time[i]-partitioned_earliest_end_time)/partitioned_route_time);
+			}
+		}
+	}
+
+	//sprintf(buffer, "%s_run_%d_rr_graph_occ.txt", s_circuit_name, run);
+	//dump_rr_graph_occ(congestion, num_vertices(g), buffer);
+
+	if (routed) {
+		printf("Routed in %d iterations. Total iteration time: %g\n", iter, duration_cast<nanoseconds>(total_iter_time).count() / 1e9);
+			printf("\tTotal route time: %g s.\n", duration_cast<nanoseconds>(total_greedy_route_time+total_partitioned_route_time).count() / 1e9);
+				printf("\t\tTotal greedy route time: %g s.\n", duration_cast<nanoseconds>(total_greedy_route_time).count() / 1e9);
+				printf("\t\tTotal partitioned route time: %g s.\n", duration_cast<nanoseconds>(total_partitioned_route_time).count() / 1e9);
+			printf("\tTotal update cost time: %g s.\n", duration_cast<nanoseconds>(total_update_cost_time).count() / 1e9);
+			printf("\tTotal partitioning time: %g s.\n", duration_cast<nanoseconds>(total_partitioning_time).count() / 1e9);
+			printf("\tTotal analyze timing time: %g s.\n", duration_cast<nanoseconds>(total_analyze_timing_time).count() / 1e9);
+
+		printf("Final critical path: %g ns\n", crit_path_delay);
+	} else {
+		printf("Failed to route in %d iterations. Total iteration time: %g\n", opts->max_router_iterations, duration_cast<nanoseconds>(total_iter_time).count() / 1e9);
+			printf("\tTotal route time: %g s.\n", duration_cast<nanoseconds>(total_greedy_route_time+total_partitioned_route_time).count() / 1e9);
+				printf("\t\tTotal greedy route time: %g s.\n", duration_cast<nanoseconds>(total_greedy_route_time).count() / 1e9);
+				printf("\t\tTotal partitioned route time: %g s.\n", duration_cast<nanoseconds>(total_partitioned_route_time).count() / 1e9);
+			printf("\tTotal update cost time: %g s.\n", duration_cast<nanoseconds>(total_update_cost_time).count() / 1e9);
+			printf("\tTotal partitioning time: %g s.\n", duration_cast<nanoseconds>(total_partitioning_time).count() / 1e9);
+			printf("\tTotal analyze timing time: %g s.\n", duration_cast<nanoseconds>(total_analyze_timing_time).count() / 1e9);
+	}
+
+	//delete_graph(g);
+	delete_net_timing(nets, global_nets, net_timing);	
+	delete [] congestion;
+	delete [] net_timing;
+	for (int i = 0; i < opts->num_threads; ++i) {
+		delete [] states[i];
+	}
+
+	return routed;
+}
+
+bool spatial_route_2(t_router_opts *opts, struct s_det_routing_arch det_routing_arch, t_direct_inf *directs, int num_directs, t_segment_inf *segment_inf, t_timing_inf timing_inf)
 {
 	using std::chrono::duration_cast;
 	using std::chrono::nanoseconds;
@@ -2719,87 +3908,122 @@ bool spatial_route(t_router_opts *opts, struct s_det_routing_arch det_routing_ar
 
 	//fclose(fopen(LOG_PATH_PREFIX"iter__tid_.log", "w"));
 
+	test_topo();
 	test_fm();
 	test_filter_graph();
 	test_partition_graph();
 	test_connected_components();
 
+	vector<RRGraph *> graphs;
 	rr_graph_partitioner partitioner;
 	partitioner.init(opts, &det_routing_arch, directs, num_directs, segment_inf, &timing_inf);
-	partitioner.partition(opts->num_threads);
-	return;
+	partitioner.partition(opts->num_threads, graphs);
+	//for (const auto &g : graphs) {
+		//routability(*g);
+	//}
+	//
+	RRGraph combined_g;
+	add_vertex(combined_g, num_vertices(partitioner.orig_g));
 
-	extern int num_types;
-	extern struct s_type_descriptor *type_descriptors;
-	extern int nx, ny;
-	extern struct s_grid_tile **grid;
+	for (const auto &g : graphs) {
+		for (const auto &e : get_edges(*g)) {
+			int from = get_source(*g, e);
+			int to = get_target(*g, e);
+			const auto &from_ver = get_vertex(*g, from);
+			const auto &to_ver = get_vertex(*g, to);
 
-	free_rr_graph();
-
-	int warnings;
-
-	build_rr_graph(GRAPH_UNIDIR, num_types, type_descriptors, nx, ny, grid,
-			opts->fixed_channel_width, NULL, det_routing_arch.switch_block_type,
-			det_routing_arch.Fs, det_routing_arch.num_segment,
-			det_routing_arch.num_switch, segment_inf,
-			det_routing_arch.global_route_switch,
-			det_routing_arch.delayless_switch, timing_inf,
-			det_routing_arch.wire_to_ipin_switch, opts->base_cost_type,
-			directs, num_directs, FALSE,
-			&warnings);
-
-	RRGraph channel_with_interior_g;
-	init_channel_only_graph(channel_with_interior_g);
-
-	dump_rr_graph(channel_with_interior_g, "/Volumes/DATA/rr_graph_channel_with_interior.txt");
-
-	RRGraph orig_g;
-	init_graph(orig_g);
-
-	dump_rr_graph(orig_g, "/Volumes/DATA/rr_graph.txt");
-
-	free_rr_graph();
-	for (int i = 0; i < det_routing_arch.num_segment; ++i) {
-		for (int j = 0; j < segment_inf[i].sb_len; ++j) {
-			if (j != 0 && j != segment_inf[i].sb_len-1) {
-				segment_inf[i].sb[j] = FALSE;
+			if (is_channel(from_ver) && is_channel(to_ver)) {
+				assert(!has_edge(combined_g, from, to));
+				add_edge(combined_g, from, to);
 			}
 		}
 	}
-	build_rr_graph(GRAPH_UNIDIR, num_types, type_descriptors, nx, ny, grid,
-			opts->fixed_channel_width, NULL, det_routing_arch.switch_block_type,
-			det_routing_arch.Fs, det_routing_arch.num_segment,
-			det_routing_arch.num_switch, segment_inf,
-			det_routing_arch.global_route_switch,
-			det_routing_arch.delayless_switch, timing_inf,
-			det_routing_arch.wire_to_ipin_switch, opts->base_cost_type,
-			directs, num_directs, FALSE,
-			&warnings);
 
-	RRGraph channel_without_interior_g;
-	init_channel_only_graph(channel_without_interior_g);
+	for (const auto &e : get_edges(partitioner.orig_g)) {
+		int from = get_source(partitioner.orig_g, e);
+		int to = get_target(partitioner.orig_g, e);
+		const auto &from_ver = get_vertex(partitioner.orig_g, from);
+		const auto &to_ver = get_vertex(partitioner.orig_g, to);
+		if (!is_channel(from_ver) || !is_channel(to_ver)) {
+			assert(!has_edge(combined_g, from, to));
+			add_edge(combined_g, from, to);
+		}
+	}
 
-	dump_rr_graph(channel_without_interior_g, "/Volumes/DATA/rr_graph_channel_without_interior.txt");
+	printf("Combined/Orig graph has %d/%d (%g) edges.\n", num_edges(combined_g), num_edges(partitioner.orig_g), 100.0*num_edges(combined_g)/num_edges(partitioner.orig_g));
 
-	vector<RRGraph *> graphs;
-	vector<vector<vector<int>>> all_partition_components(opts->num_threads);
-	//for (int x = 0; x < nx+1; ++x) {
-		//for (int y = 0; y < ny+1; ++y) {
-			//init_partitioned_graph_5(opts->num_threads, channel_with_interior_g, channel_without_interior_g, orig_g, graphs, x, y);
+	//goto lol;
+
+	//extern int num_types;
+	//extern struct s_type_descriptor *type_descriptors;
+	//extern int nx, ny;
+	//extern struct s_grid_tile **grid;
+
+	//free_rr_graph();
+
+	//int warnings;
+
+	//build_rr_graph(GRAPH_UNIDIR, num_types, type_descriptors, nx, ny, grid,
+			//opts->fixed_channel_width, NULL, det_routing_arch.switch_block_type,
+			//det_routing_arch.Fs, det_routing_arch.num_segment,
+			//det_routing_arch.num_switch, segment_inf,
+			//det_routing_arch.global_route_switch,
+			//det_routing_arch.delayless_switch, timing_inf,
+			//det_routing_arch.wire_to_ipin_switch, opts->base_cost_type,
+			//directs, num_directs, FALSE,
+			//&warnings);
+
+	//RRGraph channel_with_interior_g;
+	//init_channel_only_graph(channel_with_interior_g);
+
+	//dump_rr_graph(channel_with_interior_g, "/Volumes/DATA/rr_graph_channel_with_interior.txt");
+
+	//RRGraph orig_g;
+	//init_graph(orig_g);
+
+	//dump_rr_graph(orig_g, "/Volumes/DATA/rr_graph.txt");
+
+	//free_rr_graph();
+	//for (int i = 0; i < det_routing_arch.num_segment; ++i) {
+		//for (int j = 0; j < segment_inf[i].sb_len; ++j) {
+			//if (j != 0 && j != segment_inf[i].sb_len-1) {
+				//segment_inf[i].sb[j] = FALSE;
+			//}
 		//}
 	//}
-	//init_partitioned_graph_4(opts->num_threads, channel_with_interior_g, channel_without_interior_g, orig_g, graphs, 14, 14);
-	init_partitioned_graph_4(opts->num_threads, channel_with_interior_g, channel_without_interior_g, orig_g, graphs, all_partition_components);
+	//build_rr_graph(GRAPH_UNIDIR, num_types, type_descriptors, nx, ny, grid,
+			//opts->fixed_channel_width, NULL, det_routing_arch.switch_block_type,
+			//det_routing_arch.Fs, det_routing_arch.num_segment,
+			//det_routing_arch.num_switch, segment_inf,
+			//det_routing_arch.global_route_switch,
+			//det_routing_arch.delayless_switch, timing_inf,
+			//det_routing_arch.wire_to_ipin_switch, opts->base_cost_type,
+			//directs, num_directs, FALSE,
+			//&warnings);
 
-	for (int i = 0; i < graphs.size(); ++i) {
-		char filename[256];
+	//RRGraph channel_without_interior_g;
+	//init_channel_only_graph(channel_without_interior_g);
 
-		sprintf(filename, "/Volumes/DATA/rr_graph_%d.txt", i);
-		dump_rr_graph(*graphs[i], filename);
+	//dump_rr_graph(channel_without_interior_g, "/Volumes/DATA/rr_graph_channel_without_interior.txt");
 
-		sprintf(filename, "/Volumes/DATA/rr_graph_%d_edges.txt", i);
-		dump_edges(*graphs[i], filename);
-	}
+	//vector<vector<vector<int>>> all_partition_components(opts->num_threads);
+	////for (int x = 0; x < nx+1; ++x) {
+		////for (int y = 0; y < ny+1; ++y) {
+			////init_partitioned_graph_5(opts->num_threads, channel_with_interior_g, channel_without_interior_g, orig_g, graphs, x, y);
+		////}
+	////}
+	////init_partitioned_graph_4(opts->num_threads, channel_with_interior_g, channel_without_interior_g, orig_g, graphs, 14, 14);
+	//init_partitioned_graph_4(opts->num_threads, channel_with_interior_g, channel_without_interior_g, orig_g, graphs, all_partition_components);
+
+	//for (int i = 0; i < graphs.size(); ++i) {
+		//char filename[256];
+
+		//sprintf(filename, "/Volumes/DATA/rr_graph_%d.txt", i);
+		//dump_rr_graph(*graphs[i], filename);
+
+		//sprintf(filename, "/Volumes/DATA/rr_graph_%d_edges.txt", i);
+		//dump_edges(*graphs[i], filename);
+	//}
 
 	vector<net_t> nets;
 	vector<net_t> global_nets;
@@ -2987,9 +4211,9 @@ bool spatial_route(t_router_opts *opts, struct s_det_routing_arch det_routing_ar
 						}
 					}
 					if (!sinks.empty()) {
-						int num_sinks_routed = route_net_2(*graphs[tid], net->vpr_id, &net->source, sinks, params, states[tid], congestion, route_trees[net->local_id], net_timing[net->vpr_id], true, &local_perf, &local_lock_perf);
+						const auto &unrouted_sinks = route_net_2(*graphs[tid], net->vpr_id, &net->source, sinks, params, states[tid], congestion, route_trees[net->local_id], net_timing[net->vpr_id], true, &local_perf, &local_lock_perf);
 
-						if (num_sinks_routed == sinks.size()) {
+						if (unrouted_sinks.size() == 0) {
 							++local_num_nets_routed;
 						} else {
 							route_tree_t temp_route_tree;
@@ -2997,17 +4221,17 @@ bool spatial_route(t_router_opts *opts, struct s_det_routing_arch det_routing_ar
 
 							zlog_level(delta_log, ROUTER_V1, "Routing net %d with original RR graph\n", net->vpr_id);
 
-							int orig_num_sinks_routed = route_net_2(orig_g, net->vpr_id, &net->source, sinks, params, states[tid], temp_congestion, temp_route_tree, net_timing[net->vpr_id], true, nullptr, nullptr);
+							const auto &orig_unrouted_sinks = route_net_2(partitioner.orig_g, net->vpr_id, &net->source, unrouted_sinks, params, states[tid], temp_congestion, temp_route_tree, net_timing[net->vpr_id], true, nullptr, nullptr);
 
-							assert(orig_num_sinks_routed == sinks.size());
+							assert(orig_unrouted_sinks.size() == 0);
 
 							int num_missing_edges = 0;
 							int num_missing_interior_edges = 0;
-							zlog_debug(missing_edge_log, "Net %d routed in graph %d requires edges below: \n", tid, net->vpr_id);
+							zlog_debug(missing_edge_log, "Net %d routed in graph %d requires edges below: \n", net->vpr_id, tid);
 							for (const auto &rt_edge_id : get_edges(temp_route_tree.graph)) {
 								int rr_edge = get_edge(temp_route_tree.graph, rt_edge_id).properties.rr_edge;
-								int from = get_source(orig_g, rr_edge);
-								int to = get_target(orig_g, rr_edge);
+								int from = get_source(partitioner.orig_g, rr_edge);
+								int to = get_target(partitioner.orig_g, rr_edge);
 								if (!has_edge(*graphs[tid], from, to)) {
 									int found = -1;
 									int num_found = 0;
@@ -3019,7 +4243,7 @@ bool spatial_route(t_router_opts *opts, struct s_det_routing_arch det_routing_ar
 									}
 									assert(num_found == 1 || num_found == 0);
 
-									if (has_edge(channel_with_interior_g, from, to) && !has_edge(channel_without_interior_g, from, to)) {
+									if (has_edge(partitioner.channel_with_interior_g, from, to) && !has_edge(partitioner.channel_without_interior_g, from, to)) {
 										++num_missing_interior_edges;
 									}
 									char buffer[256];
@@ -3035,6 +4259,7 @@ bool spatial_route(t_router_opts *opts, struct s_det_routing_arch det_routing_ar
 							}
 							zlog_debug(missing_edge_log, "Net %d num missing edges = %d/%d (%g) num missing interior edges = %d/%d (%g)\n\n", net->vpr_id, num_missing_edges, num_edges(temp_route_tree.graph), num_missing_edges*100.0/num_edges(temp_route_tree.graph), num_missing_interior_edges, num_missing_edges, num_missing_interior_edges*100.0/num_missing_edges);
 
+							if (false) {
 							struct bfs_router_t {
 								set<int> visited_nodes;
 								set<int> visited_edges;
@@ -3068,20 +4293,80 @@ bool spatial_route(t_router_opts *opts, struct s_det_routing_arch det_routing_ar
 								void examine_vertex(int v, const RRGraph &g)
 								{
 								}
-							} router_visitor(num_vertices(*graphs[tid]));
+							} router_visitor(num_vertices(combined_g));
 
-							vector<VertexColor> color(num_vertices(*graphs[tid]), VertexColor::WHITE);
-							bfs(*graphs[tid], { static_cast<unsigned long>(net->source.rr_node) }, color, router_visitor);
+							vector<VertexColor> color(num_vertices(combined_g), VertexColor::WHITE);
+							bfs(combined_g, { static_cast<unsigned long>(net->source.rr_node) }, color, router_visitor);
 							assert(router_visitor.visited_edges.size()+1 == router_visitor.visited_nodes.size());
-							int lmao = router_visitor.visited_nodes.size();
-							for (int i = 0; i < sinks.size(); ++i) {
-								if (router_visitor.visited_nodes.find(sinks[i]->rr_node) != router_visitor.visited_nodes.end()) {
+							for (int i = 0; i < unrouted_sinks.size(); ++i) {
+								if (router_visitor.visited_nodes.find(unrouted_sinks[i]->rr_node) != router_visitor.visited_nodes.end()) {
 									++local_bfs_num_sinks_routed;
 								} else {
 									//for (const auto &c : all_partition_components[tid]) {
-										//assert(find(begin(c), end(c), net->source.rr_node) == end(c)
-												//|| find(begin(c), end(c), sinks[i]->rr_node) == end(c));
+									//assert(find(begin(c), end(c), net->source.rr_node) == end(c)
+									//|| find(begin(c), end(c), sinks[i]->rr_node) == end(c));
 									//}
+								}
+							}
+							} else {
+								set<int> routed;
+								for (int t = 0; t < opts->num_threads; ++t) {
+									struct bfs_router_t {
+										set<int> visited_nodes;
+										set<int> visited_edges;
+										vector<int> pred;
+
+										bfs_router_t(int num_vertices) :
+											pred(num_vertices, -1)
+										{
+										}
+
+										bool tree_edge(int e, const RRGraph &g)
+										{
+											int to = get_target(g, e);
+											assert(pred[to] == -1);
+											pred[to] = get_source(g, e);
+											assert(visited_edges.find(e) == visited_edges.end());
+											visited_edges.insert(e);
+											return true;
+										}
+
+										void examine_edge(int e, const RRGraph &g)
+										{
+										}
+
+										void discover_vertex(int v, const RRGraph &g)
+										{
+											assert(visited_nodes.find(v) == visited_nodes.end());
+											visited_nodes.insert(v);
+										}
+
+										void examine_vertex(int v, const RRGraph &g)
+										{
+										}
+									} router_visitor(num_vertices(*graphs[t]));
+
+									vector<VertexColor> color(num_vertices(*graphs[t]), VertexColor::WHITE);
+									bfs(*graphs[t], { static_cast<unsigned long>(net->source.rr_node) }, color, router_visitor);
+									assert(router_visitor.visited_edges.size()+1 == router_visitor.visited_nodes.size());
+									for (int i = 0; i < unrouted_sinks.size(); ++i) {
+										if (router_visitor.visited_nodes.find(unrouted_sinks[i]->rr_node) != router_visitor.visited_nodes.end()) {
+											if (routed.find(unrouted_sinks[i]->rr_node) == routed.end()) {
+												routed.insert(unrouted_sinks[i]->rr_node);
+												++local_bfs_num_sinks_routed;
+											} 
+										} else {
+											//for (const auto &c : all_partition_components[tid]) {
+											//assert(find(begin(c), end(c), net->source.rr_node) == end(c)
+											//|| find(begin(c), end(c), sinks[i]->rr_node) == end(c));
+											//}
+										}
+									}
+									set<int> confirm;
+									for (const auto &u : unrouted_sinks) {
+										confirm.insert(u->rr_node);
+									}
+									assert(confirm.size() >= routed.size());
 								}
 							}
 							//assert(local_bfs_num_sinks_routed == sinks.size());
@@ -3093,7 +4378,7 @@ bool spatial_route(t_router_opts *opts, struct s_det_routing_arch det_routing_ar
 						++local_num_nets_to_route;
 
 						local_num_sinks_to_route += sinks.size();
-						local_num_sinks_routed += num_sinks_routed;
+						local_num_sinks_routed += sinks.size()-unrouted_sinks.size();
 					}
 
 					//local_perf.total_route_time += clock::now()-rip_up_start;
@@ -3139,8 +4424,10 @@ bool spatial_route(t_router_opts *opts, struct s_det_routing_arch det_routing_ar
 			total_bfs_num_sinks_routed += thread_bfs_num_sinks_routed[i];
 		}
 		printf("Total num nets routed: %d/%d (%g)\n", total_num_nets_routed, total_num_nets_to_route, total_num_nets_routed*100.0/total_num_nets_to_route);
-		printf("Total num sinks routed: %d/%d (%g)\n", total_num_sinks_routed, total_num_sinks_to_route, total_num_sinks_routed*100.0/total_num_sinks_to_route);
+		printf("Total partition num sinks routed: %d/%d (%g)\n", total_num_sinks_routed, total_num_sinks_to_route, total_num_sinks_routed*100.0/total_num_sinks_to_route);
 		printf("Total BFS num sinks routed: %d/%d (%g)\n", total_bfs_num_sinks_routed, total_num_sinks_to_route, total_bfs_num_sinks_routed*100.0/total_num_sinks_to_route);
+
+		printf("Total num sinks routed: %d/%d (%g)\n", total_bfs_num_sinks_routed+total_num_sinks_routed, total_num_sinks_to_route, (total_bfs_num_sinks_routed+total_num_sinks_routed)*100.0/total_num_sinks_to_route);
 
 		/* checking */
 		for (int i = 0; i < num_vertices(*graphs[0]); ++i) {
@@ -3299,3 +4586,4 @@ bool spatial_route(t_router_opts *opts, struct s_det_routing_arch det_routing_ar
 
 	return routed;
 }
+

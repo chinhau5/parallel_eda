@@ -16,7 +16,8 @@
 #include "cluster.h"
 #include "args.h"
 #include "init.h"
-#include "func.h"
+#include "congestion.h"
+#include "router.h"
 #include "partition.h"
 
 #ifdef __linux__

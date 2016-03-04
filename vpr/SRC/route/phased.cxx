@@ -26,6 +26,8 @@
 #include "barrier.h"
 #include "graph.h"
 #include "route.h"
+#include "router.h"
+#include "func.h"
 #include "route_tree.h"
 #include "trace.h"
 #include "scheduler.h"
@@ -35,7 +37,6 @@
 #include "cluster.h"
 #include "args.h"
 #include "init.h"
-#include "func.h"
 #include "partition.h"
 
 #ifdef __linux__

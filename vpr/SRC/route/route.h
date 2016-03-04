@@ -159,16 +159,15 @@ typedef struct route_state_t {
 	float cost;
 } route_state_t;
 
+typedef struct path_node_t {
+	int rr_node_id;
+	int prev_edge;
+	bool update_cost;
+} path_node_t;
+
 bool hybrid_route(t_router_opts *opts);
 bool partitioning_route(t_router_opts *opts);
 bool greedy_route(t_router_opts *opts);
 bool partitioning_route_bounding_box(t_router_opts *opts);
-
-float get_timing_driven_expected_cost(const RRNode &current, const RRNode &target,
-		float criticality_fac, float R_upstream);
-
-bool operator<(const route_state_t &a, const route_state_t &b);
-
-float analyze_timing(t_net_timing *net_timing);
 
 #endif

@@ -73,7 +73,10 @@ set(srcs
 	SRC/route/partition.cxx
 	SRC/route/fine.cxx
 	SRC/route/phased.cxx
+	SRC/route/congestion.cxx
+	SRC/route/router.cxx
 	SRC/route/init.cxx
+	SRC/route/log.cxx
 	SRC/route/spatial.cxx
 	SRC/route/partitioning_route.c
 	SRC/route/route_tree.c

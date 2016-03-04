@@ -1,5 +1,7 @@
 #include "route.h"
+#include "router.h"
 #include "route_tree.h"
+#include "congestion.h"
 #include "log.h"
 #include "utility.h"
 
@@ -28,12 +30,13 @@ bool route_tree_empty(const route_tree_t &rt)
 	for (const auto &n : route_tree_get_nodes(rt)) {
 		++num_rt_nodes;
 	}
-	if (rt.root_rt_node_id == -1) {
-		assert(num_rt_nodes == 0);
-	} else {
-		assert(num_rt_nodes > 0);
-	}
-	return rt.root_rt_node_id == -1;
+	/*if (rt.root_rt_node_id == -1) {*/
+		/*assert(num_rt_nodes == 0);*/
+	/*} else {*/
+		/*assert(num_rt_nodes > 0);*/
+	/*}*/
+	/*return rt.root_rt_node_id == -1;*/
+	return num_rt_nodes == 0;
 }
 
 RouteTreeNode *route_tree_add_rr_node(route_tree_t &rt, const RRNode &rr_node)
@@ -623,6 +626,30 @@ void route_tree_rip_up_segment(route_tree_t &rt, int sink_rr_node, RRGraph &g, f
 	rt.sink_edges.erase(iter);
 }
 
+void route_tree_add_path(route_tree_t &rt, const vector<path_node_t> &path, const RRGraph &g, const route_state_t *state)
+{
+	assert(path.size() > 0);
+
+	int current_rr_node_id = path[0].rr_node_id;
+
+	RouteTreeNode *current_rt_node = route_tree_add_rr_node(rt, get_vertex(g, current_rr_node_id));
+	const auto &current_rr_node = get_vertex(g, current_rr_node_id);
+	route_tree_set_node_properties(*current_rt_node, current_rr_node.properties.type != IPIN && current_rr_node.properties.type != SINK, path[0].prev_edge, state[current_rr_node_id].upstream_R, state[current_rr_node_id].delay);
+
+	for (int i = 1; i < path.size(); ++i) {
+		int previous_rr_node_id = path[i].rr_node_id;
+
+		if (i < path.size()-1) {
+			RouteTreeNode *previous_rt_node = route_tree_add_rr_node(rt, get_vertex(g, previous_rr_node_id));
+			const auto &previous_rr_node = get_vertex(g, previous_rr_node_id);
+			route_tree_set_node_properties(*previous_rt_node, previous_rr_node.properties.type != IPIN && previous_rr_node.properties.type != SINK, path[i].prev_edge, state[previous_rr_node_id].upstream_R, state[previous_rr_node_id].delay);
+		}
+
+		route_tree_add_edge_between_rr_node(rt, previous_rr_node_id, current_rr_node_id);
+		current_rr_node_id = previous_rr_node_id;
+	}
+}
+
 void route_tree_add_path(route_tree_t &rt, const RRGraph &g, const route_state_t *state, const vector<int> &rr_nodes, int vpr_net_id)
 {
 	char p[256];
@@ -676,39 +703,39 @@ void route_tree_add_path(route_tree_t &rt, const RRGraph &g, const route_state_t
 	/*rt.sink_edges.insert(make_pair(rr_nodes[0], edges));*/
 }
 
-void route_tree_add_path(route_tree_t &rt, const RRGraph &g, const route_state_t *state, int sink_rr_node, int vpr_net_id, vector<int> &rr_nodes_with_pending_cost_update)
+void route_tree_add_path(route_tree_t &rt, const RRGraph &g, const route_state_t *state, int sink_rr_node, int vpr_net_id, vector<int> &added_rr_nodes)
 {
 	assert(get_vertex(g, sink_rr_node).properties.type == SINK);
 	/*assert(rt.sink_edges.find(sink_rr_node) == rt.sink_edges.end());*/
 
 	int current_rr_node_id = sink_rr_node;
-	bool update_cost;
+	bool added;
 	bool stop_traceback;
 	char p[256];
 	char c[256];
 
 	/*vector<int> edges;*/
 
-	const RRNode &current_rr_node = get_vertex(g, current_rr_node_id);
-	RouteTreeNode *current_rt_node = route_tree_add_or_get_rr_node(rt, current_rr_node_id, g, state, update_cost, stop_traceback);
-	assert(current_rt_node && !stop_traceback);
-	if (update_cost) {
-		rr_nodes_with_pending_cost_update.push_back(current_rr_node_id);
+	const auto &current_rr_node = get_vertex(g, current_rr_node_id);
+	auto &current_rt_node = route_tree_add_or_get_rr_node(rt, current_rr_node_id, g, state, added, stop_traceback);
+	assert(!stop_traceback);
+	if (added) {
+		added_rr_nodes.push_back(current_rr_node_id);
 	}
-	current_rt_node->properties.owner = sink_rr_node;
-	route_tree_set_node_properties(*current_rt_node, current_rr_node.properties.type != IPIN && current_rr_node.properties.type != SINK, state[current_rr_node_id].prev_edge, state[current_rr_node_id].upstream_R, state[current_rr_node_id].delay);
+	current_rt_node.properties.owner = sink_rr_node;
+	route_tree_set_node_properties(current_rt_node, current_rr_node.properties.type != IPIN && current_rr_node.properties.type != SINK, state[current_rr_node_id].prev_edge, state[current_rr_node_id].upstream_R, state[current_rr_node_id].delay);
 
 	while (state[current_rr_node_id].prev_edge != -1 && !stop_traceback) {
 		/* parent */
-		const RRNode &parent_rr_node = get_vertex(g, get_source(g, state[current_rr_node_id].prev_edge));
-		int parent_rr_node_id = id(parent_rr_node);
+		int parent_rr_node_id = get_source(g, state[current_rr_node_id].prev_edge);
+		const RRNode &parent_rr_node = get_vertex(g, parent_rr_node_id);
 
-		RouteTreeNode *parent_rt_node = route_tree_add_or_get_rr_node(rt, parent_rr_node_id, g, state, update_cost, stop_traceback);
-		if (update_cost) {
-			rr_nodes_with_pending_cost_update.push_back(parent_rr_node_id);
+		auto &parent_rt_node = route_tree_add_or_get_rr_node(rt, parent_rr_node_id, g, state, added, stop_traceback);
+		if (added) {
+			added_rr_nodes.push_back(parent_rr_node_id);
 		}
-		parent_rt_node->properties.owner = sink_rr_node;
-		route_tree_set_node_properties(*parent_rt_node, parent_rr_node.properties.type != IPIN && parent_rr_node.properties.type != SINK, -1, state[parent_rr_node_id].upstream_R, state[parent_rr_node_id].delay);
+		parent_rt_node.properties.owner = sink_rr_node;
+		route_tree_set_node_properties(parent_rt_node, parent_rr_node.properties.type != IPIN && parent_rr_node.properties.type != SINK, -1, state[parent_rr_node_id].upstream_R, state[parent_rr_node_id].delay);
 
 		/* setting up edges */
 		auto &e = route_tree_add_edge_between_rr_node(rt, parent_rr_node_id, current_rr_node_id);
@@ -742,6 +769,14 @@ void route_tree_set_root(route_tree_t &rt, int rr_node)
 	assert(iter != rt.rr_node_to_rt_node.end());
 	assert(rt.root_rt_node_id == -1);
 	rt.root_rt_node_id = iter->second;
+}
+
+void route_tree_add_root(route_tree_t &rt, int rr_node)
+{
+	auto iter = rt.rr_node_to_rt_node.find(rr_node);
+	assert(iter != rt.rr_node_to_rt_node.end());
+	assert(find(begin(rt.root_rt_nodes), end(rt.root_rt_nodes), iter->second) == end(rt.root_rt_nodes));
+	rt.root_rt_nodes.push_back(iter->second);
 }
 
 bool route_tree_is_only_path(const route_tree_t &rt, int sink_rr_node, const RRGraph &g)
@@ -808,7 +843,7 @@ void route_tree_set_node_properties(RouteTreeNode &rt_node, bool reexpand, int p
 	rt_node.properties.delay = delay;
 }
 
-RouteTreeNode *route_tree_add_or_get_rr_node(route_tree_t &rt, int rr_node_id, const RRGraph &g, const route_state_t *state, bool &update_cost, bool &stop_traceback)
+RouteTreeNode &route_tree_add_or_get_rr_node(route_tree_t &rt, int rr_node_id, const RRGraph &g, const route_state_t *state, bool &update_cost, bool &stop_traceback)
 {
 	const auto &rr_node = get_vertex(g, rr_node_id);
 	RouteTreeNode *rt_node = route_tree_add_rr_node(rt, rr_node);
@@ -828,9 +863,7 @@ RouteTreeNode *route_tree_add_or_get_rr_node(route_tree_t &rt, int rr_node_id, c
 			sprintf_rr_node(get_source(g, rt_node->properties.rr_edge_to_parent), parent);
 			zlog_error(delta_log, "Error: Existing route tree node %s has non-null rr_edge_to_parent that connects to %s\n", buffer, parent);
 			assert(false);
-		}
-
-		if (state[rr_node_id].prev_edge != rt_node->properties.rr_edge_to_parent) {
+		} else if (state[rr_node_id].prev_edge != -1) {
 			char s_state[256];
 			char s_rt[256];
 			sprintf_rr_node(get_source(g, state[rr_node_id].prev_edge), s_state);
@@ -860,17 +893,18 @@ RouteTreeNode *route_tree_add_or_get_rr_node(route_tree_t &rt, int rr_node_id, c
 				} else {
 					zlog_level(delta_log, ROUTER_V2, "with capacity %d", rr_node.properties.capacity);
 				}
-				update_cost = true;
 			} else {
 				assert(rr_node.properties.type == CHANX || rr_node.properties.type == CHANY || rr_node.properties.type == OPIN);
 			}
 			zlog_level(delta_log, ROUTER_V2, "\n");
+
+			update_cost = rr_node.properties.type == SOURCE;
 		}
 	} else {
 		update_cost = true;
 	}
 
-	return rt_node;
+	return *rt_node;
 }
 
 RouteTreeNode *route_tree_checked_add_rr_node(route_tree_t &rt, const RRNode &rr_node, const route_state_t *state)
@@ -931,6 +965,8 @@ void route_tree_add_to_heap_internal(const route_tree_t &rt, const RouteTreeNode
 	for (const auto &branch : route_tree_get_branches(rt, id(*rt_node))) {
 		const auto &neighbor = get_vertex(rt.graph, get_target(rt.graph, branch));
 
+		/*zlog_level(delta_log, ROUTER_V2, "Neighbor of route tree node %s: %d\n", id(neighbor));*/
+
 		route_tree_add_to_heap_internal(rt, &neighbor, g, target, criticality_fac, astar_fac, current_bounding_box, heap, perf);
 	}
 }
@@ -938,6 +974,13 @@ void route_tree_add_to_heap_internal(const route_tree_t &rt, const RouteTreeNode
 void route_tree_add_to_heap(const route_tree_t &rt, const RRGraph &g, const RRNode &target, float criticality_fac, float astar_fac, const bounding_box_t &current_bounding_box, std::priority_queue<route_state_t> &heap, perf_t *perf)
 {
 	route_tree_add_to_heap_internal(rt, &get_vertex(rt.graph, rt.root_rt_node_id), g, target, criticality_fac, astar_fac, current_bounding_box, heap, perf);
+}
+
+void route_tree_multi_root_add_to_heap(const route_tree_t &rt, const RRGraph &g, const RRNode &target, float criticality_fac, float astar_fac, const bounding_box_t &current_bounding_box, std::priority_queue<route_state_t> &heap, perf_t *perf)
+{
+	for (const auto &root : rt.root_rt_nodes) {
+		route_tree_add_to_heap_internal(rt, &get_vertex(rt.graph, root), g, target, criticality_fac, astar_fac, current_bounding_box, heap, perf);
+	}
 }
 
 /*const vector<int> &route_tree_add_path(route_tree_t &rt, const RRGraph &g, const route_state_t *state, pair<vector<int>::const_iterator, vector<int>::const_iterator> &path)*/

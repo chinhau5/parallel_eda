@@ -7,20 +7,6 @@
 
 using namespace std;
 
-void init_logging()
-{
-	delta_log = zlog_get_category("delta");
-	rr_log = zlog_get_category("rr");
-	net_log = zlog_get_category("net");
-	schedule_log = zlog_get_category("schedule");
-	scheduler_log = zlog_get_category("scheduler");
-	independent_log = zlog_get_category("independent");
-	sort_log = zlog_get_category("sort");
-	dynamic_log = zlog_get_category("dynamic");
-	static_log = zlog_get_category("static");
-	missing_edge_log = zlog_get_category("missing_edge");
-}
-
 void delete_graph(RRGraph &g)
 {
 	for (int i = 0; i < num_vertices(g); ++i) {

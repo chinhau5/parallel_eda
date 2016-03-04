@@ -431,7 +431,7 @@ class fm {
 			for (const auto &v : get_vertices(*g)) {
 				if (pid[v] != initial_pid[v]) {
 					move(v);
-					imbalance->move(v, initial_pid[v]);
+					imbalance->move(v, pid[v]);
 				}
 			}
 			moves.clear();
@@ -480,7 +480,7 @@ class fm {
 
 			assert(p0_size + p1_size == num_vertices);
 
-			printf("Cut size = %d Partition sizes = (%d,%d)\n", cut_size, p0_size, p1_size);
+			printf("Cut size = %d Partition sizes = (%d,%d) Imbalance = %d\n", cut_size, p0_size, p1_size, abs(p0_size-p1_size));
 		}
 
 		void run()

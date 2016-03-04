@@ -2,6 +2,7 @@
 #include "route.h"
 #include "utility.h"
 #include "route_tree.h"
+#include "congestion.h"
 #include "log.h"
 
 extern zlog_category_t *delta_log;

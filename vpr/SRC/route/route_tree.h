@@ -41,6 +41,7 @@ typedef struct route_tree_t {
 	typedef std::pair<segment, int> rtree_value;
 
 	RouteTree graph;
+	vector<int> root_rt_nodes;
 	int root_rt_node_id;
 	int num_nodes;
 	std::map<int, int> rr_node_to_rt_node;
@@ -49,50 +50,50 @@ typedef struct route_tree_t {
 	box scheduler_bounding_box;
 	std::map<int, std::vector<int>> sink_edges;
 
-	template<typename Graph, typename Value, typename Base>
-	struct iterator : public std::iterator<
-					  typename std::forward_iterator_tag,
-					  Value,
-					  ptrdiff_t,
-					  Value,
-					  Value 
-					  > { 
+	//template<typename Graph, typename Value, typename Base>
+	//struct iterator : public std::iterator<
+					  //typename std::forward_iterator_tag,
+					  //Value,
+					  //ptrdiff_t,
+					  //Value,
+					  //Value 
+					  //> { 
 
-		const Graph &g;
-		Base c;
-		Base e;
+		//const Graph &g;
+		//Base c;
+		//Base e;
 
-		iterator(const Graph &g, const Base &c, const Base &e) 
-			: g(g), c(c), e(e)
-	   	{
-		}
+		//iterator(const Graph &g, const Base &c, const Base &e) 
+			//: g(g), c(c), e(e)
+		   //{
+		//}
 
-		iterator &operator++()
-		{
-			do {
-				if (c != e) {
-					++c;
-				}
-			} while (c != e && get_vertex(g, c).properties.valid);
+		//iterator &operator++()
+		//{
+			//do {
+				//if (c != e) {
+					//++c;
+				//}
+			//} while (c != e && get_vertex(g, c).properties.valid);
 		
-			return *this;
-		}
+			//return *this;
+		//}
 
-		typename iterator::reference operator*() const
-		{
-			return c;
-		}
+		//typename iterator::reference operator*() const
+		//{
+			//return c;
+		//}
 
-		bool operator==(const iterator &other) const
-		{
-			return other.c == c;
-		}
+		//bool operator==(const iterator &other) const
+		//{
+			//return other.c == c;
+		//}
 
-		bool operator!=(const iterator &other) const
-		{
-			return other.c != c;
-		}
-	};
+		//bool operator!=(const iterator &other) const
+		//{
+			//return other.c != c;
+		//}
+	//};
 
 	//typedef iterator<RouteTree, int, int> vertex_iterator;
 	typedef typename RouteTree::vertex_iterator vertex_iterator;
@@ -147,6 +148,8 @@ void route_tree_rip_up_segment(route_tree_t &rt, int sink_rr_node, RRGraph &g, f
 
 void route_tree_rip_up_segment_2(route_tree_t &rt, int sink_rr_node, RRGraph &g, float pres_fac);
 
+void route_tree_add_path(route_tree_t &rt, const vector<path_node_t> &path, const RRGraph &g, const route_state_t *state);
+
 void route_tree_add_path(route_tree_t &rt, const RRGraph &g, const route_state_t *state, const vector<int> &rr_nodes, int vpr_net_id);
 
 void route_tree_add_path(route_tree_t &rt, const RRGraph &g, const route_state_t *state, int sink_rr_node, int vpr_net_id, vector<int> &added_rr_nodes);
@@ -155,13 +158,15 @@ void route_tree_clear(route_tree_t &rt);
 
 void route_tree_set_root(route_tree_t &rt, int rr_node);
 
+void route_tree_add_root(route_tree_t &rt, int rr_node);
+
 bool route_tree_is_only_path(const route_tree_t &rt, int sink_rr_node, const RRGraph &g);
 
 pair<int, const RRNode *> route_tree_get_connection(const RRNode &current_rr_node, const RRGraph &g, const route_state_t *state, bool end);
 
 void route_tree_set_node_properties(RouteTreeNode &rt_node, bool reexpand, int prev_edge, float upstream_R, float delay);
 
-RouteTreeNode *route_tree_add_or_get_rr_node(route_tree_t &rt, int rr_node_id, const RRGraph &g, const route_state_t *state, bool &update_cost, bool &stop_traceback);
+RouteTreeNode &route_tree_add_or_get_rr_node(route_tree_t &rt, int rr_node_id, const RRGraph &g, const route_state_t *state, bool &update_cost, bool &stop_traceback);
 
 RouteTreeNode *route_tree_checked_add_rr_node(route_tree_t &rt, const RRNode &rr_node, const route_state_t *state);
 
@@ -169,14 +174,8 @@ void route_tree_add_to_heap_internal(const route_tree_t &rt, const RouteTreeNode
 
 void route_tree_add_to_heap(const route_tree_t &rt, const RRGraph &g, const RRNode &target, float criticality_fac, float astar_fac, const bounding_box_t &current_bounding_box, std::priority_queue<route_state_t> &heap, perf_t *perf);
 
+void route_tree_multi_root_add_to_heap(const route_tree_t &rt, const RRGraph &g, const RRNode &target, float criticality_fac, float astar_fac, const bounding_box_t &current_bounding_box, std::priority_queue<route_state_t> &heap, perf_t *perf);
+
 RouteTreeNode *route_tree_get_nearest_node(route_tree_t &rt, const point &p, const RRGraph &g, int *num_iters);
-
-void update_one_cost(const RRGraph &g, congestion_t *congestion, const vector<int>::const_iterator &rr_nodes_begin, const vector<int>::const_iterator &rr_nodes_end, /*int net_id,*/ int delta, float pres_fac, bool lock, lock_perf_t *lock_perf);
-
-void update_one_cost(const RRGraph &g, congestion_t *congestion, route_tree_t &rt, const RouteTreeNode &node, int delta, float pres_fac, bool lock);
-
-void update_one_cost_internal(const RRNode &rr_node, congestion_t &congestion, /*int net_id, */int delta, float pres_fac, bool lock, lock_perf_t *lock_perf);
-
-void update_costs(const RRGraph &g, congestion_t *congestion, float pres_fac, float acc_fac);
 
 #endif
