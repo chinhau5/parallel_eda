@@ -65,26 +65,26 @@ set(srcs
 	SRC/route/route_common.c
 	SRC/route/route_common_local.c
 	SRC/route/route_timing.c
-	SRC/route/parallel_route_timing.c
-	SRC/route/new_cost_parallel_route_timing.c
-	SRC/route/fine_grained_parallel_route_timing.c
-	SRC/route/fine_grained_parallel_route_timing_2.c
-	SRC/route/test.c
-	SRC/route/partition.cxx
-	SRC/route/fine.cxx
-	SRC/route/phased.cxx
+	#SRC/route/parallel_route_timing.c
+	#SRC/route/new_cost_parallel_route_timing.c
+	#SRC/route/fine_grained_parallel_route_timing.c
+	#SRC/route/fine_grained_parallel_route_timing_2.c
+	#SRC/route/test.c
+	#SRC/route/partition.cxx
+	#SRC/route/fine.cxx
+	#SRC/route/phased.cxx
 	SRC/route/congestion.cxx
 	SRC/route/router.cxx
 	SRC/route/init.cxx
 	SRC/route/log.cxx
 	SRC/route/spatial.cxx
-	SRC/route/partitioning_route.c
+	#SRC/route/partitioning_route.c
 	SRC/route/route_tree.c
-	SRC/route/trace.c
+	#SRC/route/trace.c
 	SRC/route/utility.c
 	SRC/route/net_cluster.cxx
 	SRC/route/scheduler.c
-	SRC/route/advanced_parallel_route_timing.c
+	#SRC/route/advanced_parallel_route_timing.c
 	SRC/route/route_tree_timing.c
 	SRC/route/route_tree_timing_local.c
 	SRC/route/rr_graph2.c

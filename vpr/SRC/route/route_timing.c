@@ -234,35 +234,35 @@ boolean try_timing_driven_route(struct s_router_opts router_opts,
 			return (TRUE);
 		}
 
-		extern zlog_category_t *congestion_log;
-		std::set<int> congested_nets;
-		for (int inode = 0; inode < num_rr_nodes; ++inode) {
-			if (rr_node[inode].occ > rr_node[inode].capacity) {
-				zlog_debug(congestion_log, "Node %d is congested by the following nets:\n", inode);
-				for (const auto &n : rr_node[inode].occupant_net_id) {
-					zlog_debug(congestion_log, "%d\n", n);
-					congested_nets.insert(n);
-				}
-			}
-			//assert(rr_node[inode].occ - rr_node[inode].num_reservation == rr_node[inode].occupant_net_id.size());
-		}
-		zlog_info(congestion_log, "There are %d congested nets:\n", congested_nets.size());
+		/*extern zlog_category_t *congestion_log;*/
+		/*std::set<int> congested_nets;*/
+		/*for (int inode = 0; inode < num_rr_nodes; ++inode) {*/
+			/*if (rr_node[inode].occ > rr_node[inode].capacity) {*/
+				/*zlog_debug(congestion_log, "Node %d is congested by the following nets:\n", inode);*/
+				/*for (const auto &n : rr_node[inode].occupant_net_id) {*/
+					/*zlog_debug(congestion_log, "%d\n", n);*/
+					/*congested_nets.insert(n);*/
+				/*}*/
+			/*}*/
+			/*//assert(rr_node[inode].occ - rr_node[inode].num_reservation == rr_node[inode].occupant_net_id.size());*/
+		/*}*/
+		/*zlog_info(congestion_log, "There are %d congested nets:\n", congested_nets.size());*/
 
-		std::vector<std::pair<int, int>> congested_net_area;
-		int congested_nets_total_area = 0;
-		for (const auto &c : congested_nets) {
-			int area = (route_bb[c].xmax - route_bb[c].xmin) * (route_bb[c].ymax - route_bb[c].ymin);
-			congested_nets_total_area += area;
-			congested_net_area.emplace_back(area, c);
-		}
+		/*std::vector<std::pair<int, int>> congested_net_area;*/
+		/*int congested_nets_total_area = 0;*/
+		/*for (const auto &c : congested_nets) {*/
+			/*int area = (route_bb[c].xmax - route_bb[c].xmin) * (route_bb[c].ymax - route_bb[c].ymin);*/
+			/*congested_nets_total_area += area;*/
+			/*congested_net_area.emplace_back(area, c);*/
+		/*}*/
 
-		std::sort(congested_net_area.begin(), congested_net_area.end());
-		for (const auto &c : congested_net_area) {
-			zlog_info(congestion_log, "Net %d Area: %d/%g\n", c.second, c.first, (float)c.first*100/(nx+ny));
-		}
+		/*std::sort(congested_net_area.begin(), congested_net_area.end());*/
+		/*for (const auto &c : congested_net_area) {*/
+			/*zlog_info(congestion_log, "Net %d Area: %d/%g\n", c.second, c.first, (float)c.first*100/(nx+ny));*/
+		/*}*/
 
-		double congestion_nets_average_area = (double)congested_nets_total_area/congested_nets.size();
-		zlog_info(congestion_log, "Congestion nets average area: %g/%d [%g]\n", congestion_nets_average_area, nx*ny, congestion_nets_average_area*100/(nx*ny));
+		/*double congestion_nets_average_area = (double)congested_nets_total_area/congested_nets.size();*/
+		/*zlog_info(congestion_log, "Congestion nets average area: %g/%d [%g]\n", congestion_nets_average_area, nx*ny, congestion_nets_average_area*100/(nx*ny));*/
 
 		if (itry == 1) {
 			pres_fac = router_opts.initial_pres_fac;

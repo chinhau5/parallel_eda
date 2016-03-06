@@ -57,8 +57,8 @@ int main(int argc, char **argv) {
 		return -1;
 	}
 
-	init_parallel_route_logging();
-	init_advanced_parallel_route_logging();
+	/*init_parallel_route_logging();*/
+	/*init_advanced_parallel_route_logging();*/
 
 	/*test_dfs();*/
 	/*return 0;*/

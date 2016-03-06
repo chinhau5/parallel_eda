@@ -152,7 +152,7 @@ typedef struct congestion_t {
 
 typedef struct route_state_t {
 	int rr_node;
-	int prev_edge;
+	RREdge prev_edge;
 	float upstream_R;
 	float delay;
 	float known_cost;
@@ -161,7 +161,7 @@ typedef struct route_state_t {
 
 typedef struct path_node_t {
 	int rr_node_id;
-	int prev_edge;
+	RREdge prev_edge;
 	bool update_cost;
 } path_node_t;
 

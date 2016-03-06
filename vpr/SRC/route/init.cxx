@@ -9,9 +9,9 @@ using namespace std;
 
 void delete_graph(RRGraph &g)
 {
-	for (int i = 0; i < num_vertices(g); ++i) {
-		auto &v = get_vertex(g, i);
-	}
+	//for (int i = 0; i < num_vertices(g); ++i) {
+		//auto &v = get_vertex(g, i);
+	//}
 }
 
 int get_track_domain(int track_number, int num_partitions)
@@ -28,38 +28,40 @@ void init_graph(RRGraph &g)
 
 	add_vertex(g, num_rr_nodes);
 	for (int i = 0; i < num_vertices(g); ++i) {
-		auto &v = get_vertex(g, i);
-		v.properties.type = rr_node[i].type;
-		v.properties.inc_direction = rr_node[i].direction == INC_DIRECTION;
-		v.properties.xlow = rr_node[i].xlow;
-		v.properties.ylow = rr_node[i].ylow;
-		v.properties.xhigh = rr_node[i].xhigh;
-		v.properties.yhigh = rr_node[i].yhigh;
+		auto &v = get_vertex_props(g, i);
+		v.type = rr_node[i].type;
+		v.inc_direction = rr_node[i].direction == INC_DIRECTION;
+		v.xlow = rr_node[i].xlow;
+		v.ylow = rr_node[i].ylow;
+		v.xhigh = rr_node[i].xhigh;
+		v.yhigh = rr_node[i].yhigh;
 
 		extern struct s_grid_tile **grid;
-		auto type = &grid[v.properties.xlow][v.properties.ylow];
+		auto type = &grid[v.xlow][v.ylow];
 
-		//v.properties.real_xlow = rr_node[i].xlow;
-		//v.properties.real_ylow = rr_node[i].ylow;
-		//v.properties.real_xhigh = rr_node[i].xhigh;
-		//v.properties.real_yhigh = rr_node[i].ylow + type->offset;
-		v.properties.R = rr_node[i].R;
-		v.properties.C = rr_node[i].C;
-		v.properties.cost_index = rr_node[i].cost_index;
-		v.properties.capacity = rr_node[i].capacity;
+		//v.real_xlow = rr_node[i].xlow;
+		//v.real_ylow = rr_node[i].ylow;
+		//v.real_xhigh = rr_node[i].xhigh;
+		//v.real_yhigh = rr_node[i].ylow + type->offset;
+		v.R = rr_node[i].R;
+		v.C = rr_node[i].C;
+		v.cost_index = rr_node[i].cost_index;
+		v.capacity = rr_node[i].capacity;
 
 		char buffer[256];
 		sprintf_rr_node(i, buffer);
-		//zlog_debug(rr_log, "%s: real_xlow: %d real_xhigh: %d real_ylow: %d real_yhigh: %d\n", buffer, v.properties.real_xlow, v.properties.real_xhigh, v.properties.real_ylow, v.properties.real_yhigh);
+		//zlog_debug(rr_log, "%s: real_xlow: %d real_xhigh: %d real_ylow: %d real_yhigh: %d\n", buffer, v.real_xlow, v.real_xhigh, v.real_ylow, v.real_yhigh);
 
 		for (int j = 0; j < rr_node[i].num_edges; ++j) {
 			auto &e = add_edge(g, i, rr_node[i].edges[j]);
 
 			int si = rr_node[i].switches[j];
+
+			auto &e_p = get_edge_props(g, e);
 			
-			e.properties.buffered = switch_inf[si].buffered; 
-			e.properties.switch_delay = switch_inf[si].Tdel; 
-			e.properties.R = switch_inf[si].R; 
+			e_p.buffered = switch_inf[si].buffered; 
+			e_p.switch_delay = switch_inf[si].Tdel; 
+			e_p.R = switch_inf[si].R; 
 		}
 	}
 	zlog_info(delta_log, "RR graph num vertices: %d\n", num_vertices(g));

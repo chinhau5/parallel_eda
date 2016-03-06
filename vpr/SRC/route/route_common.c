@@ -358,14 +358,14 @@ boolean try_route_new(int width_fac, struct s_router_opts router_opts,
 		case FINE_GRAINED:
 			vpr_printf(TIO_MESSAGE_INFO, "Confirming Router Algorithm: FINE_GRAINED.\n");
 			assert(router_opts.route_type != GLOBAL);
-			success = try_fine_grained_parallel_timing_driven_route_top_2(router_opts, net_timing,
-					clb_opins_used_locally,timing_inf.timing_analysis_enabled);
+			/*success = try_fine_grained_parallel_timing_driven_route_top_2(router_opts, net_timing,*/
+					/*clb_opins_used_locally,timing_inf.timing_analysis_enabled);*/
 			break;
 		case BARRIER:
 			vpr_printf(TIO_MESSAGE_INFO, "Confirming Router Algorithm: BARRIER.\n");
 			assert(router_opts.route_type != GLOBAL);
-			success = try_parallel_timing_driven_route_top(router_opts, net_timing,
-					clb_opins_used_locally,timing_inf.timing_analysis_enabled);
+			/*success = try_parallel_timing_driven_route_top(router_opts, net_timing,*/
+					/*clb_opins_used_locally,timing_inf.timing_analysis_enabled);*/
 			break;
 		case HYBRID:
 			vpr_printf(TIO_MESSAGE_INFO, "Confirming Router Algorithm: HYBRID.\n");
@@ -486,8 +486,8 @@ boolean feasible_routing(void) {
 		}
 	}
 
-	extern zlog_category_t *route_outer_log;
-	zlog_info(route_outer_log, "Overused nodes: %d/%d (%.2f)\n", num_overused, num_rr_nodes, (float)num_overused/num_rr_nodes*100);
+	/*extern zlog_category_t *route_outer_log;*/
+	/*zlog_info(route_outer_log, "Overused nodes: %d/%d (%.2f)\n", num_overused, num_rr_nodes, (float)num_overused/num_rr_nodes*100);*/
 
 	return feasible ? TRUE : FALSE;
 }

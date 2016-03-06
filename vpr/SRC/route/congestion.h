@@ -5,7 +5,7 @@ void update_one_cost(const RRGraph &g, congestion_t *congestion, const vector<in
 
 void update_one_cost(const RRGraph &g, congestion_t *congestion, route_tree_t &rt, const RouteTreeNode &node, int delta, float pres_fac, bool lock);
 
-void update_one_cost_internal(const RRNode &rr_node, congestion_t &congestion, /*int net_id, */int delta, float pres_fac, bool lock, lock_perf_t *lock_perf);
+void update_one_cost_internal(int rr_node, const rr_node_property_t &rr_node_p, congestion_t &congestion, /*int net_id, */int delta, float pres_fac, bool lock, lock_perf_t *lock_perf);
 
 void update_costs(const RRGraph &g, congestion_t *congestion, float pres_fac, float acc_fac);
 

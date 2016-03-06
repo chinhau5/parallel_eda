@@ -7,7 +7,7 @@
 
 bool operator<(const route_state_t &a, const route_state_t &b);
 
-float get_timing_driven_expected_cost(const RRNode &current, const RRNode &target,
+float get_timing_driven_expected_cost(const rr_node_property_t &current, const rr_node_property_t &target,
 		float criticality_fac, float R_upstream);
 
 float analyze_timing(t_net_timing *net_timing);
@@ -18,7 +18,7 @@ void recalculate_occ(const route_tree_t &rt, const RRGraph &g, congestion_t *con
 
 void check_route_tree(const route_tree_t &rt, const net_t &net, RRGraph &g);
 
-void get_overused_nodes(const route_tree_t &rt, const RouteTreeNode &node, const RRGraph &g, const congestion_t *congestion, vector<int> &overused_rr_node);
+void get_overused_nodes(const route_tree_t &rt, RouteTreeNode rt_node, const RRGraph &g, const congestion_t *congestion, vector<int> &overused_rr_node);
 
 bool feasible_routing(const RRGraph &g, const congestion_t *congestion);
 

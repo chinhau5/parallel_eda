@@ -3,6 +3,7 @@
 
 #include "vpr_types.h"
 #include "graph.h"
+#include "fast_graph.h"
 #include <tbb/tbb.h>
 
 typedef struct rr_node_property_t {
@@ -56,8 +57,12 @@ typedef struct rr_edge_property_t {
 	float R;
 } rr_edge_property_t;
 
-typedef graph_t<rr_node_property_t, rr_edge_property_t> RRGraph;
-typedef vertex_t<rr_node_property_t, rr_edge_property_t> RRNode;
-typedef edge_t<rr_edge_property_t> RREdge;
+typedef fast_graph_t<rr_node_property_t, rr_edge_property_t> RRGraph;
+typedef int RRNode;
+typedef fast_edge_t<rr_edge_property_t> RREdge;
+
+typedef fast_graph_t<rr_node_property_t, rr_edge_property_t> FastRRGraph;
+typedef fast_vertex_t<rr_node_property_t, rr_edge_property_t> FastRRNode;
+typedef fast_edge_t<rr_edge_property_t> FastRREdge;
 
 #endif
