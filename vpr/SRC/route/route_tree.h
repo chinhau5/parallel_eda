@@ -20,12 +20,14 @@ typedef struct rt_node_property_t {
 	bool valid;
 	bool pending_rip_up;
 	bool ripped_up;
+	//bool branch_point;
 	RouteTreeEdge rt_edge_to_parent;
 	int num_iterations_fixed;
-	int saved_num_out_edges; /* only valid for SOURCE */
+	//int saved_num_out_edges; [> only valid for SOURCE <]
 
-	int owner;
+	//int owner;
 
+	/* public properties */
 	bool reexpand;
 	RREdge rr_edge_to_parent;
 	float upstream_R;	
@@ -46,7 +48,8 @@ typedef struct route_tree_t {
 	int root_rt_node_id;
 	int num_nodes;
 	std::map<int, int> rr_node_to_rt_node;
-	/*map<int, vector<int>> sink_rr_node_to_path;*/
+	//map<int, vector<int>> sink_rr_node_to_path;
+	map<int, RouteTreeNode> path_branch_point;
 	bgi::rtree<rtree_value, bgi::rstar<64>> point_tree;
 	box scheduler_bounding_box;
 	std::map<int, std::vector<int>> sink_edges;
@@ -147,7 +150,7 @@ void route_tree_rip_up_marked(route_tree_t &rt, const RRGraph &g, congestion_t *
 
 //void route_tree_rip_up_segment_2(route_tree_t &rt, int sink_rr_node, RRGraph &g, float pres_fac);
 
-void route_tree_add_path(route_tree_t &rt, const vector<path_node_t> &path, const RRGraph &g, const route_state_t *state);
+void route_tree_add_path(route_tree_t &rt, const vector<path_node_t> &path, const RRGraph &g, const route_state_t *state = nullptr, bool add_branch_point = true);
 
 //void route_tree_add_path(route_tree_t &rt, const RRGraph &g, const route_state_t *state, const vector<int> &rr_nodes, int vpr_net_id);
 
@@ -174,6 +177,8 @@ void route_tree_add_to_heap_internal(const route_tree_t &rt, RouteTreeNode rt_no
 void route_tree_add_to_heap(const route_tree_t &rt, const RRGraph &g, RRNode target, float criticality_fac, float astar_fac, const bounding_box_t &current_bounding_box, std::priority_queue<route_state_t> &heap, perf_t *perf);
 
 void route_tree_multi_root_add_to_heap(const route_tree_t &rt, const RRGraph &g, RRNode target, float criticality_fac, float astar_fac, const bounding_box_t &current_bounding_box, std::priority_queue<route_state_t> &heap, perf_t *perf);
+
+vector<path_node_t> route_tree_get_path(const route_tree_t &rt, RRNode to_node);
 
 //RouteTreeNode route_tree_get_nearest_node(route_tree_t &rt, const point &p, const RRGraph &g, int *num_iters);
 

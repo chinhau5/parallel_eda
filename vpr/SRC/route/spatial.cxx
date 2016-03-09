@@ -1671,7 +1671,7 @@ class rr_graph_partitioner {
 
 					bool record_source(const Graph &g, int v)
 					{	
-						record_impl(g, v);
+						assert(record_impl(g, v));
 
 						assert(visited_nodes.find(v) == end(visited_nodes));
 						visited_nodes.insert(v);
@@ -3110,8 +3110,8 @@ void init_partitioned_graph(int num_partitions, RRGraph &g, vector<RRGraph *> &g
 
 #define LOG_PATH_PREFIX "/Volumes/DATA/"
 
-vector<FILE *> delta_log_files;
-vector<FILE *> missing_edge_log_files;
+vector<vector<FILE *>> delta_log_files;
+vector<vector<FILE *>> missing_edge_log_files;
 FILE *ss_log_file = nullptr;
 
 static void log_impl(zlog_msg_t *msg, FILE *&file)
@@ -3130,10 +3130,11 @@ static void log_impl(zlog_msg_t *msg, FILE *&file)
 	fflush(file);
 }
 
-static void concurrent_log_impl(zlog_msg_t *msg, vector<FILE *> &log_files, int tid)
+static void concurrent_log_impl(zlog_msg_t *msg, vector<vector<FILE *>> &log_files, int iter, int tid)
 {
-	assert(tid >= 0 && tid < log_files.size());
-	FILE *file = log_files[tid];
+	assert(iter >= 0 && iter < log_files.size());
+	assert(tid >= 0 && tid < log_files[iter].size());
+	FILE *file = log_files[iter][tid];
 	if (!file) {
 		char filename[256];
 		sprintf(filename, "%s%s", LOG_PATH_PREFIX, msg->path);
@@ -3144,7 +3145,7 @@ static void concurrent_log_impl(zlog_msg_t *msg, vector<FILE *> &log_files, int 
 			assert(false);
 		}
 
-		log_files[tid] = file;
+		log_files[iter][tid] = file;
 	}
 	fprintf(file, "%s", msg->buf);
 	fflush(file);
@@ -3169,7 +3170,7 @@ static int delta_log_output(zlog_msg_t *msg)
 		return 0;
 	}
 
-	concurrent_log_impl(msg, delta_log_files, tid);
+	concurrent_log_impl(msg, delta_log_files, iter, tid);
 
 	return 0;
 }
@@ -3183,7 +3184,7 @@ static int missing_edge_log_output(zlog_msg_t *msg)
 		return 0;
 	}
 
-	concurrent_log_impl(msg, missing_edge_log_files, tid);
+	concurrent_log_impl(msg, missing_edge_log_files, iter, tid);
 
 	return 0;
 }
@@ -3193,78 +3194,71 @@ bool is_channel(const rr_node_property_t &node)
 	return node.type == CHANX || node.type == CHANY;
 }
 
-typedef struct pseudo_net_t {
-	net_t *net;
-	vector<int> pseudo_sources;
-	vector<RREdge> pseudo_sources_prev_edge;
-	vector<sink_t *> sinks;
-	vector<sink_t *> routed_sinks;
-} pseudo_net_t;
-
-pseudo_net_t *get_pseudo_net(const vector<vector<int>> &unrouted_sinks_boundary_nodes, const vector<sink_t *> &unrouted_sinks, const vector<bool> &unrouted_sinks_valid, net_t *net, const RRGraph &orig_g, const vector<int> &pid, int &net_next_pid, int num_partitions)
+void update_pseudo_sources(pseudo_net_t &pnet, unrouted_t &unrouted, const RRGraph &orig_g, const vector<int> &pid, int num_partitions, int &net_next_pid)
 {
-	assert(unrouted_sinks_boundary_nodes.size() == unrouted_sinks.size());
-	assert(unrouted_sinks.size() == unrouted_sinks_valid.size());
-	
-	pseudo_net_t *pnet = new pseudo_net_t;
-	pnet->net = net;
-	for (int isink = 0; isink < unrouted_sinks_boundary_nodes.size(); ++isink) {
-		if (!unrouted_sinks_valid[isink]) {
-			continue;
-		}
-		pnet->sinks.push_back(unrouted_sinks[isink]);
-	}
+	pnet.pseudo_sources.clear();
 
 	do {
-		zlog_level(delta_log, ROUTER_V3, "Getting pseudo net for net %d in partition %d\n", net->vpr_id, net_next_pid);
+		zlog_level(delta_log, ROUTER_V3, "Getting pseudo sources in partition %d\n", net_next_pid);
 
 		set<int> added_pseudo_sources;
-		for (int isink = 0; isink < unrouted_sinks_boundary_nodes.size(); ++isink) {
-			if (!unrouted_sinks_valid[isink]) {
-				continue;
-			}
-			for (int inode = 0; inode < unrouted_sinks_boundary_nodes[isink].size(); ++inode) {
-				int bnode = unrouted_sinks_boundary_nodes[isink][inode];
-				zlog_level(delta_log, ROUTER_V3, "Looking at neighbors of boundary node %d of sink %d\n", bnode, unrouted_sinks[isink]->rr_node);
+		for (auto &b : unrouted.boundary_nodes) {
+			RRNode bnode = b.rr_node;
+			zlog_level(delta_log, ROUTER_V3, "Looking at neighbors of boundary node %d\n", bnode);
 
-				for (const auto &e : get_out_edges(orig_g, bnode)) {
-					int to = get_target(orig_g, e);
-					const auto &to_ver = get_vertex_props(orig_g, to);
-					//if () {
-					//assert(to_ver.type != SOURCE);
-					//if (to_ver.type == OPIN) {
-					//pnet->pseudo_sources.push_back(to);
-					//pnet->pseudo_sources_prev_edge.push_back(e);
-					//}
-					//} else if (pid[to] == to_pid) {
-					if (pid[to] == -1) {
-						assert(to_ver.type == IPIN);
-					} else if (pid[to] == net_next_pid) {
-						assert(to_ver.type == CHANX || to_ver.type == CHANY); 
-						if (added_pseudo_sources.find(to) == added_pseudo_sources.end()) {
-							pnet->pseudo_sources.push_back(to);
-							pnet->pseudo_sources_prev_edge.push_back(e);
-							added_pseudo_sources.insert(to);
-							zlog_level(delta_log, ROUTER_V3, "\tAdding node %d\n", to);
-						} else {
-							zlog_level(delta_log, ROUTER_V3, "\tNode %d already added\n", to);
-						}
+			for (const auto &e : get_out_edges(orig_g, bnode)) {
+				int to = get_target(orig_g, e);
+				const auto &to_ver = get_vertex_props(orig_g, to);
+				//if () {
+				//assert(to_ver.type != SOURCE);
+				//if (to_ver.type == OPIN) {
+				//pnet->pseudo_sources.push_back(to);
+				//pnet->pseudo_sources_prev_edge.push_back(e);
+				//}
+				//} else if (pid[to] == to_pid) {
+				if (pid[to] == -1) {
+					assert(to_ver.type == IPIN);
+				} else if (pid[to] == net_next_pid) {
+					assert(to_ver.type == CHANX || to_ver.type == CHANY); 
+					if (added_pseudo_sources.find(to) == added_pseudo_sources.end()) {
+						pseudo_source_t psource;
+						psource.node = to;
+						psource.prev_edge = e;
+						psource.bnode = &b;
+						pnet.pseudo_sources.emplace_back(psource);
+						added_pseudo_sources.insert(to);
+						zlog_level(delta_log, ROUTER_V3, "\tAdding node %d\n", to);
 					} else {
-						zlog_level(delta_log, ROUTER_V3, "\tNode %d is in partition %d\n", to, pid[to]);
+						zlog_level(delta_log, ROUTER_V3, "\tNode %d already added\n", to);
 					}
+				} else {
+					zlog_level(delta_log, ROUTER_V3, "\tNode %d is in partition %d\n", to, pid[to]);
 				}
 			}
 		} 
 
-		if (pnet->pseudo_sources.empty()) {
+		if (pnet.pseudo_sources.empty()) {
 			net_next_pid = (net_next_pid+1) % num_partitions;
 		}
-	} while (pnet->pseudo_sources.empty());
-		//{
-		//zlog_level(delta_log, ROUTER_V3, "Net %d has no pseudo sources in partition %d\n", net->vpr_id, to_pid);
-		//delete pnet;
-		//pnet = nullptr;
-		//}
+	} while (pnet.pseudo_sources.empty());
+}
+
+pseudo_net_t *get_pseudo_net(unrouted_t &unrouted, net_t *net, const RRGraph &orig_g, const vector<int> &pid, int &net_next_pid, int num_partitions)
+{
+	pseudo_net_t *pnet = new pseudo_net_t;
+
+	pnet->net = net;
+
+	for (auto &u : unrouted.unrouted_sinks) {
+		pseudo_sink_t psink;
+
+		psink.sink = u;
+		psink.pseudo_source = nullptr;
+
+		pnet->pseudo_sinks.emplace_back(psink);
+	}
+
+	update_pseudo_sources(*pnet, unrouted, orig_g, pid, num_partitions, net_next_pid);
 
 	return pnet;	
 }
@@ -3279,8 +3273,14 @@ bool spatial_route(t_router_opts *opts, struct s_det_routing_arch det_routing_ar
 	zlog_set_record("custom_output", delta_log_output);
 	zlog_set_record("missing_edge", missing_edge_log_output);
 	zlog_set_record("ss", ss_log_output);
-	delta_log_files.resize(opts->num_threads, nullptr);
-	missing_edge_log_files.resize(opts->num_threads, nullptr);
+	delta_log_files.resize(opts->max_router_iterations);
+	for (int i = 0; i < opts->max_router_iterations; ++i) {
+		delta_log_files[i].resize(opts->num_threads, nullptr);
+	}
+	missing_edge_log_files.resize(opts->max_router_iterations);
+	for (int i = 0; i < opts->max_router_iterations; ++i) {
+		missing_edge_log_files[i].resize(opts->num_threads, nullptr);
+	}
 
 	//fclose(fopen(LOG_PATH_PREFIX"iter__tid_.log", "w"));
 
@@ -3532,9 +3532,7 @@ bool spatial_route(t_router_opts *opts, struct s_det_routing_arch det_routing_ar
 		vector<tbb::spin_mutex> pseudo_nets_locks(opts->num_threads);
 		vector<vector<pseudo_net_t *>> net_pseudo_nets(nets.size());
 		tbb::atomic<bool> has_unrouted_sinks = false;
-		vector<vector<vector<int>>> unrouted_sinks_boundary_nodes(nets.size()); 
-		vector<vector<sink_t *>> unrouted_sinks(nets.size()); 
-		vector<vector<bool>> unrouted_sinks_valid(nets.size()); 
+		vector<unrouted_t> unrouted(nets.size()); 
 		vector<int> net_next_pid(nets.size(), -1);
 		vector<int> net_initial_pid(nets.size(), -1);
 
@@ -3582,9 +3580,9 @@ bool spatial_route(t_router_opts *opts, struct s_det_routing_arch det_routing_ar
 
 					//auto rip_up_start = clock::now();
 					//if (greedy_rip_up_all) {
-						//route_tree_mark_all_nodes_to_be_ripped(route_trees[net->local_id], g);
+						route_tree_mark_all_nodes_to_be_ripped(route_trees[net->local_id], *graphs[tid]);
 					//} else {
-						route_tree_mark_congested_nodes_to_be_ripped(route_trees[net->local_id], *graphs[tid], congestion);
+						//route_tree_mark_congested_nodes_to_be_ripped(route_trees[net->local_id], *graphs[tid], congestion);
 					//}
 					route_tree_rip_up_marked(route_trees[net->local_id], *graphs[tid], congestion, params.pres_fac, true, &local_lock_perf);
 
@@ -3604,15 +3602,12 @@ bool spatial_route(t_router_opts *opts, struct s_det_routing_arch det_routing_ar
 					}
 
 					if (!sinks.empty()) {
-						unrouted_sinks[net->local_id] = route_net_3(partitioner.orig_g, partitioner.result_pid, tid, net->vpr_id, &net->source, sinks, params, states[tid], congestion, route_trees[net->local_id], net_timing[net->vpr_id], unrouted_sinks_boundary_nodes[net->local_id], opts->num_threads, true, &local_perf, &local_lock_perf);
+						route_net_3(partitioner.orig_g, partitioner.result_pid, tid, net->vpr_id, &net->source, sinks, params, states[tid], congestion, route_trees[net->local_id], net_timing[net->vpr_id], unrouted[net->local_id], opts->num_threads, true, &local_perf, &local_lock_perf);
 
-						unrouted_sinks_valid[net->local_id]	.resize(unrouted_sinks[net->local_id].size());
-						std::fill(begin(unrouted_sinks_valid[net->local_id]), end(unrouted_sinks_valid[net->local_id]), true);
-
-						if (unrouted_sinks[net->local_id].empty()) {
+						if (unrouted[net->local_id].unrouted_sinks.empty()) {
 							++local_num_nets_routed;
 						} else {
-							auto pnet = get_pseudo_net(unrouted_sinks_boundary_nodes[net->local_id], unrouted_sinks[net->local_id], unrouted_sinks_valid[net->local_id], net, partitioner.orig_g, partitioner.result_pid, net_next_pid[net->local_id], opts->num_threads);
+							auto pnet = get_pseudo_net(unrouted[net->local_id], net, partitioner.orig_g, partitioner.result_pid, net_next_pid[net->local_id], opts->num_threads);
 							int to_pid = net_next_pid[net->local_id];
 							net_next_pid[net->local_id] = (net_next_pid[net->local_id]+1) % opts->num_threads;
 
@@ -3625,10 +3620,10 @@ bool spatial_route(t_router_opts *opts, struct s_det_routing_arch det_routing_ar
 
 								net_pseudo_nets[net->local_id].push_back(pnet);
 
-								zlog_level(delta_log, ROUTER_V3, "Generated pseudo net [pid = %d net = %d %lu sources %lu sinks]\n", to_pid, pnet->net->vpr_id, pnet->pseudo_sources.size(), pnet->sinks.size());
+								zlog_level(delta_log, ROUTER_V3, "Generated pseudo net [pid = %d net = %d %lu sources %lu/%lu sinks]\n", to_pid, pnet->net->vpr_id, pnet->pseudo_sources.size(), pnet->pseudo_sinks.size(), pnet->net->sinks.size());
 
-								for (const auto &s : pnet->sinks) {
-									zlog_level(delta_log, ROUTER_V3, "\t%d\n", s->rr_node);
+								for (const auto &psink : pnet->pseudo_sinks) {
+									zlog_level(delta_log, ROUTER_V3, "\tSink: %d\n", psink.sink->rr_node);
 								}
 
 							} else {
@@ -3641,7 +3636,7 @@ bool spatial_route(t_router_opts *opts, struct s_det_routing_arch det_routing_ar
 						++local_num_nets_to_route;
 						local_num_sinks_to_route += sinks.size();
 
-						local_num_sinks_routed += sinks.size()-unrouted_sinks.size();
+						local_num_sinks_routed += sinks.size()-unrouted[net->local_id].unrouted_sinks.size();
 					}
 
 					//local_perf.total_route_time += clock::now()-rip_up_start;
@@ -3670,69 +3665,159 @@ bool spatial_route(t_router_opts *opts, struct s_det_routing_arch det_routing_ar
 					pseudo_net_t *pnet = (*current_partition_pseudo_nets)[pid][inet];
 
 					assert(!pnet->pseudo_sources.empty());
-					assert(!pnet->sinks.empty());
+					assert(!pnet->pseudo_sinks.empty());
 
-					zlog_level(ss_log, ROUTER_V1, "Routing pseudo net [pid = %d, net = %d, %lu sources, %lu sinks]\n", pid, pnet->net->vpr_id, pnet->pseudo_sources.size(), pnet->sinks.size());
-					zlog_level(ss_log, ROUTER_V1, "Pseudo sources:  ");
+					zlog_level(delta_log, ROUTER_V1, "-- Routing pseudo net [pid = %d, initial pid = %d net = %d, %lu sources, %lu sinks]\n", pid, net_initial_pid[pnet->net->local_id], pnet->net->vpr_id, pnet->pseudo_sources.size(), pnet->pseudo_sinks.size());
+					zlog_level(delta_log, ROUTER_V1, "-- Pseudo sources:  ");
 
 					route_tree_t rt;
 					route_tree_init(rt);
 					for (const auto &s : pnet->pseudo_sources) {
-						zlog_level(ss_log, ROUTER_V1, "%d ", s);
-						RouteTreeNode rt_node = route_tree_add_rr_node(rt, s, *graphs[pid]);
-						const auto &rr_node = get_vertex_props(*graphs[pid], s);
+						zlog_level(delta_log, ROUTER_V1, "%d ", s);
+						RouteTreeNode rt_node = route_tree_add_rr_node(rt, s.node, *graphs[pid]);
+						const auto &rr_node = get_vertex_props(*graphs[pid], s.node);
 						route_tree_set_node_properties(get_vertex_props(rt.graph, rt_node), true, RRGraph::null_edge(), rr_node.R, 0.5 * rr_node.R * rr_node.C);
-						route_tree_add_root(rt, s);
+						route_tree_add_root(rt, s.node);
 					}
-					zlog_level(ss_log, ROUTER_V1, "\n");
+					zlog_level(delta_log, ROUTER_V1, "\n");
 
-					vector<vector<int>> dummy;
-					const auto &local_unrouted_sinks = route_net_3(partitioner.orig_g, partitioner.result_pid, pid, pnet->net->vpr_id, nullptr, pnet->sinks, params, states[pid], congestion, rt, net_timing[pnet->net->vpr_id], dummy, opts->num_threads, true, nullptr, nullptr);
+					unrouted_t local_unrouted;
 
-					for (const auto &s : pnet->sinks) {
-						if (find(begin(local_unrouted_sinks), end(local_unrouted_sinks), s) == end(local_unrouted_sinks)) {
-							assert(find(begin(pnet->routed_sinks), end(pnet->routed_sinks), s) == end(pnet->routed_sinks));
-							pnet->routed_sinks.push_back(s);
-	
-							int isink;
-							for (isink = 0; isink < unrouted_sinks[pnet->net->local_id].size(); ++isink) {
-								if (unrouted_sinks[pnet->net->local_id][isink] == s) {
-									break;
-								}
-							}
-							assert(isink < unrouted_sinks[pnet->net->local_id].size());
-
-							unrouted_sinks_valid[pnet->net->local_id][isink] = false;
+					vector<sink_t *> local_sinks;
+					for (const auto &psink : pnet->pseudo_sinks) {
+						if (psink.path.empty()) {
+							local_sinks.push_back(psink.sink);
 						}
 					}
 
-					if (!local_unrouted_sinks.empty()) {
-						auto new_pnet = get_pseudo_net(unrouted_sinks_boundary_nodes[pnet->net->local_id], unrouted_sinks[pnet->net->local_id], unrouted_sinks_valid[pnet->net->local_id], pnet->net, partitioner.orig_g, partitioner.result_pid, net_next_pid[pnet->net->local_id], opts->num_threads);
+					route_net_3(partitioner.orig_g, partitioner.result_pid, pid, pnet->net->vpr_id, nullptr, local_sinks, params, states[pid], congestion, rt, net_timing[pnet->net->vpr_id], local_unrouted, opts->num_threads, true, nullptr, nullptr);
+
+					int num_paths_connecting_to_source = 0;
+					vector<pseudo_sink_t *> routed_pseudo_sinks;
+					for (auto &psink : pnet->pseudo_sinks) {
+						bool routed = psink.path.empty() && find_if(begin(local_unrouted.unrouted_sinks), end(local_unrouted.unrouted_sinks), [&psink] (const auto &sink) -> bool { return sink->rr_node == psink.sink->rr_node; }) == end(local_unrouted.unrouted_sinks);
+
+						if (routed) {
+							routed_pseudo_sinks.push_back(&psink);
+
+							zlog_level(delta_log, ROUTER_V3, "-- Merging route tree for sink %d: %d\n", psink.sink->id, psink.sink->rr_node);
+
+							const auto &path_to_sink = route_tree_get_path(rt, psink.sink->rr_node);
+
+							auto psource = find_if(begin(pnet->pseudo_sources), end(pnet->pseudo_sources), [&path_to_sink] (const auto &psource) -> bool { return psource.node == path_to_sink.back().rr_node_id; });
+
+							if (psource != end(pnet->pseudo_sources)) {
+								++num_paths_connecting_to_source;
+							}
+
+							if (psource != end(pnet->pseudo_sources)) {
+								assert(psink.pseudo_source == nullptr);
+								psink.pseudo_source = &(*psource);
+
+								const auto &bn = get_source(partitioner.orig_g, psource->prev_edge);
+
+								//auto iter2 = find_if(begin(pnet->pseudo_sources), end(pnet->pseudo_sources), [&bn, &partitioner] (const auto &psource) -> bool { return get_source(partitioner.orig_g, psource.prev_edge) == bn; });
+								//assert(iter2 != end(pnet->pseudo_sources));
+
+								//int num_matches = 0;
+								//for (const auto &psink : pnet->pseudo_sinks) {
+									//for (const auto &bnode : psink.->boundary_nodes) {
+										//if (bnode.rr_node == bn) {
+											//++num_matches;
+										//}
+									//}
+								//}
+								//assert(num_matches > 0);
+
+								int counts = count_if(begin(pnet->pseudo_sources), end(pnet->pseudo_sources), [&partitioner, &bn] (const auto &psource) -> bool { return get_source(partitioner.orig_g, psource.prev_edge) == bn; });
+								assert(counts > 0);
+
+								zlog_level(delta_log, ROUTER_V3, "-- Path starts from pseudo source %d\n", psource->node);
+
+								/* it is possible that there is already a path to the boundary node in the route tree */
+								RouteTreeNode bn_rt_node = route_tree_get_rt_node(route_trees[pnet->net->local_id], bn);
+								if (bn_rt_node == RouteTree::null_vertex()) {
+									unrouted_t dummy;
+									sink_t bn_sink;
+									bn_sink.id = -1;
+									bn_sink.rr_node = bn;
+									bn_sink.criticality_fac = 1;
+									bn_sink.current_bounding_box = psink.sink->current_bounding_box;
+
+									zlog_level(delta_log, ROUTER_V3, "-- Routing to boundary node: %d\n", bn);
+
+									route_net_3(partitioner.orig_g, partitioner.result_pid, net_initial_pid[pnet->net->local_id], pnet->net->vpr_id, nullptr, { &bn_sink }, params, states[pid], congestion, route_trees[pnet->net->local_id], net_timing[pnet->net->vpr_id], dummy, opts->num_threads, true, nullptr, nullptr);
+
+									assert(dummy.unrouted_sinks.empty());
+
+									//const auto &bn_path = psource->bnode->path;
+									//route_tree_add_path(route_trees[pnet->net->local_id], bn_path, partitioner.orig_g, nullptr, false);
+
+									//vector<RRNode> added_nodes;
+									//for (const auto &n : bn_path) {
+										//if (n.update_cost) {
+											//added_nodes.push_back(n.rr_node_id);
+										//}
+									//}
+									//update_one_cost(*graphs[pid], congestion, added_nodes.begin(), added_nodes.end(), 1, params.pres_fac, false, nullptr);
+
+									assert(route_tree_get_rt_node(route_trees[pnet->net->local_id], bn) != RouteTree::null_vertex());
+
+									//path_node_t bnode;
+
+									//bnode.rr_node_id = bn;
+									//bnode.prev_edge = RRGraph::null_edge();
+									//bnode.update_cost = false;
+
+									//path_to_sink.push_back(bnode);
+								}
+							}
+							
+							psink.path = path_to_sink;
+						}
+					}
+
+					for (const auto &psink : routed_pseudo_sinks) {
+						if (psink->pseudo_source) {
+							RouteTreeNode ps_rt_node = route_tree_get_rt_node(route_trees[pnet->net->local_id], psink->pseudo_source->node);
+							if (ps_rt_node == RouteTree::null_vertex()) {
+								zlog_level(delta_log, ROUTER_V3, "-- Adding pseudo source %d to route tree\n", psink->pseudo_source->node);
+
+								const auto &bn = get_source(partitioner.orig_g, psink->pseudo_source->prev_edge);
+
+								ps_rt_node = route_tree_add_rr_node(route_trees[pnet->net->local_id], psink->pseudo_source->node, *graphs[pid]);
+								const auto &ps_rr_node_p = get_vertex_props(*graphs[pid], psink->pseudo_source->node);
+								route_tree_set_node_properties(get_vertex_props(route_trees[pnet->net->local_id].graph, ps_rt_node), true, RRGraph::null_edge(), ps_rr_node_p.R, 0.5 * ps_rr_node_p.R * ps_rr_node_p.C);
+								route_tree_add_edge_between_rr_node(route_trees[pnet->net->local_id], bn, psink->pseudo_source->node);
+
+								assert(ps_rr_node_p.type != SOURCE);
+
+								update_one_cost_internal(psink->pseudo_source->node, ps_rr_node_p, congestion[psink->pseudo_source->node], 1, params.pres_fac, true, nullptr);
+							}
+						}
+
+						zlog_level(delta_log, ROUTER_V3, "-- Adding path to sink\n");
+						route_tree_add_path(route_trees[pnet->net->local_id], psink->path, partitioner.orig_g, nullptr);
+					}
+
+					if (!local_unrouted.unrouted_sinks.empty()) {
+						//auto new_pnet = get_pseudo_net(unrouted_sinks[pnet->net->local_id], pnet->net, partitioner.orig_g, partitioner.result_pid, net_next_pid[pnet->net->local_id], opts->num_threads);
+						update_pseudo_sources(*pnet, unrouted[pnet->net->local_id], partitioner.orig_g, partitioner.result_pid, opts->num_threads, net_next_pid[pnet->net->local_id]);
 
 						int to_pid = net_next_pid[pnet->net->local_id];
 						assert(to_pid != net_initial_pid[pnet->net->local_id]);
 						net_next_pid[pnet->net->local_id] = (net_next_pid[pnet->net->local_id]+1) % opts->num_threads;
 
-						assert(new_pnet);
+						(*new_partition_pseudo_nets)[to_pid].push_back(pnet);
 
-						if (new_pnet) {
-							pseudo_nets_locks[to_pid].lock();
-							(*new_partition_pseudo_nets)[to_pid].push_back(new_pnet);
-							pseudo_nets_locks[to_pid].unlock();
-
-							net_pseudo_nets[new_pnet->net->local_id].push_back(new_pnet);
-
-							zlog_level(ss_log, ROUTER_V3, "Generated pseudo net [pid = %d, net = %d, %lu sources, %lu sinks]\n", to_pid, new_pnet->net->vpr_id, new_pnet->pseudo_sources.size(), new_pnet->sinks.size());
-							for (const auto &s : new_pnet->sinks) {
-								zlog_level(ss_log, ROUTER_V3, "\t%d\n", s->rr_node);
-							}
-						} else {
-							zlog_level(ss_log, ROUTER_V3, "Failed to generate pnet for [pid = %d net = %d]\n", to_pid, pnet->net->vpr_id);
+						zlog_level(delta_log, ROUTER_V3, "Updating pseudo net [pid = %d, net = %d, %lu sources, %lu sinks]\n", to_pid, pnet->net->vpr_id, pnet->pseudo_sources.size(), pnet->pseudo_sinks.size());
+						for (const auto &psink : pnet->pseudo_sinks) {
+							zlog_level(delta_log, ROUTER_V3, "\t%d\n", psink.sink->rr_node);
 						}
 
 						has_unrouted_sinks = true;
 					} else {
-						zlog_level(ss_log, ROUTER_V3, "Routed all sinks of net %d\n", pnet->net->vpr_id);
+						zlog_level(delta_log, ROUTER_V3, "Routed all sinks of net %d\n", pnet->net->vpr_id);
 					}
 
 				}
@@ -3745,27 +3830,19 @@ bool spatial_route(t_router_opts *opts, struct s_det_routing_arch det_routing_ar
 		int lol = 0;
 		for (const auto &pnets : net_pseudo_nets) {
 			if (!pnets.empty()) {
-				vector<sink_t *> all_routed_sinks;
-				for (const auto &pnet : pnets) {
-					for (const auto &rs : pnet->routed_sinks) {
-						all_routed_sinks.push_back(rs);
+				assert(pnets.size() == 1);
+				const auto &pnet = pnets[0];
+				for (const auto &psink : pnet->pseudo_sinks) {
+					if (psink.path.empty()) {
+						++lol;
+					} else {
 					}
 				}
-				//int tid = 0;
-				//while (tid < pnets.size() && pnets[tid]->sinks.empty()) {
-					//++tid;
-				//}
-				vector<sink_t *> debug(begin(pnets[0]->sinks), end(pnets[0]->sinks));
-				sort(begin(debug), end(debug));
-				sort(begin(all_routed_sinks), end(all_routed_sinks));
-
-				//assert(all_routed_sinks == debug);
-				assert(debug.size()>=all_routed_sinks.size());
-				lol += debug.size()-all_routed_sinks.size();
 			}
 		}
 
 		printf("Num unrouted sinks: %d\n", lol);
+		assert(lol == 0);
 
 		//if (greedy_rip_up_all) {
 			//next_greedy_rip_up_iter += greedy_rip_up_all_period;
@@ -3817,21 +3894,21 @@ bool spatial_route(t_router_opts *opts, struct s_det_routing_arch det_routing_ar
 		}
 		assert(valid);
 
-		for (const auto &net : nets) {
-			vector<int> overused_rr_node;
-			get_overused_nodes(route_trees[net.local_id], route_trees[net.local_id].root_rt_node_id, *graphs[0], congestion, overused_rr_node);
-			if (!overused_rr_node.empty()) {
-				zlog_level(delta_log, ROUTER_V1, "Net %d bb_rank %d overused nodes:\n", net.vpr_id, net.bb_area_rank);
-				for (const auto &item : overused_rr_node) {
-					zlog_level(delta_log, ROUTER_V1, "%d ", item);
-				}
-				zlog_level(delta_log, ROUTER_V1, "\n");
-			}
-		}
+		//for (const auto &net : nets) {
+			//vector<int> overused_rr_node;
+			//get_overused_nodes(route_trees[net.local_id], route_trees[net.local_id].root_rt_node_id, *graphs[0], congestion, overused_rr_node);
+			//if (!overused_rr_node.empty()) {
+				//zlog_level(delta_log, ROUTER_V1, "Net %d bb_rank %d overused nodes:\n", net.vpr_id, net.bb_area_rank);
+				//for (const auto &item : overused_rr_node) {
+					//zlog_level(delta_log, ROUTER_V1, "%d ", item);
+				//}
+				//zlog_level(delta_log, ROUTER_V1, "\n");
+			//}
+		//}
 
 		iter_start = clock::now();
 
-		if (feasible_routing(*graphs[0], congestion)) {
+		if (feasible_routing(partitioner.orig_g, congestion)) {
 			//dump_route(*current_traces_ptr, "route.txt");
 			routed = true;
 		} else {

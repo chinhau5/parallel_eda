@@ -65,6 +65,8 @@ RouteTreeNode route_tree_add_rr_node(route_tree_t &rt, RRNode rr_node, const RRG
 		assert(rt_node_p->rr_node == rr_node);
 		if (rt_node_p->valid) {
 			rt_node = RouteTree::null_vertex();
+		} else {
+			rt_node = iter->second;
 		}
 	}
 
@@ -72,7 +74,9 @@ RouteTreeNode route_tree_add_rr_node(route_tree_t &rt, RRNode rr_node, const RRG
 		assert(!rt_node_p->valid);
 		rt_node_p->valid = true;
 		rt_node_p->pending_rip_up = false;
+		rt_node_p->ripped_up = false;
 		rt_node_p->rt_edge_to_parent = RouteTree::null_edge();
+		/*rt_node_p->branch_point = false;*/
 		rt_node_p->num_iterations_fixed = 0;
 
 		auto &rr_node_p = get_vertex_props(g, rr_node);
@@ -102,8 +106,8 @@ const RouteTreeEdge &route_tree_add_edge_between_rr_node(route_tree_t &rt, RRNod
 	RouteTreeNode rt_node_a = route_tree_get_rt_node(rt, rr_node_a);
 	RouteTreeNode rt_node_b = route_tree_get_rt_node(rt, rr_node_b);
 
-	assert(rt_node_a != -1);
-	assert(rt_node_b != -1);
+	assert(rt_node_a != RouteTree::null_vertex());
+	assert(rt_node_b != RouteTree::null_vertex());
 
 	if (has_edge(rt.graph, rt_node_a, rt_node_b)) {
 		char buffer_a[256];
@@ -131,13 +135,13 @@ RouteTreeNode route_tree_get_rt_node(const route_tree_t &rt, RRNode rr_node)
 	auto iter = rt.rr_node_to_rt_node.find(rr_node);
 
 	if (iter == rt.rr_node_to_rt_node.end()) {
-		res = -1;
+		res = RouteTree::null_vertex();
 	} else {
 		auto &v = get_vertex_props(rt.graph, iter->second);
 		if (v.valid) {
 			res = iter->second;
 		} else {
-			res = -1;
+			res = RouteTree::null_vertex();
 		}
 	}
 
@@ -232,24 +236,107 @@ void route_tree_add_to_heap(const route_tree_t &rt, const RRGraph &g, RRNode tar
 	route_tree_add_to_heap_internal(rt, rt.root_rt_node_id, g, target, criticality_fac, astar_fac, current_bounding_box, heap, perf);
 }
 
-void route_tree_add_path(route_tree_t &rt, const vector<path_node_t> &path, const RRGraph &g, const route_state_t *state)
+vector<path_node_t> route_tree_get_path(const route_tree_t &rt, RRNode to_node)
+{
+	RouteTreeNode current_rt_node = route_tree_get_rt_node(rt, to_node);
+	assert(current_rt_node != RouteTree::null_vertex());
+
+	const auto &bpi = rt.path_branch_point.find(to_node);
+	assert(bpi != rt.path_branch_point.end());
+	RouteTreeNode bp = bpi->second;
+
+	vector<path_node_t> path;
+	while (current_rt_node != RouteTree::null_vertex()) {
+		const auto &current_rt_node_p = get_vertex_props(rt.graph, current_rt_node);
+
+		path_node_t node;
+		node.rr_node_id = current_rt_node_p.rr_node;
+		node.prev_edge = current_rt_node_p.rr_edge_to_parent;
+
+		char buffer[256];
+		sprintf_rr_node(node.rr_node_id, buffer);
+		zlog_level(ss_log, ROUTER_V3, "RT get path: %s\n", buffer);
+		zlog_level(delta_log, ROUTER_V3, "RT get path: %s\n", buffer);
+		path.emplace_back(node);
+
+		bool is_branch_point = current_rt_node == bp;
+
+		if (is_branch_point) {
+			zlog_level(ss_log, ROUTER_V3, "RT %s is a branch point\n", buffer);
+			zlog_level(delta_log, ROUTER_V3, "RT %s is a branch point\n", buffer);
+			current_rt_node = RouteTree::null_vertex();
+		} else {
+			current_rt_node = get_source(rt.graph, current_rt_node_p.rt_edge_to_parent);
+		}
+	}
+	return path;
+}
+
+void route_tree_add_path(route_tree_t &rt, const vector<path_node_t> &path, const RRGraph &g, const route_state_t *state, bool add_branch_point)
 {
 	assert(path.size() > 0);
 
 	int current_rr_node_id = path[0].rr_node_id;
 
+	char buffer[256];
+
 	RouteTreeNode current_rt_node = route_tree_add_rr_node(rt, current_rr_node_id, g);
+	assert(current_rt_node != RouteTree::null_vertex());
+
+	sprintf_rr_node(current_rr_node_id, buffer);
+	zlog_level(ss_log, ROUTER_V3, "RT add path %s\n", buffer);
+	zlog_level(delta_log, ROUTER_V3, "RT add path: %s\n", buffer);
+
 	const auto &current_rr_node_p = get_vertex_props(g, current_rr_node_id);
-	route_tree_set_node_properties(get_vertex_props(rt.graph, current_rt_node), current_rr_node_p.type != IPIN && current_rr_node_p.type != SINK, path[0].prev_edge, state[current_rr_node_id].upstream_R, state[current_rr_node_id].delay);
+
+	if (state) {
+		route_tree_set_node_properties(get_vertex_props(rt.graph, current_rt_node), current_rr_node_p.type != IPIN && current_rr_node_p.type != SINK, path[0].prev_edge, state[current_rr_node_id].upstream_R, state[current_rr_node_id].delay);
+	} else {
+		route_tree_set_node_properties(get_vertex_props(rt.graph, current_rt_node), current_rr_node_p.type != IPIN && current_rr_node_p.type != SINK, path[0].prev_edge, 0, 0);
+	}
 
 	for (int i = 1; i < path.size(); ++i) {
 		int previous_rr_node_id = path[i].rr_node_id;
 
-		if (i < path.size()-1) {
+		bool last = i == path.size()-1;
+		if (!last) {
 			RouteTreeNode previous_rt_node = route_tree_add_rr_node(rt, previous_rr_node_id, g);
+			assert(previous_rt_node != RouteTree::null_vertex());
+
+			sprintf_rr_node(previous_rr_node_id, buffer);
+			zlog_level(ss_log, ROUTER_V3, "RT add path %s\n", buffer);
+			zlog_level(delta_log, ROUTER_V3, "RT add path: %s\n", buffer);
+
 			const auto &previous_rr_node_p = get_vertex_props(g, previous_rr_node_id);
-			route_tree_set_node_properties(get_vertex_props(rt.graph, previous_rt_node), previous_rr_node_p.type != IPIN && previous_rr_node_p.type != SINK, path[i].prev_edge, state[previous_rr_node_id].upstream_R, state[previous_rr_node_id].delay);
+
+			if (state) {
+				route_tree_set_node_properties(get_vertex_props(rt.graph, previous_rt_node), previous_rr_node_p.type != IPIN && previous_rr_node_p.type != SINK, path[i].prev_edge, state[previous_rr_node_id].upstream_R, state[previous_rr_node_id].delay);
+			} else {
+				route_tree_set_node_properties(get_vertex_props(rt.graph, previous_rt_node), previous_rr_node_p.type != IPIN && previous_rr_node_p.type != SINK, path[i].prev_edge, 0, 0);
+			}
+		} else {
+			/*RouteTreeNode bp = route_tree_get_rt_node(rt, previous_rr_node_id);*/
+			/*auto &bp_p = get_vertex_props(rt.graph, bp);*/
+			/*bp_p.branch_point = true;*/
+			RouteTreeNode source = route_tree_get_rt_node(rt, previous_rr_node_id);
+			assert(source != RouteTree::null_vertex());
+			/* source is non-null only when it is a source or a pseudo source.
+			 * a boundary node */
+			/*if (bp == RouteTree::null_vertex()) {	*/
+
+			/*}*/
+
+			sprintf_rr_node(previous_rr_node_id, buffer);
+			zlog_level(ss_log, ROUTER_V3, "RT existing path %s\n", buffer);
+			zlog_level(delta_log, ROUTER_V3, "RT existing path: %s\n", buffer);
+
+			if (add_branch_point) {
+				auto res = rt.path_branch_point.insert(make_pair(path[0].rr_node_id, source));
+				assert(res.second);
+			}
 		}
+
+		/*zlog_level(ss_log, ROUTER_V3, "Adding edge from %d to %d\n", previous_rr_node_id, current_rr_node_id);*/
 
 		route_tree_add_edge_between_rr_node(rt, previous_rr_node_id, current_rr_node_id);
 		current_rr_node_id = previous_rr_node_id;
@@ -300,11 +387,25 @@ bool route_tree_mark_congested_nodes_to_be_ripped(route_tree_t &rt, const RRGrap
 {
 	rt.scheduler_bounding_box = bg::make_inverse<box>();
 
-	if (rt.root_rt_node_id == -1) {
+	if (rt.root_rt_node_id == RouteTree::null_vertex()) {
 		return false;
 	}
 
 	return route_tree_mark_congested_nodes_to_be_ripped_internal(rt, g, congestion, rt.root_rt_node_id);
+}
+
+void route_tree_mark_all_nodes_to_be_ripped(route_tree_t &rt, const RRGraph &g)
+{
+	rt.scheduler_bounding_box = bg::make_inverse<box>();
+
+	for (auto rt_node_id : route_tree_get_nodes(rt)) {
+		auto &rt_node = get_vertex_props(rt.graph, rt_node_id);
+		rt_node.pending_rip_up = true;
+		rt_node.ripped_up = false;
+
+		const auto &rr_node = get_vertex_props(g, rt_node.rr_node);
+		bg::expand(rt.scheduler_bounding_box, segment(point(rr_node.xlow, rr_node.ylow), point(rr_node.xhigh, rr_node.yhigh)));
+	}
 }
 
 void route_tree_remove_edge(route_tree_t &rt, const RouteTreeEdge &rt_edge)
@@ -318,10 +419,9 @@ void route_tree_remove_edge(route_tree_t &rt, const RouteTreeEdge &rt_edge)
 	zlog_level(delta_log, ROUTER_V2, "Removing edge %s -> %s\n", s_from, s_to);
 
 	auto &target = get_vertex_props(rt.graph, get_target(rt.graph, rt_edge));
-	target.rt_edge_to_parent = RouteTree::null_edge();
 	remove_edge(rt.graph, rt_edge);
+	target.rt_edge_to_parent = RouteTree::null_edge();
 }
-
 
 void route_tree_remove_node(route_tree_t &rt, RRNode rr_node, const RRGraph &g)
 {
@@ -331,8 +431,12 @@ void route_tree_remove_node(route_tree_t &rt, RRNode rr_node, const RRGraph &g)
 	assert(rt_node_p.valid);
 	rt_node_p.valid = false;
 
-	if (rt_node == rt.root_rt_node_id) {
-		rt.root_rt_node_id = RouteTree::null_vertex();
+	/*if (rt_node == rt.root_rt_node_id) {*/
+		/*rt.root_rt_node_id = RouteTree::null_vertex();*/
+	/*}*/
+	const auto &root = find(begin(rt.root_rt_nodes), end(rt.root_rt_nodes), rt_node);
+	if (root != end(rt.root_rt_nodes)) {
+		rt.root_rt_nodes.erase(root);
 	}
 
 	const auto &rr_node_p = get_vertex_props(g, rr_node);
@@ -354,7 +458,6 @@ void route_tree_remove_node(route_tree_t &rt, RRNode rr_node, const RRGraph &g)
 	/*assert(rt.num_nodes == rt.point_tree.size());*/
 }
 
-
 void route_tree_rip_up_marked(route_tree_t &rt, const RRGraph &g, congestion_t *congestion, float pres_fac, bool lock, lock_perf_t *lock_perf)
 {
 	char buffer[256];
@@ -364,6 +467,11 @@ void route_tree_rip_up_marked(route_tree_t &rt, const RRGraph &g, congestion_t *
 		RRNode rr_node = rt_node_p.rr_node;
 		const auto &rr_node_p = get_vertex_props(g, rr_node);
 		sprintf_rr_node(rt_node_p.rr_node, buffer);
+
+		const auto &bp = rt.path_branch_point.find(rr_node);
+		if (bp != rt.path_branch_point.end()) {
+			rt.path_branch_point.erase(bp);
+		}
 
 		if (rt_node_p.pending_rip_up) {
 			zlog_level(delta_log, ROUTER_V2, "Ripping up node %s from route tree. Occ: %d Cap: %d\n", buffer, congestion[rt_node_p.rr_node].occ, rr_node_p.capacity);

@@ -160,10 +160,43 @@ typedef struct route_state_t {
 } route_state_t;
 
 typedef struct path_node_t {
-	int rr_node_id;
+	RRNode rr_node_id;
 	RREdge prev_edge;
 	bool update_cost;
 } path_node_t;
+
+typedef struct boundary_node_t {
+	RRNode rr_node;
+	vector<path_node_t> path;
+} boundary_node_t;
+
+//typedef struct unrouted_sink_t {
+	//sink_t *sink;
+	//vector<boundary_node_t> boundary_nodes;
+//} unrouted_sink_t;
+
+typedef struct unrouted_t {
+	vector<sink_t *> unrouted_sinks;
+	vector<boundary_node_t> boundary_nodes;
+} unrouted_t;
+
+typedef struct pseudo_source_t {
+	RRNode node;
+	RREdge prev_edge;
+	boundary_node_t *bnode;
+} pseudo_source_t;
+
+typedef struct pseudo_sink_t {
+	sink_t *sink;
+	vector<path_node_t> path;
+	pseudo_source_t *pseudo_source;
+} pseudo_sink_t;
+
+typedef struct pseudo_net_t {
+	net_t *net;
+	vector<pseudo_source_t> pseudo_sources;
+	vector<pseudo_sink_t> pseudo_sinks;
+} pseudo_net_t;
 
 bool hybrid_route(t_router_opts *opts);
 bool partitioning_route(t_router_opts *opts);

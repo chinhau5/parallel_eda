@@ -20,7 +20,7 @@ void update_costs(const RRGraph &g, congestion_t *congestion, float pres_fac, fl
 	}
 }
 
-void update_one_cost_internal(int rr_node, const rr_node_property_t &rr_node_p, congestion_t &congestion, /*int net_id, */int delta, float pres_fac, bool lock, lock_perf_t *lock_perf)
+void update_one_cost_internal(RRNode rr_node, const rr_node_property_t &rr_node_p, congestion_t &congestion, /*int net_id, */int delta, float pres_fac, bool lock, lock_perf_t *lock_perf)
 {
 	if (lock) {
 		if (lock_perf) {
@@ -70,7 +70,7 @@ void update_one_cost_internal(int rr_node, const rr_node_property_t &rr_node_p, 
 	zlog_level(delta_log, ROUTER_V2, "Update cost of %s delta: %d new_occ: %d pres_fac: %g\n", buffer, delta, congestion.occ, pres_fac);
 }
 
-void update_one_cost(const RRGraph &g, congestion_t *congestion, const vector<int>::const_iterator &rr_nodes_begin, const vector<int>::const_iterator &rr_nodes_end, /*int net_id,*/ int delta, float pres_fac, bool lock, lock_perf_t *lock_perf)
+void update_one_cost(const RRGraph &g, congestion_t *congestion, const vector<RRNode>::const_iterator &rr_nodes_begin, const vector<RRNode>::const_iterator &rr_nodes_end, /*int net_id,*/ int delta, float pres_fac, bool lock, lock_perf_t *lock_perf)
 {
 	/*const RouteTreeNode *last = nullptr;*/
 	for (auto iter = rr_nodes_begin; iter != rr_nodes_end; ++iter) {

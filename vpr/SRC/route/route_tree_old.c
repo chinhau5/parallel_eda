@@ -186,20 +186,6 @@ bool route_tree_mark_nodes_to_be_ripped(route_tree_t &rt, const RRGraph &g, cons
 	return route_tree_mark_nodes_to_be_ripped_internal(rt, g, congestion, rt.root_rt_node_id, num_iterations_fixed_threshold);
 }
 
-void route_tree_mark_all_nodes_to_be_ripped(route_tree_t &rt, const RRGraph &g)
-{
-	rt.scheduler_bounding_box = bg::make_inverse<box>();
-
-	for (auto rt_node_id : route_tree_get_nodes(rt)) {
-		auto &rt_node = get_vertex_props(rt.graph, rt_node_id);
-		rt_node.pending_rip_up = true;
-		rt_node.ripped_up = false;
-
-		const auto &rr_node = get_vertex_props(g, rt_node.rr_node);
-		bg::expand(rt.scheduler_bounding_box, segment(point(rr_node.xlow, rr_node.ylow), point(rr_node.xhigh, rr_node.yhigh)));
-	}
-}
-
 void route_tree_rip_up_segment_2(route_tree_t &rt, int sink_rr_node, RRGraph &g, float pres_fac)
 {
 	RouteTreeNode *current = route_tree_get_rt_node(rt, sink_rr_node);
