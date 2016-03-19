@@ -150,6 +150,13 @@ typedef struct congestion_t {
 	int recalc_occ;
 } congestion_t;
 
+typedef struct congestion_mpi_t {
+	int occ;
+	float pres_cost;
+	float acc_cost;
+	int recalc_occ;
+} congestion_mpi_t;
+
 typedef struct route_state_t {
 	int rr_node;
 	RREdge prev_edge;
@@ -174,6 +181,11 @@ typedef struct boundary_node_t {
 	//sink_t *sink;
 	//vector<boundary_node_t> boundary_nodes;
 //} unrouted_sink_t;
+//
+typedef struct interpartition_sink_t {
+	sink_t *sink;
+	vector<path_node_t> path;
+} interpartition_sink_t;
 
 typedef struct unrouted_t {
 	vector<sink_t *> unrouted_sinks;

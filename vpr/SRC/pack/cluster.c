@@ -1901,9 +1901,9 @@ static void start_new_cluster(
 	new_cluster->nets = NULL;
 	new_cluster->type = NULL;
 	new_cluster->pb = NULL;
-	new_cluster->x = UNDEFINED;
-	new_cluster->y = UNDEFINED;
-	new_cluster->z = UNDEFINED;
+	new_cluster->x = VPR_UNDEFINED;
+	new_cluster->y = VPR_UNDEFINED;
+	new_cluster->z = VPR_UNDEFINED;
 
 	success = FALSE;
 

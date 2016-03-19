@@ -1065,14 +1065,14 @@ static t_pb_graph_node *get_expected_lowest_cost_primitive_for_logical_block(INP
 	float cost, best_cost;
 	t_pb_graph_node *current, *best;
 
-	best_cost = UNDEFINED;
+	best_cost = VPR_UNDEFINED;
 	best = NULL;
 	current = NULL;
 	for(i = 0; i < num_types; i++) {
-		cost = UNDEFINED;
+		cost = VPR_UNDEFINED;
 		current = get_expected_lowest_cost_primitive_for_logical_block_in_pb_graph_node(ilogical_block, type_descriptors[i].pb_graph_head, &cost);
-		if(cost != UNDEFINED) {
-			if(best_cost == UNDEFINED || best_cost > cost) {
+		if(cost != VPR_UNDEFINED) {
+			if(best_cost == VPR_UNDEFINED || best_cost > cost) {
 				best_cost = cost;
 				best = current;
 			}
@@ -1087,7 +1087,7 @@ static t_pb_graph_node *get_expected_lowest_cost_primitive_for_logical_block_in_
 	int i, j;
 
 	best = NULL;
-	best_cost = UNDEFINED;
+	best_cost = VPR_UNDEFINED;
 	if(curr_pb_graph_node == NULL) {
 		return NULL;
 	}
@@ -1095,7 +1095,7 @@ static t_pb_graph_node *get_expected_lowest_cost_primitive_for_logical_block_in_
 	if(curr_pb_graph_node->pb_type->blif_model != NULL) {
 		if(primitive_type_feasible(ilogical_block, curr_pb_graph_node->pb_type)) {
 			cur_cost = compute_primitive_base_cost(curr_pb_graph_node);
-			if(best_cost == UNDEFINED || best_cost > cur_cost) {
+			if(best_cost == VPR_UNDEFINED || best_cost > cur_cost) {
 				best_cost = cur_cost;
 				best = curr_pb_graph_node;
 			}
@@ -1103,7 +1103,7 @@ static t_pb_graph_node *get_expected_lowest_cost_primitive_for_logical_block_in_
 	} else {
 		for(i = 0; i < curr_pb_graph_node->pb_type->num_modes; i++) {
 			for(j = 0; j < curr_pb_graph_node->pb_type->modes[i].num_pb_type_children; j++) {
-				*cost = UNDEFINED;
+				*cost = VPR_UNDEFINED;
 				cur = get_expected_lowest_cost_primitive_for_logical_block_in_pb_graph_node(ilogical_block, &curr_pb_graph_node->child_pb_graph_nodes[i][j][0], cost);
 				if(cur != NULL) {
 					if(best == NULL || best_cost > *cost) {

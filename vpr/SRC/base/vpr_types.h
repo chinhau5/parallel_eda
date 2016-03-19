@@ -61,6 +61,8 @@ typedef struct s_net_power t_net_power;
 /*#define DUMP_BLIF_ECHO*//*dump blif of internal representation of user circuit.  Useful for ensuring functional correctness via logical equivalence with input blif*/
 /*#define HACK_LUT_PIN_SWAPPING*//* Hack to enable LUT input pin swapping for delay purposes */
 
+#define NO_GRAPHICS
+
 #ifdef SPEC
 #define NO_GRAPHICS		/* Rips out graphics (for non-X11 systems)      */
 #define NDEBUG			/* Turns off assertion checking for extra speed */
@@ -102,8 +104,8 @@ typedef size_t bitfield;
 #define NEVER_CLUSTER -2
 #define NOT_VALID -10000  /* Marks gains that aren't valid */
 /* Ensure no gain can ever be this negative! */
-#ifndef UNDEFINED						 
-#define UNDEFINED -1    
+#ifndef VPR_UNDEFINED						 
+#define VPR_UNDEFINED -1    
 #endif
 
 /* netlist blocks are assigned one of these types */

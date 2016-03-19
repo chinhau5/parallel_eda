@@ -392,11 +392,11 @@ bool valid(const fast_edge_t<EdgeProperties> &e)
 	return e.a != -1 && e.b != -1;
 }
 
-template<typename EdgeProperties>
-fast_edge_t<EdgeProperties> invalid_edge()
-{
-	return { -1, -1, nullptr };
-}
+//template<typename EdgeProperties>
+//fast_edge_t<EdgeProperties> invalid_edge()
+//{
+	//return { -1, -1, nullptr };
+//}
 
 template<typename VertexProperties, typename EdgeProperties>
 int id(const fast_vertex_t<VertexProperties, EdgeProperties> &v)
@@ -555,22 +555,18 @@ void clear_edges(fast_graph_t<VertexProperties, EdgeProperties> &g)
 	}
 }
 
-template<typename VertexProperties, typename EdgeProperties, typename VertexLabeler, typename EdgeLabeler, typename VertexFilter>
-void write_graph(const fast_graph_t<VertexProperties, EdgeProperties> &g, const char *filename, const VertexLabeler &vertex_attrs, const EdgeLabeler &edge_label, const VertexFilter &vertex_filter)
+template<typename Graph, typename VertexLabeler, typename EdgeLabeler>
+void write_graph(const Graph &g, const char *filename, const VertexLabeler &vertex_attrs, const EdgeLabeler &edge_label)
 {
 	FILE *file = fopen(filename, "w");
 	fprintf(file, "digraph g {\n");
 	for (const auto &v : get_vertices(g)) {
-		if (!vertex_filter(v)) {
-			fprintf(file, "%d [%s];\n", v, vertex_attrs(v).c_str());
-		}
+		fprintf(file, "%d [%s];\n", v, vertex_attrs(v).c_str());
 	}
 	for (const auto &e : get_edges(g)) {
 		const auto &from = get_source(g, e);
 		const auto &to = get_target(g, e);
-		if (!vertex_filter(from) && !vertex_filter(to)) {
-			fprintf(file, "%d -> %d [label=\"%s\"];\n", from, to, edge_label(e).c_str());
-		}
+		fprintf(file, "%d -> %d [label=\"%s\"];\n", from, to, edge_label(e).c_str());
 	}
 	fprintf(file, "}\n");
 	fclose(file);

@@ -61,11 +61,13 @@ get_edges(const filtered_graph_t<Graph, VertexPredicate, EdgePredicate> &fg)
 {
 	//graph_filter_t filter(fg.valid_edge);
 
-	using edge_iterator = typename Graph::edge_iterator;
+	using edge_iterator = typename Graph::const_edge_iterator;
+
+	const auto &edges = get_edges(fg.g);
 
 	return boost::make_iterator_range(
-			boost::make_filter_iterator(fg.valid_edge, edge_iterator(0ul), edge_iterator(fg.g.edges.size())),
-			boost::make_filter_iterator(fg.valid_edge, edge_iterator(fg.g.edges.size()), edge_iterator(fg.g.edges.size()))
+			boost::make_filter_iterator(fg.valid_edge, edge_iterator(begin(edges)), edge_iterator(end(edges))),
+			boost::make_filter_iterator(fg.valid_edge, edge_iterator(end(edges)), edge_iterator(end(edges)))
 			);
 }
 

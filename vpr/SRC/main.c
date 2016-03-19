@@ -18,6 +18,7 @@
 /*#include <glog/logging.h>*/
 #include <zlog.h>
 #include <chrono>
+#include <mpi.h>
 /*#include "tbb/task_scheduler_init.h"*/
 #include "vpr_api.h"
 
@@ -47,6 +48,8 @@ int main(int argc, char **argv) {
 	t_arch Arch;
 	t_vpr_setup vpr_setup;
 	clock_t entire_flow_begin,entire_flow_end;
+
+	MPI_Init(&argc, &argv);
 
 	program_start = std::chrono::high_resolution_clock::now(); 
 

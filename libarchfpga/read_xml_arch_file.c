@@ -936,11 +936,11 @@ static void ProcessPb_Type(INOUTP ezxml_t Parent, t_pb_type * pb_type,
 	}
 
 	/* set max_internal_delay if exist */
-	pb_type->max_internal_delay = UNDEFINED;
+	pb_type->max_internal_delay = VPR_UNDEFINED;
 	Cur = FindElement(Parent, "max_internal_delay", FALSE);
 	if (Cur) {
 		pb_type->max_internal_delay = GetFloatProperty(Cur, "value", TRUE,
-				UNDEFINED);
+				VPR_UNDEFINED);
 		FreeNode(Cur);
 	}
 
@@ -1647,7 +1647,7 @@ static void ProcessComplexBlockProps(ezxml_t Node, t_type_descriptor * Type) {
 	/* Load properties */
 	Type->capacity = GetIntProperty(Node, "capacity", FALSE, 1); /* TODO: Any block with capacity > 1 that is not I/O has not been tested, must test */
 	Type->height = GetIntProperty(Node, "height", FALSE, 1);
-	Type->area = GetFloatProperty(Node, "area", FALSE, UNDEFINED);
+	Type->area = GetFloatProperty(Node, "area", FALSE, VPR_UNDEFINED);
 
 	if (atof(Prop) < 0) {
 		vpr_printf(TIO_MESSAGE_ERROR,
@@ -1798,7 +1798,7 @@ static void ProcessLayout(INOUTP ezxml_t Node, OUTP struct s_arch *arch) {
 		arch->clb_grid.W = my_atoi(Prop);
 		ezxml_set_attr(Node, "width", NULL);
 
-		arch->clb_grid.H = GetIntProperty(Node, "height", TRUE, UNDEFINED);
+		arch->clb_grid.H = GetIntProperty(Node, "height", TRUE, VPR_UNDEFINED);
 	}
 
 	/* Load aspect ratio if applicable */
@@ -1880,7 +1880,7 @@ static void ProcessChanWidthDistr(INOUTP ezxml_t Node,
 	ezxml_t Cur;
 
 	Cur = FindElement(Node, "io", TRUE);
-	arch->Chans.chan_width_io = GetFloatProperty(Cur, "width", TRUE, UNDEFINED);
+	arch->Chans.chan_width_io = GetFloatProperty(Cur, "width", TRUE, VPR_UNDEFINED);
 	FreeNode(Cur);
 	Cur = FindElement(Node, "x", TRUE);
 	ProcessChanWidthDistrDir(Cur, &arch->Chans.chan_x_dist);
@@ -1916,7 +1916,7 @@ static void ProcessChanWidthDistrDir(INOUTP ezxml_t Node, OUTP t_chan * chan) {
 		exit(1);
 	}
 	ezxml_set_attr(Node, "distr", NULL);
-	chan->peak = GetFloatProperty(Node, "peak", TRUE, UNDEFINED);
+	chan->peak = GetFloatProperty(Node, "peak", TRUE, VPR_UNDEFINED);
 	chan->width = GetFloatProperty(Node, "width", hasWidth, 0);
 	chan->xpeak = GetFloatProperty(Node, "xpeak", hasXpeak, 0);
 	chan->dc = GetFloatProperty(Node, "dc", hasDc, 0);
@@ -1940,7 +1940,7 @@ static void SetupEmptyType(void) {
 	type->is_Fc_full_flex = NULL;
 	type->Fc = NULL;
 	type->pb_type = NULL;
-	type->area = UNDEFINED;
+	type->area = VPR_UNDEFINED;
 
 	/* Used as lost area filler, no definition */
 	type->grid_loc_def = NULL;

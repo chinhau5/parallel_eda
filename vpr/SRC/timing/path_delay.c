@@ -1187,8 +1187,8 @@ static void alloc_and_load_tnodes(t_timing_inf timing_inf) {
 			ipb_graph_pin = local_rr_graph[irr_node].pb_graph_pin;
 
 			if (ipb_graph_pin->parent_node->pb_type->max_internal_delay
-					!= UNDEFINED) {
-				if (pb_max_internal_delay == UNDEFINED) {
+					!= VPR_UNDEFINED) {
+				if (pb_max_internal_delay == VPR_UNDEFINED) {
 					pb_max_internal_delay =
 							ipb_graph_pin->parent_node->pb_type->max_internal_delay;
 					pbtype_max_internal_delay =
@@ -3257,7 +3257,7 @@ t_linked_int * allocate_and_load_critical_path(void) {
 
 	t_linked_int *critical_path_head, *curr_crit_node, *prev_crit_node;
 	int inode, iedge, to_node, num_at_level_zero, i, j, crit_node = OPEN, num_edges;
-	int source_clock_domain = UNDEFINED, sink_clock_domain = UNDEFINED;
+	int source_clock_domain = VPR_UNDEFINED, sink_clock_domain = VPR_UNDEFINED;
 	float min_slack = HUGE_POSITIVE_FLOAT, slack;
 	t_tedge *tedge;
 
@@ -3793,9 +3793,9 @@ float get_critical_path_delay(void) {
 	corresponding to the pair of source and sink clock domains with the least slack in the design. */
 	
 	int source_clock_domain, sink_clock_domain;
-	float least_slack_in_design = HUGE_POSITIVE_FLOAT, critical_path_delay = UNDEFINED;
+	float least_slack_in_design = HUGE_POSITIVE_FLOAT, critical_path_delay = VPR_UNDEFINED;
 
-	if (!g_sdc) return UNDEFINED; /* If timing analysis is off, for instance. */
+	if (!g_sdc) return VPR_UNDEFINED; /* If timing analysis is off, for instance. */
 
 	for (source_clock_domain = 0; source_clock_domain < g_sdc->num_constrained_clocks; source_clock_domain++) {
 		for (sink_clock_domain = 0; sink_clock_domain < g_sdc->num_constrained_clocks; sink_clock_domain++) {
@@ -3817,7 +3817,7 @@ void print_timing_stats(void) {
 
 	int source_clock_domain, sink_clock_domain, clock_domain, fanout, total_fanout = 0, 
 		num_netlist_clocks_with_intra_domain_paths = 0;
-	float geomean_period = 1., least_slack_in_design = HUGE_POSITIVE_FLOAT, critical_path_delay = UNDEFINED;
+	float geomean_period = 1., least_slack_in_design = HUGE_POSITIVE_FLOAT, critical_path_delay = VPR_UNDEFINED;
 	double fanout_weighted_geomean_period = 1.;
 	boolean found;
 
@@ -3833,7 +3833,7 @@ void print_timing_stats(void) {
 		}
 	}
 
-	if (pb_max_internal_delay != UNDEFINED && pb_max_internal_delay > critical_path_delay) {
+	if (pb_max_internal_delay != VPR_UNDEFINED && pb_max_internal_delay > critical_path_delay) {
 		critical_path_delay = pb_max_internal_delay;
 		vpr_printf(TIO_MESSAGE_INFO, "Final critical path: %g ns\n", 1e9 * critical_path_delay);
 		vpr_printf(TIO_MESSAGE_INFO, "\t(capped by fmax of block type %s)\n", pbtype_max_internal_delay->name);

@@ -378,7 +378,7 @@ void vpr_init_pre_place_and_route(INP t_vpr_setup vpr_setup, INP t_arch Arch) {
 
 void vpr_pack(INP t_vpr_setup vpr_setup, INP t_arch arch) {
 	clock_t begin, end;
-	float inter_cluster_delay = UNDEFINED, Tdel_opin_switch, Tdel_wire_switch,
+	float inter_cluster_delay = VPR_UNDEFINED, Tdel_opin_switch, Tdel_wire_switch,
 			Tdel_wtoi_switch, R_opin_switch, R_wire_switch, R_wtoi_switch,
 			Cout_opin_switch, Cout_wire_switch, Cout_wtoi_switch,
 			opin_switch_del, wire_switch_del, wtoi_switch_del, Rmetal, Cmetal,

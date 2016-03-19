@@ -115,30 +115,31 @@ add_library(Vpr STATIC
 
 if (CMAKE_SYSTEM_NAME STREQUAL "Linux")
 	set(external_includes 
-		/home/chinhau5/Downloads/boost_1_59_0/
 		/usr/include/libxml2
 		/usr/local/include
+		/opt/intel/vtune_amplifier_xe/include/
+		/opt/intel/tbb/include/
+		/home/chinhau5/Downloads/boost_1_60_0/
 		/home/chinhau5/Downloads/tbb44_20151115oss/include
 		/home/chinhau5/Downloads/mlpack-1.0.12/build/include
 		/home/chinhau5/Downloads/armadillo-6.400.3/include
 		/home/chinhau5/Downloads/metis-5.1.0/include/
-		/opt/intel/vtune_amplifier_xe/include/
-		/opt/intel/tbb/include/
 		)
 else()
 	set(external_includes 
 		/usr/local/include
 		/opt/local/include
 		/opt/local/include/libxml2
+		/usr/local/Cellar/mpich/3.2/include
 		/Users/chinhau5/Downloads/tbb44_20151115oss/include
 		/Users/chinhau5/Downloads/mlpack-1.0.12/build/include
 		/Users/chinhau5/Downloads/armadillo-6.400.3/include
 		/Users/chinhau5/Downloads/metis-5.1.0/include/
 		)
-	set(pch_flags
-		-fasm-blocks
-		-fretain-comments-from-system-headers
-		)
+	#set(pch_flags
+		#-fasm-blocks
+		#-fretain-comments-from-system-headers
+		#)
 endif()
 
 target_include_directories(Vpr PUBLIC 

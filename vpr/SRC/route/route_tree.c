@@ -510,3 +510,54 @@ void route_tree_rip_up_marked(route_tree_t &rt, const RRGraph &g, congestion_t *
 	}
 }
 
+void route_tree_rip_up_marked_mpi(route_tree_t &rt, const RRGraph &g, const vector<int> &pid, int this_pid, congestion_mpi_t *congestion, MPI_Win win, float pres_fac)
+{
+	char buffer[256];
+	for (auto rt_node : route_tree_get_nodes(rt)) {
+		auto &rt_node_p = get_vertex_props(rt.graph, rt_node);
+
+		RRNode rr_node = rt_node_p.rr_node;
+		const auto &rr_node_p = get_vertex_props(g, rr_node);
+		sprintf_rr_node(rt_node_p.rr_node, buffer);
+
+		const auto &bp = rt.path_branch_point.find(rr_node);
+		if (bp != rt.path_branch_point.end()) {
+			rt.path_branch_point.erase(bp);
+		}
+
+		if (rt_node_p.pending_rip_up) {
+			zlog_level(delta_log, ROUTER_V2, "Ripping up node %s from route tree. Occ: %d Cap: %d\n", buffer, congestion[rt_node_p.rr_node].occ, rr_node_p.capacity);
+
+			if (rr_node_p.type == SOURCE) {
+				/*assert(rt_node.saved_num_out_edges > 0);*/
+				update_one_cost_internal_mpi(rr_node, g, pid, this_pid, congestion, win, -num_out_edges(rt.graph, rt_node), pres_fac); 
+			} else {
+				update_one_cost_internal_mpi(rr_node, g, pid, this_pid, congestion, win, -1, pres_fac); 
+			}
+			route_tree_remove_node(rt, rr_node, g);
+			rt_node_p.pending_rip_up = false;
+			rt_node_p.ripped_up = true;
+
+			const auto &edge = rt_node_p.rt_edge_to_parent;
+			if (valid(edge)) {
+				RRNode parent_rr_node = get_source(rt.graph, edge);
+				const auto &parent_rt_node_p = get_vertex_props(rt.graph, parent_rr_node);
+				const auto &parent_rr_node_p = get_vertex_props(g, parent_rt_node_p.rr_node);
+				/* since reconnection back to SOURCE always causes cost to be updated, we need to
+				 * update the cost when ripping up also.
+				 * if parent is pending rip up, cost will be updated that time. so dont handle it here */
+				if (parent_rr_node_p.type == SOURCE && !parent_rt_node_p.pending_rip_up && !parent_rt_node_p.ripped_up) {
+					update_one_cost_internal_mpi(parent_rr_node, g, pid, this_pid, congestion, win, -1, pres_fac); 
+				}
+
+				route_tree_remove_edge(rt, edge);
+
+				assert(!valid(edge));
+			} 
+		} else {
+			zlog_level(delta_log, ROUTER_V2, "NOT ripping up node %s from route tree\n", buffer);
+			/* invalid assertion because we might have ripped this up from another virtual net */
+			/*assert(rt_node_p.ripped_up == false);*/
+		}
+	}
+}

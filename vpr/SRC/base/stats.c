@@ -45,7 +45,7 @@ void routing_stats_new(boolean full_stats, enum e_route_type route_type,
 	for (i = 1; i <= nx; i++) {
 		for (j = 1; j <= ny; j++) {
 			if (grid[i][j].offset == 0) {
-				if (grid[i][j].type->area == UNDEFINED) {
+				if (grid[i][j].type->area == VPR_UNDEFINED) {
 					area += grid_logic_tile_area * grid[i][j].type->height;
 				} else {
 					area += grid[i][j].type->area;
@@ -59,7 +59,7 @@ void routing_stats_new(boolean full_stats, enum e_route_type route_type,
 	used_area = 0;
 	for (i = 0; i < num_blocks; i++) {
 		if (block[i].type != IO_TYPE) {
-			if (block[i].type->area == UNDEFINED) {
+			if (block[i].type->area == VPR_UNDEFINED) {
 				used_area += grid_logic_tile_area * block[i].type->height;
 			} else {
 				used_area += block[i].type->area;
@@ -124,7 +124,7 @@ void routing_stats(boolean full_stats, enum e_route_type route_type,
 	for (i = 1; i <= nx; i++) {
 		for (j = 1; j <= ny; j++) {
 			if (grid[i][j].offset == 0) {
-				if (grid[i][j].type->area == UNDEFINED) {
+				if (grid[i][j].type->area == VPR_UNDEFINED) {
 					area += grid_logic_tile_area * grid[i][j].type->height;
 				} else {
 					area += grid[i][j].type->area;
@@ -138,7 +138,7 @@ void routing_stats(boolean full_stats, enum e_route_type route_type,
 	used_area = 0;
 	for (i = 0; i < num_blocks; i++) {
 		if (block[i].type != IO_TYPE) {
-			if (block[i].type->area == UNDEFINED) {
+			if (block[i].type->area == VPR_UNDEFINED) {
 				used_area += grid_logic_tile_area * block[i].type->height;
 			} else {
 				used_area += block[i].type->area;

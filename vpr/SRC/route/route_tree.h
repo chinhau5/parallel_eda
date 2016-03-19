@@ -8,6 +8,7 @@
 #include "route.h"
 #include <boost/range/iterator_range.hpp>
 #include <boost/range/adaptor/filtered.hpp>
+#include <mpi.h>
 
 typedef struct rt_edge_property_t {
 	RREdge rr_edge;
@@ -145,6 +146,8 @@ bool route_tree_mark_congested_nodes_to_be_ripped(route_tree_t &rt, const RRGrap
 void route_tree_mark_all_nodes_to_be_ripped(route_tree_t &rt, const RRGraph &g);
 
 void route_tree_rip_up_marked(route_tree_t &rt, const RRGraph &g, congestion_t *congestion, float pres_fac, bool lock, lock_perf_t *lock_perf);
+
+void route_tree_rip_up_marked_mpi(route_tree_t &rt, const RRGraph &g, const vector<int> &pid, int this_pid, congestion_mpi_t *congestion, MPI_Win win, float pres_fac);
 
 //void route_tree_rip_up_segment(route_tree_t &rt, int sink_rr_node, RRGraph &g, float pres_fac);
 

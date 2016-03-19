@@ -19,7 +19,7 @@
 #define TOKENS " \t\n"
 
 /* Value for UNDEFINED data */
-#define UNDEFINED -1
+#define VPR_UNDEFINED -1
 
 /* Maximum value for mininum channel width to avoid overflows of short data type.               */
 #define MAX_CHANNEL_WIDTH 8000

@@ -148,7 +148,7 @@ static void print_open_pb_graph_node(t_pb_graph_node * pb_graph_node,
 	t_pb_graph_pin *pb_graph_pin;
 	int mode_of_edge, port_index, node_index;
 
-	mode_of_edge = UNDEFINED;
+	mode_of_edge = VPR_UNDEFINED;
 
 	pb_type = pb_graph_node->pb_type;
 
@@ -179,7 +179,7 @@ static void print_open_pb_graph_node(t_pb_graph_node * pb_graph_node,
 			}
 		}
 
-		assert(mode != NULL && mode_of_edge != UNDEFINED);
+		assert(mode != NULL && mode_of_edge != VPR_UNDEFINED);
 		fprintf(fpout,
 				"<block name=\"open\" instance=\"%s[%d]\" mode=\"%s\">\n",
 				pb_graph_node->pb_type->name, pb_index, mode->name);

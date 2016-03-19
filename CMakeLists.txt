@@ -2,15 +2,23 @@ cmake_minimum_required(VERSION 2.8)
 
 project(Router)
 
-link_directories(
-	/usr/X11/lib
-	/usr/local/lib
-	/opt/local/lib
-	~/Downloads/tbb44_20151115oss/build/macos_intel64_clang_cc5.2.0_os10.11.1_debug
-	~/Downloads/tbb44_20151115oss/build/macos_intel64_clang_cc5.2.0_os10.11.1_release
-	/Users/chinhau5/Downloads/mlpack-1.0.12/build/lib
-	/Users/chinhau5/Downloads/metis-5.1.0/build/Darwin-x86_64/libmetis/Debug
-	)
+if (CMAKE_SYSTEM_NAME STREQUAL "Linux")
+	link_directories(
+		/usr/local/lib
+		/usr/X11/lib
+		/home/chinhau5/Downloads/metis-5.1.0/build/Linux-x86_64/libmetis
+		)
+else()
+	link_directories(
+		/usr/local/lib
+		/opt/local/lib
+		/usr/local/Cellar/mpich/3.2/lib
+		/Users/chinhau5/Downloads/tbb44_20151115oss/build/macos_intel64_clang_cc5.2.0_os10.11.1_debug
+		/Users/chinhau5/Downloads/tbb44_20151115oss/build/macos_intel64_clang_cc5.2.0_os10.11.1_release
+		/Users/chinhau5/Downloads/mlpack-1.0.12/build/lib
+		/Users/chinhau5/Downloads/metis-5.1.0/build/Darwin-x86_64/libmetis/Debug
+		)
+endif()
 
 #set(CMAKE_SKIP_RPATH true)
 #-fprofile-arcs -ftest-coverage -fsanitize=address 
@@ -22,7 +30,7 @@ add_compile_options(
 	#-ferror-limit=0
 	-ftemplate-backtrace-limit=0
 	-std=c++14
-	-g -O0
+	-g -O3
 	#-Bdynamic
 	-Wall
 	#	-H
@@ -44,17 +52,22 @@ add_executable(Router vpr/SRC/main.c)
 if (CMAKE_SYSTEM_NAME STREQUAL "Linux")
 	set(link_libs
 		Vpr
+		X11
 		pthread
 		dl 
 		m
 		zlog
 		boost_timer
 		boost_system
-		tbb_debug
+		tbb
+		metis
 		)
 else()
 	set(link_libs
 		Vpr
+		mpicxx 
+		mpi 
+		pmpi
 		X11
 		pthread
 		dl 

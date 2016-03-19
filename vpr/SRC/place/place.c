@@ -324,7 +324,7 @@ void try_place(struct s_placer_opts placer_opts,
 	float t, success_rat, rlim, cost, timing_cost, bb_cost, new_bb_cost, new_timing_cost,
 		delay_cost, new_delay_cost, place_delay_value, inverse_prev_bb_cost, inverse_prev_timing_cost,
 		oldt, **old_region_occ_x, **old_region_occ_y, **net_delay = NULL, crit_exponent,
-		first_rlim, final_rlim, inverse_delta_rlim, critical_path_delay = UNDEFINED,
+		first_rlim, final_rlim, inverse_delta_rlim, critical_path_delay = VPR_UNDEFINED,
 		**remember_net_delay_original_ptr; /*used to free net_delay if it is re-assigned */
 	double av_cost, av_bb_cost, av_timing_cost, av_delay_cost, sum_of_squares, std_dev;
 	int total_swap_attempts;
