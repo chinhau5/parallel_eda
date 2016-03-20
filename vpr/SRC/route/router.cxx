@@ -243,9 +243,9 @@ float get_congestion_cost_mpi(RRNode rr_node, const RRGraph &g, const vector<int
 
 	if (from_pid != this_pid) {
 		congestion[rr_node].occ = std::numeric_limits<int>::min();
-		assert(MPI_Get(&congestion[rr_node], 1, get_occ_dt(),
+		assert(MPI_Get(&congestion[rr_node].occ, 1, get_occ_dt(),
 					from_pid,
-					rr_node, 1, get_occ_dt(),
+					get_occ_disp(rr_node), 1, get_occ_dt(),
 					win) == MPI_SUCCESS);
 		assert(MPI_Win_flush(from_pid, win) == MPI_SUCCESS);
 		assert(congestion[rr_node].occ != std::numeric_limits<int>::min());

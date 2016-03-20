@@ -6,6 +6,7 @@ if (CMAKE_SYSTEM_NAME STREQUAL "Linux")
 	link_directories(
 		/usr/local/lib
 		/usr/X11/lib
+		/opt/intel/tbb/lib/intel64/gcc4.4
 		/home/chinhau5/Downloads/metis-5.1.0/build/Linux-x86_64/libmetis
 		)
 else()
@@ -30,7 +31,7 @@ add_compile_options(
 	#-ferror-limit=0
 	-ftemplate-backtrace-limit=0
 	-std=c++14
-	-g -O3
+	-g -O0
 	#-Bdynamic
 	-Wall
 	#	-H

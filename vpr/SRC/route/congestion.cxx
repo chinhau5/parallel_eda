@@ -10,7 +10,12 @@ static MPI_Datatype acc_dt;
 
 MPI_Datatype get_occ_dt()
 {
-	return occ_dt;
+	return MPI_INT;
+}
+
+int get_occ_disp(RRNode rr_node)
+{
+	return sizeof(congestion_mpi_t)*rr_node + offsetof(congestion_mpi_t, occ);
 }
 
 void init_congestion_mpi_datatype()
@@ -19,19 +24,33 @@ void init_congestion_mpi_datatype()
 	MPI_Aint disp[] = { offsetof(congestion_mpi_t, occ), sizeof(congestion_mpi_t) };
 	MPI_Datatype dts[] = { MPI_INT, MPI_UB };
 
-	assert(MPI_Type_create_struct(2, bl, disp, dts, &occ_dt) == MPI_SUCCESS);
+	assert(MPI_Type_create_struct(1, bl, disp, dts, &occ_dt) == MPI_SUCCESS);
 	assert(MPI_Type_commit(&occ_dt) == MPI_SUCCESS);
 
 
 	disp[0] = offsetof(congestion_mpi_t, acc_cost);
 	dts[0] = MPI_FLOAT;
-	assert(MPI_Type_create_struct(2, bl, disp, dts, &acc_dt) == MPI_SUCCESS);
+	assert(MPI_Type_create_struct(1, bl, disp, dts, &acc_dt) == MPI_SUCCESS);
 	assert(MPI_Type_commit(&acc_dt) == MPI_SUCCESS);
 }
 
-void update_costs(const RRGraph &g, congestion_t *congestion, float pres_fac, float acc_fac)
+void update_costs_mpi(const RRGraph &g, vector<int> &pid, int this_pid, congestion_mpi_t *congestion, MPI_Win win, float pres_fac, float acc_fac)
 {
 	for (const auto &rr_node : get_vertices(g)) {
+		int rr_node_pid = pid[rr_node];
+		int from_pid = rr_node_pid == -1 ? 0 : rr_node_pid;
+		assert(MPI_Win_lock(MPI_LOCK_SHARED, from_pid, 0, win) == MPI_SUCCESS);
+
+		if (from_pid != this_pid) {
+			congestion[rr_node].occ = std::numeric_limits<int>::min();
+			assert(MPI_Get(&congestion[rr_node].occ, 1, get_occ_dt(),
+						from_pid,
+						get_occ_disp(rr_node), 1, get_occ_dt(),
+						win) == MPI_SUCCESS);
+			assert(MPI_Win_flush(from_pid, win) == MPI_SUCCESS);
+			assert(congestion[rr_node].occ != std::numeric_limits<int>::min());
+		}
+
 		int occ = congestion[rr_node].occ;
 		int capacity = get_vertex_props(g, rr_node).capacity;
 		if (occ > capacity) {
@@ -42,15 +61,17 @@ void update_costs(const RRGraph &g, congestion_t *congestion, float pres_fac, fl
 			 * in pres_fac could have made it necessary to recompute the cost anyway.  */
 			congestion[rr_node].pres_cost = 1. + pres_fac;
 		}
+
+		assert(MPI_Win_unlock(from_pid, win) == MPI_SUCCESS);
 	}
 }
 
-void update_costs_mpi(const RRGraph &g, vector<int> &pid, int this_pid, congestion_mpi_t *congestion, MPI_Win win, float pres_fac, float acc_fac)
+void update_costs_mpi_old(const RRGraph &g, vector<int> &pid, int this_pid, congestion_mpi_t *congestion, MPI_Win win, float pres_fac, float acc_fac)
 {
 	for (const auto &rr_node : get_vertices(g)) {
 		int rr_node_pid = pid[rr_node];
 		int from_pid = rr_node_pid == -1 ? 0 : rr_node_pid;
-		assert(MPI_Win_lock(MPI_LOCK_SHARED, from_pid, 0, win) == MPI_SUCCESS);
+		assert(MPI_Win_lock(MPI_LOCK_EXCLUSIVE, from_pid, 0, win) == MPI_SUCCESS);
 
 		if (from_pid != this_pid) {
 			congestion[rr_node].occ = std::numeric_limits<int>::min();
@@ -91,6 +112,42 @@ void update_one_cost_internal_mpi(RRNode rr_node, const RRGraph &g, const vector
 	int from_pid = rr_node_pid == -1 ? 0 : rr_node_pid;
 
 	assert(MPI_Win_lock(MPI_LOCK_SHARED, from_pid, 0, win) == MPI_SUCCESS);
+
+	congestion_mpi_t acc;
+	acc.occ = delta;
+
+	if (from_pid != this_pid) {
+		congestion[rr_node].occ = std::numeric_limits<int>::min();
+		assert(MPI_Fetch_and_op(&acc.occ, &congestion[rr_node].occ, get_occ_dt(), from_pid, get_occ_disp(rr_node), MPI_SUM, win) == MPI_SUCCESS);
+		assert(congestion[rr_node].occ != std::numeric_limits<int>::min());
+	} 
+
+	congestion[rr_node].occ += delta;
+
+	assert(congestion[rr_node].occ >= 0);
+
+	const auto &rr_node_p = get_vertex_props(g, rr_node);
+
+	if (congestion[rr_node].occ < rr_node_p.capacity) {
+		congestion[rr_node].pres_cost = 1;
+	} else {
+		congestion[rr_node].pres_cost = 1 + (congestion[rr_node].occ + 1 - rr_node_p.capacity) * pres_fac;
+	}
+
+	char buffer[256];
+	sprintf_rr_node(rr_node, buffer);
+	zlog_level(delta_log, ROUTER_V2, "Update cost of %s delta: %d new_occ: %d pres_fac: %g\n", buffer, delta, congestion[rr_node].occ, pres_fac);
+
+	assert(MPI_Win_unlock(from_pid, win) == MPI_SUCCESS);
+}
+
+void update_one_cost_internal_mpi_old(RRNode rr_node, const RRGraph &g, const vector<int> &pid, int this_pid, congestion_mpi_t *congestion, MPI_Win win, /*int net_id, */int delta, float pres_fac)
+{
+	int rr_node_pid = pid[rr_node];
+
+	int from_pid = rr_node_pid == -1 ? 0 : rr_node_pid;
+
+	assert(MPI_Win_lock(MPI_LOCK_EXCLUSIVE, from_pid, 0, win) == MPI_SUCCESS);
 
 	if (from_pid != this_pid) {
 		congestion[rr_node].occ = std::numeric_limits<int>::min();
