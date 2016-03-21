@@ -8,6 +8,11 @@
 static MPI_Datatype occ_dt;
 static MPI_Datatype acc_dt; 
 
+MPI_Datatype get_real_occ_dt()
+{
+	return occ_dt;
+}
+
 MPI_Datatype get_occ_dt()
 {
 	return MPI_INT;

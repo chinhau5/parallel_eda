@@ -9,6 +9,7 @@
 #include "trace.h"
 #include "router.h"
 #include "filtered_graph.h"
+#include "log.h"
 
 bool operator<(const sink_t &a, const sink_t &b)
 {
