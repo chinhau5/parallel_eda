@@ -46,6 +46,7 @@ void recalculate_occ(const route_tree_t &rt, const RRGraph &g, Congestion *conge
 }
 
 void check_route_tree(const route_tree_t &rt, const net_t &net, RRGraph &g);
+void check_route_tree(const route_tree_t &rt, const net_t &net, const vector<sink_t *> &routed_sinks, RRGraph &g);
 
 template<typename Congestion>
 void get_overused_nodes(const route_tree_t &rt, RouteTreeNode rt_node, const RRGraph &g, const Congestion *congestion, vector<int> &overused_rr_node)
@@ -94,5 +95,7 @@ void route_net_3(const RRGraph &g, const vector<int> &pid, int this_pid, int vpr
 void route_net_4(const RRGraph &g, const vector<int> &pid, int this_pid, int vpr_id, const source_t *source, const vector<sink_t *> &sinks, const route_parameters_t &params, route_state_t *state, congestion_t *congestion, route_tree_t &rt, t_net_timing &net_timing, vector<interpartition_sink_t> &interpartition_sinks, bool lock, perf_t *perf, lock_perf_t *lock_perf);
 
 void route_net_mpi(const RRGraph &g, const vector<int> &pid, int this_pid, MPI_Win win, int vpr_id, const source_t *source, const vector<sink_t *> &sinks, const route_parameters_t &params, route_state_t *state, congestion_mpi_t *congestion, route_tree_t &rt, t_net_timing &net_timing, vector<interpartition_sink_t> &interpartition_sinks, perf_t *perf);
+
+void route_net_5(const RRGraph &g, const vector<int> &pid, int this_pid, int vpr_id, const source_t *source, const vector<sink_t *> &sinks, const route_parameters_t &params, route_state_t *state, congestion_mpi_t *congestion, route_tree_t &rt, t_net_timing &net_timing, vector<sink_t *> &routed_sinks, vector<sink_t *> &unrouted_sinks, perf_t *perf);
 
 #endif

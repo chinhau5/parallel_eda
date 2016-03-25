@@ -110,13 +110,48 @@ void update_costs_mpi_old(const RRGraph &g, vector<int> &pid, int this_pid, cong
 	}
 }
 
+void update_one_cost_internal_mpi_new(RRNode rr_node, const RRGraph &g, const vector<int> &pid, int this_pid, int num_procs, congestion_mpi_t *congestion, int delta, float pres_fac)
+{
+	int rr_node_pid = pid[rr_node];
+
+	int from_pid = rr_node_pid == -1 ? 0 : rr_node_pid;
+
+	congestion_mpi_t acc;
+	acc.occ = delta;
+
+	congestion[rr_node].occ += delta;
+
+	assert(congestion[rr_node].occ >= 0);
+
+	const auto &rr_node_p = get_vertex_props(g, rr_node);
+
+	if (congestion[rr_node].occ < rr_node_p.capacity) {
+		congestion[rr_node].pres_cost = 1;
+	} else {
+		congestion[rr_node].pres_cost = 1 + (congestion[rr_node].occ + 1 - rr_node_p.capacity) * pres_fac;
+	}
+
+	for (int i = 0; i < num_procs; ++i) {
+		if (i != this_pid) {
+			MPI_Request req;
+			assert(MPI_Isend(&delta, 1, MPI_INT, i, rr_node, MPI_COMM_WORLD, &req)
+					== MPI_SUCCESS);
+		}
+	}
+
+	char buffer[256];
+	sprintf_rr_node(rr_node, buffer);
+	zlog_error(delta_log, "Update cost of %s delta: %d new_occ: %d pres_fac: %g\n", buffer, delta, congestion[rr_node].occ, pres_fac);
+	//zlog_level(delta_log, ROUTER_V2, "Update cost of %s delta: %d new_occ: %d pres_fac: %g\n", buffer, delta, congestion[rr_node].occ, pres_fac);
+}
+
 void update_one_cost_internal_mpi(RRNode rr_node, const RRGraph &g, const vector<int> &pid, int this_pid, congestion_mpi_t *congestion, MPI_Win win, /*int net_id, */int delta, float pres_fac)
 {
 	int rr_node_pid = pid[rr_node];
 
 	int from_pid = rr_node_pid == -1 ? 0 : rr_node_pid;
 
-	assert(MPI_Win_lock(MPI_LOCK_SHARED, from_pid, 0, win) == MPI_SUCCESS);
+	assert(MPI_Win_lock(MPI_LOCK_EXCLUSIVE, from_pid, 0, win) == MPI_SUCCESS);
 
 	congestion_mpi_t acc;
 	acc.occ = delta;
@@ -124,6 +159,7 @@ void update_one_cost_internal_mpi(RRNode rr_node, const RRGraph &g, const vector
 	if (from_pid != this_pid) {
 		congestion[rr_node].occ = std::numeric_limits<int>::min();
 		assert(MPI_Fetch_and_op(&acc.occ, &congestion[rr_node].occ, get_occ_dt(), from_pid, get_occ_disp(rr_node), MPI_SUM, win) == MPI_SUCCESS);
+		assert(MPI_Win_flush(from_pid, win) == MPI_SUCCESS);
 		assert(congestion[rr_node].occ != std::numeric_limits<int>::min());
 	} 
 
@@ -141,7 +177,8 @@ void update_one_cost_internal_mpi(RRNode rr_node, const RRGraph &g, const vector
 
 	char buffer[256];
 	sprintf_rr_node(rr_node, buffer);
-	zlog_level(delta_log, ROUTER_V2, "Update cost of %s delta: %d new_occ: %d pres_fac: %g\n", buffer, delta, congestion[rr_node].occ, pres_fac);
+	zlog_error(delta_log, "Update cost of %s delta: %d new_occ: %d pres_fac: %g\n", buffer, delta, congestion[rr_node].occ, pres_fac);
+	//zlog_level(delta_log, ROUTER_V2, "Update cost of %s delta: %d new_occ: %d pres_fac: %g\n", buffer, delta, congestion[rr_node].occ, pres_fac);
 
 	assert(MPI_Win_unlock(from_pid, win) == MPI_SUCCESS);
 }
@@ -264,6 +301,39 @@ void update_one_cost(const RRGraph &g, congestion_t *congestion, const vector<RR
 		/*RRNode &rr_node = get_vertex(g, rt_node.rr_node);*/
 		const auto &rr_node_p = get_vertex_props(g, *iter);
 		update_one_cost_internal(*iter, rr_node_p, congestion[*iter], /*net_id,*/ delta, pres_fac, lock, lock_perf);
+	}
+	/*RRNode &rr_node = get_vertex(g, last->rr_node);*/
+	/*update_one_cost_internal(rr_node, delta, pres_fac);*/
+}
+
+void update_one_cost_internal(RRNode rr_node, const RRGraph &g, congestion_mpi_t *congestion, /*int net_id, */int delta, float pres_fac)
+{
+	congestion[rr_node].occ += delta;
+
+	assert(congestion[rr_node].occ >= 0);
+
+	const auto &rr_node_p = get_vertex_props(g, rr_node);
+
+	if (congestion[rr_node].occ < rr_node_p.capacity) {
+		congestion[rr_node].pres_cost = 1;
+	} else {
+		congestion[rr_node].pres_cost = 1 + (congestion[rr_node].occ + 1 - rr_node_p.capacity) * pres_fac;
+	}
+
+	char buffer[256];
+	sprintf_rr_node(rr_node, buffer);
+	zlog_level(delta_log, ROUTER_V2, "Update cost of %s delta: %d new_occ: %d pres_fac: %g\n", buffer, delta, congestion[rr_node].occ, pres_fac);
+}
+
+void update_one_cost(const RRGraph &g, congestion_mpi_t *congestion, const vector<RRNode>::const_iterator &rr_nodes_begin, const vector<RRNode>::const_iterator &rr_nodes_end, int delta, float pres_fac)
+{
+	/*const RouteTreeNode *last = nullptr;*/
+	for (auto iter = rr_nodes_begin; iter != rr_nodes_end; ++iter) {
+		/* we don't update get_source because that's the link to existing route tree and the cost is handled by update_one_cost_internal */
+		/*const RouteTreeNode &rt_node = get_target(rt.graph, get_edge(rt.graph, rt_edge_id));*/
+		/*last = &get_target(rt.graph, get_edge(rt.graph, rt_edge_id));*/
+		/*RRNode &rr_node = get_vertex(g, rt_node.rr_node);*/
+		update_one_cost_internal(*iter, g, congestion, /*net_id,*/ delta, pres_fac);
 	}
 	/*RRNode &rr_node = get_vertex(g, last->rr_node);*/
 	/*update_one_cost_internal(rr_node, delta, pres_fac);*/

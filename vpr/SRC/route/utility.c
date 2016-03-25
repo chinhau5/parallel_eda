@@ -1,5 +1,4 @@
 #include <assert.h>
-#include "utility.h"
 #include "vpr_types.h"
 
 static const char *rr_types[] =  {
@@ -8,7 +7,7 @@ static const char *rr_types[] =  {
 
 /*#define PRINT_RR_NODE*/
 
-#ifdef PRINT_RR_NODE
+/*#ifdef PRINT_RR_NODE*/
 
 void sprintf_rr_node(int inode, char *buffer)
 {
@@ -40,4 +39,4 @@ void sprintf_rr_node(int inode, char *buffer)
 	/*}*/
 }
 
-#endif
+/*#endif*/

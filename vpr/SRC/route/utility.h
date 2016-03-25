@@ -1,15 +1,15 @@
 #ifndef UTILITY_H
 #define UTILITY_H
 
-#define PRINT_RR_NODE
-
-#ifdef PRINT_RR_NODE
-
 void sprintf_rr_node(int inode, char *buffer);
 
-#else
+#define PRINT_RR_NODE
+
+#ifndef PRINT_RR_NODE
 
 #define sprintf_rr_node(...)
+
+#else
 
 #endif
 

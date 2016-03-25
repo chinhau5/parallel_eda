@@ -31,7 +31,7 @@ add_compile_options(
 	#-ferror-limit=0
 	-ftemplate-backtrace-limit=0
 	-std=c++14
-	-g -O3
+	-g -O0
 	#-Bdynamic
 	-Wall
 	#	-H
@@ -62,6 +62,7 @@ if (CMAKE_SYSTEM_NAME STREQUAL "Linux")
 		boost_system
 		tbb
 		metis
+		#-Wl,--eh-frame-hdr
 		)
 else()
 	set(link_libs

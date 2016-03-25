@@ -172,6 +172,13 @@ typedef struct path_node_t {
 	bool update_cost;
 } path_node_t;
 
+typedef struct path_node_send_t {
+	int rr_node_id;
+	int parent_rr_node;
+	float delay;
+	float upstream_R;
+} path_node_send_t;
+
 typedef struct boundary_node_t {
 	RRNode rr_node;
 	vector<path_node_t> path;
