@@ -7,7 +7,7 @@ void update_one_cost(const RRGraph &g, congestion_t *congestion, const vector<RR
 
 void update_one_cost(const RRGraph &g, congestion_mpi_t *congestion, const vector<RRNode>::const_iterator &rr_nodes_begin, const vector<RRNode>::const_iterator &rr_nodes_end, int delta, float pres_fac);
 
-void update_one_cost_internal(RRNode rr_node, const rr_node_property_t &rr_node_p, congestion_t &congestion, /*int net_id, */int delta, float pres_fac, bool lock, lock_perf_t *lock_perf);
+void update_one_cost_internal(RRNode rr_node, const RRGraph &g, congestion_t *congestion, /*int net_id, */int delta, float pres_fac, bool lock, lock_perf_t *lock_perf);
 
 void update_one_cost_internal(RRNode rr_node, const RRGraph &g, congestion_mpi_t *congestion, /*int net_id, */int delta, float pres_fac);
 

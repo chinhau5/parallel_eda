@@ -71,7 +71,7 @@ set(srcs
 	#SRC/route/fine_grained_parallel_route_timing_2.c
 	#SRC/route/test.c
 	#SRC/route/partition.cxx
-	#SRC/route/fine.cxx
+	SRC/route/fine.cxx
 	#SRC/route/phased.cxx
 	SRC/route/congestion.cxx
 	SRC/route/router.cxx

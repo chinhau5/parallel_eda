@@ -1170,6 +1170,7 @@ class rr_graph_partitioner {
 		vector<int> result_pid;
         vector<vector<int>> result_pid_by_level;
 		vector<vector<RRNode>> sink_in_nodes;
+		vector<vector<RRNode>> ipin_in_nodes;
 
 	private:
 		vector<vector<vector<int>>> num_starting_tracks; // [type][x][y]
@@ -1208,7 +1209,7 @@ class rr_graph_partitioner {
 
 			//dump_rr_graph(channel_with_interior_g, "/Volumes/DATA/rr_graph_channel_with_interior.txt");
 
-			init_graph(orig_g, sink_in_nodes);
+			init_graph(orig_g, sink_in_nodes, ipin_in_nodes);
 
 			dump_rr_graph(orig_g, "/Volumes/DATA/rr_graph.txt");
 
@@ -1958,7 +1959,7 @@ class rr_graph_partitioner {
 				assert(num_levels == 1);
 				for (const auto &v : get_vertices(orig_g)) {
 					const auto &props = get_vertex_props(orig_g, v);
-					if (props.type == CHANX || props.type == CHANY) {
+					if (props.type == CHANX || props.type == CHANY || props.type == IPIN) {
 						result_pid[v] = 0;
 					} else {
 						assert(result_pid[v] == -1);
@@ -1972,6 +1973,56 @@ class rr_graph_partitioner {
 						make_subgraph(undirected_orig_g.base_graph(), partition_vertex_predicate_t<typename decltype(undirected_orig_g)::base>(undirected_orig_g.base_graph(), pid, 0)), num_levels-2, 0);
 			}
 
+			int num_ipins_partitioned = 0;
+			for (int level = 0; level < result_pid_by_level.size(); ++level) {
+				int cur_num_partitions = pow(2, result_pid_by_level.size()-level-1);
+
+				vector<vector<int>> sink_partition_connect_count(num_vertices(orig_g), vector<int>(cur_num_partitions, 0));
+
+				for (const auto &v : get_vertices(orig_g)) {
+					const auto &rr_node_p = get_vertex_props(orig_g, v);
+
+					if (rr_node_p.type == IPIN) {
+						assert(num_out_edges(orig_g, v) == 1);
+
+						const auto &e = *begin(get_out_edges(orig_g, v));
+
+						const auto &sink_rr_node = get_target(orig_g, e);
+
+						assert(get_vertex_props(orig_g, sink_rr_node).type == SINK);
+
+						if (!ipin_in_nodes[v].empty()) {
+							int min_partition = -1;
+							int min_count = std::numeric_limits<int>::max();
+							vector<int> num_in_nodes_per_partition(cur_num_partitions, 0);
+							for (const auto &in_node : ipin_in_nodes[v]) {
+								const auto &in_node_p = get_vertex_props(orig_g, in_node);
+
+								assert(in_node_p.type == CHANX || in_node_p.type == CHANY);
+
+								int part = result_pid_by_level[level][in_node];
+
+								assert(part >= 0 && part < cur_num_partitions);
+
+								++num_in_nodes_per_partition[part];
+
+								if (sink_partition_connect_count[sink_rr_node][part] < min_count) {
+									min_partition = part;
+									min_count = sink_partition_connect_count[sink_rr_node][part];
+								}
+							}
+							assert(min_partition != -1);
+
+							sink_partition_connect_count[sink_rr_node][min_partition] += num_in_nodes_per_partition[min_partition];
+							assert(result_pid_by_level[level][v] == -1);
+							result_pid_by_level[level][v] = min_partition;
+
+							++num_ipins_partitioned;
+						}
+					}
+				}
+			}
+
 			for (int level = 0; level < result_pid_by_level.size(); ++level) {
 				int max_pid = 0;
 				for (int i = 0; i < result_pid_by_level[level].size(); ++i) {
@@ -1981,8 +2032,13 @@ class rr_graph_partitioner {
 				vector<int> num_nodes(max_pid+1, 0);
 				for (const auto &v : get_vertices(orig_g)) {
 					const auto &props = get_vertex_props(orig_g, v);
-					if (props.type == CHANX || props.type == CHANY) {
-						++num_nodes[result_pid_by_level[level][v]];
+					if (props.type == CHANX || props.type == CHANY || props.type == IPIN) {
+						int part = result_pid_by_level[level][v];
+						if (part == -1) {
+							assert(props.type == IPIN);
+						} else {
+							++num_nodes[part];
+						}
 					} else {
 						assert(result_pid_by_level[level][v] == -1);
 					}
@@ -1992,16 +2048,23 @@ class rr_graph_partitioner {
 				}
 			}
 
-			int num_nodes_partitioned = 0;
-			vector<int> num_nodes_in_partition(num_partitions, 0);
-			for (const auto &p : result_pid) {
-				if (p != -1) {
-					assert(p >= 0 && p < num_partitions);
-					++num_nodes_in_partition[p];
-					++num_nodes_partitioned;
-				}
-			}
-			assert(num_nodes_partitioned == total_num_chans);
+			//int num_nodes_partitioned = 0;
+			//vector<int> num_nodes_in_partition(num_partitions, 0);
+			//for (const auto &p : result_pid) {
+				//if (p != -1) {
+					//assert(p >= 0 && p < num_partitions);
+					//++num_nodes_in_partition[p];
+					//++num_nodes_partitioned;
+				//}
+			//}
+			//int num_ipins = 0;
+			//for (const auto &v : get_vertices(orig_g)) {
+				//const auto &props = get_vertex_props(orig_g, v);
+				//if (props.type == IPIN) {
+					//++num_ipins;
+				//}
+			//}
+			//assert(num_nodes_partitioned == total_num_chans + num_ipins_partitioned);
 
 			//for (int i = 0; i < num_partitions; ++i) {
 				//printf("Num nodes in partition %d = %d\n", i, num_nodes_in_partition[i]);
@@ -3304,8 +3367,6 @@ void init_partitioned_graph(int num_partitions, RRGraph &g, vector<RRGraph *> &g
 	////}
 }
 
-#define LOG_PATH_PREFIX "/Volumes/DATA/"
-
 vector<vector<FILE *>> delta_log_files;
 vector<vector<FILE *>> missing_edge_log_files;
 FILE *ss_log_file = nullptr;
@@ -3321,27 +3382,6 @@ static void log_impl(zlog_msg_t *msg, FILE *&file)
 			perror(nullptr);
 			assert(false);
 		}
-	}
-	fprintf(file, "%s", msg->buf);
-	fflush(file);
-}
-
-static void concurrent_log_impl(zlog_msg_t *msg, vector<vector<FILE *>> &log_files, int iter, int tid)
-{
-	assert(iter >= 0 && iter < log_files.size());
-	assert(tid >= 0 && tid < log_files[iter].size());
-	FILE *file = log_files[iter][tid];
-	if (!file) {
-		char filename[256];
-		sprintf(filename, "%s%s", LOG_PATH_PREFIX, msg->path);
-
-		file = fopen(filename, "w");
-		if (!file) {
-			perror(nullptr);
-			assert(false);
-		}
-
-		log_files[iter][tid] = file;
 	}
 	fprintf(file, "%s", msg->buf);
 	fflush(file);
@@ -4164,6 +4204,7 @@ bool mpi_spatial_route_new(t_router_opts *opts, struct s_det_routing_arch det_ro
 
     vector<net_t> nets;
     vector<net_t> global_nets;
+    //init_nets(nets, global_nets, opts->bb_factor, partitioner.sink_in_nodes);	
     init_nets(nets, global_nets, opts->bb_factor);	
 
     vector<net_t *> nets_ptr(nets.size());
@@ -4317,7 +4358,9 @@ bool mpi_spatial_route_new(t_router_opts *opts, struct s_det_routing_arch det_ro
 				if (!sinks.empty()) {
 					int previous_num_unroutable_sinks = unroutable_sinks[net->local_id].size();
 
-					route_net_5(partitioner.orig_g, partitioner.result_pid_by_level[current_level], procid, net->vpr_id, &net->source, sinks, params, states, congestion, route_trees[net->local_id], net_timing[net->vpr_id], routed_sinks[net->local_id], unroutable_sinks[net->local_id], &perfs[procid]);
+					int previous_num_routed_sinks = routed_sinks[net->local_id].size();
+
+					route_net_lockless(partitioner.orig_g, partitioner.result_pid_by_level[current_level], procid, net->vpr_id, &net->source, sinks, params, states, congestion, route_trees[net->local_id], net_timing[net->vpr_id], routed_sinks[net->local_id], unroutable_sinks[net->local_id], &perfs[procid]);
 
 					assert(routed_sinks[net->local_id].size() + unroutable_sinks[net->local_id].size() == net->sinks.size());
 
@@ -4333,7 +4376,7 @@ bool mpi_spatial_route_new(t_router_opts *opts, struct s_det_routing_arch det_ro
 					++thread_num_nets_to_route[procid];
 
 					thread_num_sinks_to_route[procid] += sinks.size();
-					thread_num_sinks_routed[procid] += sinks.size()-unroutable_sinks[net->local_id].size();
+					thread_num_sinks_routed[procid] += routed_sinks[net->local_id].size() - previous_num_routed_sinks;
 				} else {
 					assert(routed_sinks[net->local_id].size() + unroutable_sinks[net->local_id].size() == net->sinks.size());
 					zlog_level(delta_log, ROUTER_V2, "Net %d has no sinks in the current iteration because there are %lu/%lu non-routable/all sinks\n", net->vpr_id, unroutable_sinks[net->local_id].size(), net->sinks.size());
@@ -4372,6 +4415,7 @@ bool mpi_spatial_route_new(t_router_opts *opts, struct s_det_routing_arch det_ro
 
         iter_time = clock::now()-iter_start;
 
+
 		int total_num_sinks_to_route;
 		if (procid == 0) {
 			int total_num_nets_to_route = thread_num_nets_to_route[0];
@@ -4406,11 +4450,53 @@ bool mpi_spatial_route_new(t_router_opts *opts, struct s_det_routing_arch det_ro
 
 			printf("Total num nets routed: %d/%d (%g)\n", total_num_nets_routed, total_num_nets_to_route, total_num_nets_routed*100.0/total_num_nets_to_route);
 			printf("Total num sinks routed: %d/%d (%g)\n", total_num_sinks_routed, total_num_sinks_to_route, (total_num_sinks_routed)*100.0/total_num_sinks_to_route);
+
+			for (int i = 1; i < num_procs; ++i) {
+				MPI_Recv(&perfs[i].num_heap_pushes, 1, MPI_INT, i, i, cur_comm, MPI_STATUS_IGNORE);
+				MPI_Recv(&perfs[i].num_heap_pops, 1, MPI_INT, i, i, cur_comm, MPI_STATUS_IGNORE);
+				MPI_Recv(&perfs[i].num_neighbor_visits, 1, MPI_INT, i, i, cur_comm, MPI_STATUS_IGNORE);
+			}
+
+			printf("num_heap_pushes: ");
+			for (int i = 0; i < num_procs; ++i) {
+				printf("%lu ", perfs[i].num_heap_pushes);
+			}
+			printf("\n");
+
+			printf("num_heap_pops: ");
+			for (int i = 0; i < num_procs; ++i) {
+				printf("%lu ", perfs[i].num_heap_pops);
+			}
+			printf("\n");
+
+			printf("num_neighbor_visits: ");
+			for (int i = 0; i < num_procs; ++i) {
+				printf("%lu ", perfs[i].num_neighbor_visits);
+			}
+			printf("\n");
+
+			unsigned long total_num_heap_pushes = 0;
+			unsigned long total_num_heap_pops = 0;
+			unsigned long total_num_neighbor_visits = 0;
+
+			for (int i = 0; i < num_procs; ++i) {
+				total_num_heap_pushes += perfs[i].num_heap_pushes;
+				total_num_heap_pops += perfs[i].num_heap_pops;
+				total_num_neighbor_visits += perfs[i].num_neighbor_visits;
+			}
+
+			printf("total_num_heap_pushes: %lu\n", total_num_heap_pushes);
+			printf("total_num_heap_pops: %lu\n", total_num_heap_pops); 
+			printf("total_num_neighbor_visits: %lu\n", total_num_neighbor_visits);
 		} else {
 			MPI_Send(&thread_num_nets_to_route[procid], 1, MPI_INT, 0, procid, cur_comm);
 			MPI_Send(&thread_num_nets_routed[procid], 1, MPI_INT, 0, procid, cur_comm);
 			MPI_Send(&thread_num_sinks_to_route[procid], 1, MPI_INT, 0, procid, cur_comm);
 			MPI_Send(&thread_num_sinks_routed[procid], 1, MPI_INT, 0, procid, cur_comm);
+
+			MPI_Send(&perfs[procid].num_heap_pushes, 1, MPI_INT, 0, procid, cur_comm);
+			MPI_Send(&perfs[procid].num_heap_pops, 1, MPI_INT, 0, procid, cur_comm);
+			MPI_Send(&perfs[procid].num_neighbor_visits, 1, MPI_INT, 0, procid, cur_comm);
 		}
 
 		/* checking */
@@ -4591,15 +4677,44 @@ bool mpi_spatial_route_new(t_router_opts *opts, struct s_det_routing_arch det_ro
                     ++num_overused_nodes;
                 }
             }
-            zlog_info(delta_log, "Num overused nodes: %lu/%d (%.2f)\n", num_overused_nodes, num_vertices(partitioner.orig_g), num_overused_nodes*100.0/num_vertices(partitioner.orig_g));
-			printf("Num overused nodes: %lu/%d (%.2f)\n", num_overused_nodes, num_vertices(partitioner.orig_g), num_overused_nodes*100.0/num_vertices(partitioner.orig_g));
 
 			static const char *name_type[] = { "SOURCE", "SINK", "IPIN", "OPIN",
 				"CHANX", "CHANY", "INTRA_CLUSTER_EDGE" };
+            zlog_info(delta_log, "Num overused nodes: %lu/%d (%.2f)\n", num_overused_nodes, num_vertices(partitioner.orig_g), num_overused_nodes*100.0/num_vertices(partitioner.orig_g));
 			for (int i = 0; i < overused_nodes_by_type.size(); ++i) {
 				zlog_info(delta_log, "\t%s: %d (%g)\n", name_type[i], overused_nodes_by_type[i], overused_nodes_by_type[i]*100.0/num_overused_nodes);
-				printf("\t%s: %d (%g)\n", name_type[i], overused_nodes_by_type[i], overused_nodes_by_type[i]*100.0/num_overused_nodes);
 			}
+
+			int *all_overused_nodes_by_type = new int[num_procs*NUM_RR_TYPES];
+			int *overused_nodes_by_type_send = new int[NUM_RR_TYPES];
+			for (int i = 0; i < overused_nodes_by_type.size(); ++i) {
+				overused_nodes_by_type_send[i] = overused_nodes_by_type[i];
+			}
+
+			MPI_Gather(overused_nodes_by_type_send, NUM_RR_TYPES, MPI_INT, all_overused_nodes_by_type, NUM_RR_TYPES, MPI_INT, 0, cur_comm);
+
+			unsigned long *all_num_overused_nodes = new unsigned long[num_procs];
+			MPI_Gather(&num_overused_nodes, 1, MPI_UNSIGNED_LONG, all_num_overused_nodes, 1, MPI_UNSIGNED_LONG, 0, cur_comm);
+
+			if (procid == 0) {
+				printf("Num overused nodes: ");
+				for (int i = 0; i < num_procs; ++i) {
+					printf("%lu/%d (%.2f) ", all_num_overused_nodes[i], num_vertices(partitioner.orig_g), all_num_overused_nodes[i]*100.0/num_vertices(partitioner.orig_g));
+				}
+				printf("\n");
+
+				for (int i = 0; i < overused_nodes_by_type.size(); ++i) {
+					printf("\t%s: ", name_type[i]);
+					for (int j = 0; j < num_procs; ++j) {
+						printf("%d (%g) ", all_overused_nodes_by_type[j*NUM_RR_TYPES+i], all_overused_nodes_by_type[j*NUM_RR_TYPES+i]*100.0/all_num_overused_nodes[j]);
+					}
+					printf("\n");
+				}
+			} 
+
+			delete [] all_overused_nodes_by_type;
+			delete [] overused_nodes_by_type_send;
+			delete [] all_num_overused_nodes;
 
 			int not_decreasing = (num_overused_nodes > prev_num_overused_nodes && iter > 10) ? 1 : 0;
 			//int not_decreasing = current_level+1 < partitioner.result_pid_by_level.size(); [> testing <]
@@ -4654,7 +4769,7 @@ bool mpi_spatial_route_new(t_router_opts *opts, struct s_det_routing_arch det_ro
 
 				assert(current_level < partitioner.result_pid_by_level.size());
 
-				printf("Transitioned to level %d at iteration %d\n", current_level, iter);
+				printf("[%d] Transitioned to level %d at iteration %d\n", procid, current_level, iter);
 				zlog_level(delta_log, ROUTER_V1, "Transitioned to level %d at iteration %d\n", current_level, iter);
 				zlog_level(delta_log, ROUTER_V1, "New pid %d for initial pid %d\n", procid, initial_procid);
 
@@ -4745,38 +4860,6 @@ bool mpi_spatial_route_new(t_router_opts *opts, struct s_det_routing_arch det_ro
 			printf("\tUpdate cost time: %g s.\n", duration_cast<nanoseconds>(update_cost_time).count() / 1e9);
 			printf("\tAnalyze timing time: %g s.\n", duration_cast<nanoseconds>(analyze_timing_time).count() / 1e9);
 			printf("Critical path: %g ns\n", crit_path_delay);
-
-			printf("num_heap_pushes: ");
-			for (int i = 0; i < num_procs; ++i) {
-				printf("%lu ", perfs[i].num_heap_pushes);
-			}
-			printf("\n");
-
-			printf("num_heap_pops: ");
-			for (int i = 0; i < num_procs; ++i) {
-				printf("%lu ", perfs[i].num_heap_pops);
-			}
-			printf("\n");
-
-			printf("num_neighbor_visits: ");
-			for (int i = 0; i < num_procs; ++i) {
-				printf("%lu ", perfs[i].num_neighbor_visits);
-			}
-			printf("\n");
-
-			unsigned long total_num_heap_pushes = 0;
-			unsigned long total_num_heap_pops = 0;
-			unsigned long total_num_neighbor_visits = 0;
-
-			for (int i = 0; i < num_procs; ++i) {
-				total_num_heap_pushes += perfs[i].num_heap_pushes;
-				total_num_heap_pops += perfs[i].num_heap_pops;
-				total_num_neighbor_visits += perfs[i].num_neighbor_visits;
-			}
-
-			printf("total_num_heap_pushes: %lu\n", total_num_heap_pushes);
-			printf("total_num_heap_pops: %lu\n", total_num_heap_pops); 
-			printf("total_num_neighbor_visits: %lu\n", total_num_neighbor_visits);
 		}
 
         //clock::time_point greedy_earliest_end_time = *std::min_element(begin(greedy_end_time), begin(greedy_end_time)+num_procs);
@@ -4791,7 +4874,6 @@ bool mpi_spatial_route_new(t_router_opts *opts, struct s_det_routing_arch det_ro
     //sprintf(buffer, "%s_run_%d_rr_graph_occ.txt", s_circuit_name, run);
     //dump_rr_graph_occ(congestion, num_vertices(g), buffer);
 	if (initial_procid == 0) {
-
 		if (routed) {
 			printf("Routed in %d iterations. Total iteration time: %g\n", iter, duration_cast<nanoseconds>(total_iter_time).count() / 1e9);
 			printf("\tTotal route time: %g s.\n", duration_cast<nanoseconds>(total_greedy_route_time).count() / 1e9);
@@ -5106,7 +5188,7 @@ bool mpi_spatial_route(t_router_opts *opts, struct s_det_routing_arch det_routin
 			get_sinks_to_route(net, route_trees[net->local_id], sinks);
 
 			if (!sinks.empty()) {
-				route_net_mpi(partitioner.orig_g, partitioner.result_pid_by_level[current_level], procid, win, net->vpr_id, &net->source, sinks, params, states, congestion, route_trees[net->local_id], net_timing[net->vpr_id], interpartition_sinks[net->local_id], &perfs[procid]);
+				route_net_mpi_rma(partitioner.orig_g, partitioner.result_pid_by_level[current_level], procid, win, net->vpr_id, &net->source, sinks, params, states, congestion, route_trees[net->local_id], net_timing[net->vpr_id], interpartition_sinks[net->local_id], &perfs[procid]);
 
 				if (!has_interpartition_sinks) {
 					has_interpartition_sinks = !interpartition_sinks[net->local_id].empty();
@@ -5919,7 +6001,7 @@ bool spatial_route(t_router_opts *opts, struct s_det_routing_arch det_routing_ar
 						get_sinks_to_route(net, route_trees[net->local_id], sinks);
 
 						if (!sinks.empty()) {
-							route_net_4(partitioner.orig_g, partitioner.result_pid_by_level[current_level], tid, net->vpr_id, &net->source, sinks, params, states[tid], congestion, route_trees[net->local_id], net_timing[net->vpr_id], interpartition_sinks[net->local_id], true, &local_perf, &local_lock_perf);
+							route_net_with_high_interpartition_cost(partitioner.orig_g, partitioner.result_pid_by_level[current_level], tid, net->vpr_id, &net->source, sinks, params, states[tid], congestion, route_trees[net->local_id], net_timing[net->vpr_id], interpartition_sinks[net->local_id], true, &local_perf, &local_lock_perf);
 
 							if (!has_interpartition_sinks) {
 								has_interpartition_sinks = !interpartition_sinks[net->local_id].empty();

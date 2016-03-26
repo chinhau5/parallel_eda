@@ -372,7 +372,8 @@ boolean try_route_new(int width_fac, struct s_router_opts router_opts,
 		case HYBRID:
 			vpr_printf(TIO_MESSAGE_INFO, "Confirming Router Algorithm: HYBRID.\n");
 			assert(router_opts.route_type != GLOBAL);
-			success = mpi_spatial_route_new(&router_opts, det_routing_arch, directs, num_directs, segment_inf, timing_inf);
+			/*success = locking_route(&router_opts, det_routing_arch, directs, num_directs, segment_inf, timing_inf);*/
+			success = locking_route_driver(&router_opts);
 			break;
 		default:
 			success = FALSE;

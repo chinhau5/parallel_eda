@@ -142,13 +142,6 @@ typedef struct virtual_net_t {
 	//source_t source
 //} 
 //
-typedef struct congestion_t {
-	tbb::spin_mutex lock;
-	int occ;
-	float pres_cost;
-	float acc_cost;
-	int recalc_occ;
-} congestion_t;
 
 typedef struct congestion_mpi_t {
 	int occ;
@@ -156,6 +149,10 @@ typedef struct congestion_mpi_t {
 	float acc_cost;
 	int recalc_occ;
 } congestion_mpi_t;
+
+typedef struct congestion_t : congestion_mpi_t {
+	tbb::spin_mutex lock;
+} congestion_t;
 
 typedef struct route_state_t {
 	int rr_node;

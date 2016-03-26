@@ -347,32 +347,42 @@ float get_congestion_cost(const Congestion &congestion, int cost_index)
 	return rr_indexed_data[cost_index].base_cost * congestion.acc_cost * congestion.pres_cost;
 }
 
-float get_congestion_cost_mpi(RRNode rr_node, const RRGraph &g, const vector<int> &pid, int this_pid, congestion_mpi_t *congestion, MPI_Win win, int cost_index, float pres_fac)
+float get_congestion_cost_mpi_recv(RRNode rr_node, const RRGraph &g, congestion_mpi_t *congestion, MPI_Comm comm, float pres_fac)
 {
 	extern t_rr_indexed_data *rr_indexed_data;
 	/*zlog_level(delta_log, ROUTER_V3, " [pres: %g acc: %g] ", v.pres_cost, v.acc_cost);*/
 	const auto &rr_node_p = get_vertex_props(g, rr_node);
 
-	int rr_node_pid = pid[rr_node];
-	int from_pid = rr_node_pid == -1 ? 0 : rr_node_pid;
+	if (rr_node_p.type == IPIN) {
+		int flag;
+		MPI_Status status;
 
-	int flag;
-	assert(MPI_Iprobe(MPI_ANY_SOURCE, rr_node, MPI_COMM_WORLD, &flag, MPI_STATUS_IGNORE) == MPI_SUCCESS);
-	while (flag) {
-		int delta;
-		assert(MPI_Recv(&delta, 1, MPI_INT, MPI_ANY_SOURCE, rr_node, MPI_COMM_WORLD, MPI_STATUS_IGNORE) == MPI_SUCCESS);
-		congestion[rr_node].occ += delta;
-		assert(MPI_Iprobe(MPI_ANY_SOURCE, rr_node, MPI_COMM_WORLD, &flag, MPI_STATUS_IGNORE) == MPI_SUCCESS);
+		assert(MPI_Iprobe(MPI_ANY_SOURCE, rr_node, comm, &flag, &status) == MPI_SUCCESS);
+
+		while (flag) {
+			int delta;
+
+			assert(MPI_Recv(&delta, 1, MPI_INT, status.MPI_SOURCE, status.MPI_TAG, comm, MPI_STATUS_IGNORE) == MPI_SUCCESS);
+
+			congestion[rr_node].occ += delta;
+
+			assert(MPI_Iprobe(MPI_ANY_SOURCE, rr_node, comm, &flag, &status) == MPI_SUCCESS);
+		}
 	}
 
-	float pres_cost = 1 + (congestion[rr_node].occ + 1 - rr_node_p.capacity) * pres_fac;
-	//if (congestion[rr_node].occ < rr_node_p.capacity) {
-	float cong_cost = rr_indexed_data[cost_index].base_cost * congestion[rr_node].acc_cost * pres_cost;
+	float pres_cost;
+	if (congestion[rr_node].occ < rr_node_p.capacity) {
+		pres_cost = 1;
+	} else {
+		pres_cost = 1 + (congestion[rr_node].occ + 1 - rr_node_p.capacity) * pres_fac;
+	}
+
+	float cong_cost = rr_indexed_data[rr_node_p.cost_index].base_cost * congestion[rr_node].acc_cost * pres_cost;
 
 	return cong_cost;
 }
 
-float get_congestion_cost_mpi_old(RRNode rr_node, const RRGraph &g, const vector<int> &pid, int this_pid, congestion_mpi_t *congestion, MPI_Win win, int cost_index, float pres_fac)
+float get_congestion_cost_mpi_rma(RRNode rr_node, const RRGraph &g, const vector<int> &pid, int this_pid, congestion_mpi_t *congestion, MPI_Win win, int cost_index, float pres_fac)
 {
 	extern t_rr_indexed_data *rr_indexed_data;
 	/*zlog_level(delta_log, ROUTER_V3, " [pres: %g acc: %g] ", v.pres_cost, v.acc_cost);*/
@@ -511,6 +521,63 @@ static int get_expected_segs_to_target(const rr_node_property_t &current, const 
 	return (num_segs_same_dir);
 }
 
+float get_timing_driven_expected_cost_new(const rr_node_property_t &current, const rr_node_property_t &target,
+		float criticality_fac, float R_upstream) {
+
+	/* Determines the expected cost (due to both delay and resouce cost) to reach *
+	 * the target node from inode.  It doesn't include the cost of inode --       *
+	 * that's already in the "known" path_cost.                                   */
+
+	t_rr_type rr_type;
+	int cost_index, ortho_cost_index, num_segs_same_dir, num_segs_ortho_dir;
+	float expected_cost, cong_cost, Tdel;
+
+	extern t_rr_indexed_data *rr_indexed_data;
+
+	rr_type = current.type;
+
+	if (rr_type == CHANX || rr_type == CHANY) {
+		num_segs_same_dir = get_expected_segs_to_target(current, target,
+				&num_segs_ortho_dir);
+		cost_index = current.cost_index;
+		ortho_cost_index = rr_indexed_data[cost_index].ortho_cost_index;
+
+		cong_cost = num_segs_same_dir * rr_indexed_data[cost_index].saved_base_cost
+				+ num_segs_ortho_dir
+						* rr_indexed_data[ortho_cost_index].saved_base_cost;
+		//cong_cost += rr_indexed_data[IPIN_COST_INDEX].base_cost;
+				//+ rr_indexed_data[SINK_COST_INDEX].base_cost;
+
+		Tdel =
+				num_segs_same_dir * rr_indexed_data[cost_index].T_linear
+						+ num_segs_ortho_dir
+								* rr_indexed_data[ortho_cost_index].T_linear
+						+ num_segs_same_dir * num_segs_same_dir
+								* rr_indexed_data[cost_index].T_quadratic
+						+ num_segs_ortho_dir * num_segs_ortho_dir
+								* rr_indexed_data[ortho_cost_index].T_quadratic
+						+ R_upstream
+								* (num_segs_same_dir
+										* rr_indexed_data[cost_index].C_load
+										+ num_segs_ortho_dir
+												* rr_indexed_data[ortho_cost_index].C_load);
+
+		//Tdel += rr_indexed_data[IPIN_COST_INDEX].T_linear;
+
+		expected_cost = criticality_fac * Tdel
+				+ (1. - criticality_fac) * cong_cost;
+		return (expected_cost);
+	}
+
+	//else if (rr_type == IPIN) { [> Change if you're allowing route-throughs <]
+		//return (rr_indexed_data[SINK_COST_INDEX].base_cost);
+	//}
+
+	else { /* Change this if you want to investigate route-throughs */
+		return (0.);
+	}
+}
+
 float get_timing_driven_expected_cost(const rr_node_property_t &current, const rr_node_property_t &target,
 		float criticality_fac, float R_upstream) {
 
@@ -614,7 +681,7 @@ void expand_neighbors_fast(const RRGraph &g, const route_state_t &current, const
 }
 
 template<typename ShouldExpandFunc>
-void expand_neighbors(const RRGraph &g, RRNode current, const route_state_t *state, const congestion_mpi_t *congestion, const rr_node_property_t &target, float criticality_fac, float astar_fac, std::priority_queue<route_state_t> &heap, const ShouldExpandFunc &should_expand, perf_t *perf)
+void expand_neighbors_lockless(const RRGraph &g, RRNode current, const route_state_t *state, const congestion_mpi_t *congestion, const rr_node_property_t &target, float criticality_fac, float astar_fac, std::priority_queue<route_state_t> &heap, const ShouldExpandFunc &should_expand, perf_t *perf)
 {
 	for (const auto &e : get_out_edges(g, current)) {
 		int neighbor = get_target(g, e);
@@ -648,22 +715,8 @@ void expand_neighbors(const RRGraph &g, RRNode current, const route_state_t *sta
 		}
 		item.upstream_R = upstream_R;
 
-		/*if (lock) {*/
-		/*[>if (lock_perf) {<]*/
-		/*[>++lock_perf->num_lock_tries;<]*/
-		/*[>}<]*/
-		/*[>if (!neighbor_p.lock->try_lock()) {<]*/
-		/*[>if (lock_perf) {<]*/
-		/*[>++lock_perf->num_lock_waits;<]*/
-		/*[>}<]*/
-		/*[>neighbor_p.lock->lock();<]*/
-		/*[>} <]*/
-		/*neighbor_p.lock->lock();*/
-		/*}*/
 		float congestion_cost = get_congestion_cost(congestion[neighbor], neighbor_p.cost_index);
-		/*if (lock) {*/
-		/*neighbor_p.lock->unlock();*/
-		/*}*/
+
 		float delay = get_delay(e_p, neighbor_p, unbuffered_upstream_R);
 
 		item.delay = current_state->delay + delay;
@@ -688,7 +741,68 @@ void expand_neighbors(const RRGraph &g, RRNode current, const route_state_t *sta
 }
 
 template<typename ShouldExpandFunc>
-void expand_neighbors_mpi(const RRGraph &g, RRNode current, const route_state_t *state, congestion_mpi_t *congestion, MPI_Win win, const rr_node_property_t &target, float criticality_fac, float astar_fac, float pres_fac, const ShouldExpandFunc &should_expand, const vector<int> &pid, int this_pid, std::priority_queue<route_state_t> &heap, bool &explored_interpartition_neighbor, perf_t *perf)
+void expand_neighbors_mpi_recv(const RRGraph &g, RRNode current, const route_state_t *state, congestion_mpi_t *congestion, MPI_Comm comm, const rr_node_property_t &target, float criticality_fac, float astar_fac, float pres_fac, const ShouldExpandFunc &should_expand, const vector<int> &pid, std::priority_queue<route_state_t> &heap, perf_t *perf)
+{
+	for (const auto &e : get_out_edges(g, current)) {
+		int neighbor = get_target(g, e);
+		const auto &neighbor_p = get_vertex_props(g, neighbor);
+
+		char buffer[256];
+		sprintf_rr_node(neighbor, buffer);
+		zlog_level(delta_log, ROUTER_V3, "\tNeighbor: %s pid: %d ", buffer, pid[neighbor]);
+
+		if (perf) {
+			++perf->num_neighbor_visits;
+		}
+
+		if (!should_expand(neighbor)) {
+			continue;
+		}
+
+		route_state_t item;
+
+		item.rr_node = neighbor;
+		item.prev_edge = e;
+
+		const auto &e_p = get_edge_props(g, e);
+
+		const route_state_t *current_state = &state[current];
+
+		float unbuffered_upstream_R = current_state->upstream_R;
+		float upstream_R = e_p.R + neighbor_p.R;
+		if (!e_p.buffered) {
+			upstream_R += unbuffered_upstream_R;
+		}
+		item.upstream_R = upstream_R;
+
+		float congestion_cost = get_congestion_cost_mpi_recv(item.rr_node, g, congestion, comm, pres_fac);
+
+		float delay = get_delay(e_p, neighbor_p, unbuffered_upstream_R);
+
+		item.delay = current_state->delay + delay;
+
+		float known_cost = criticality_fac * delay + (1 - criticality_fac) * congestion_cost;
+
+		item.known_cost = current_state->known_cost + known_cost;
+
+		float expected_cost = get_timing_driven_expected_cost(neighbor_p, target, criticality_fac, upstream_R);
+		item.cost = item.known_cost + astar_fac * expected_cost;
+
+		heap.push(item);
+
+		if (perf) {
+			++perf->num_heap_pushes;
+		}
+
+		zlog_level(delta_log, ROUTER_V3, " [cost: %g known_cost: %g][occ/cap: %d/%d pres: %g acc: %g][edge_delay: %g edge_R: %g node_R: %g node_C: %g] \n",
+				item.cost, item.known_cost, 
+				congestion[item.rr_node].occ, neighbor_p.capacity, congestion[item.rr_node].pres_cost, congestion[item.rr_node].acc_cost,
+				e_p.switch_delay, e_p.R, neighbor_p.R, neighbor_p.C);
+	}
+}
+
+template<typename ShouldExpandFunc>
+void expand_neighbors_mpi_rma(const RRGraph &g, RRNode current, const route_state_t *state, congestion_mpi_t *congestion, MPI_Win win, const rr_node_property_t &target, float criticality_fac, float astar_fac, float pres_fac, const ShouldExpandFunc &should_expand, const vector<int> &pid, int this_pid, std::priority_queue<route_state_t> &heap, bool &explored_interpartition_neighbor, perf_t *perf)
 {
 	for (const auto &e : get_out_edges(g, current)) {
 		int neighbor = get_target(g, e);
@@ -743,7 +857,7 @@ void expand_neighbors_mpi(const RRGraph &g, RRNode current, const route_state_t 
 		}
 		item.upstream_R = upstream_R;
 
-		float congestion_cost = get_congestion_cost_mpi(item.rr_node, g, pid, this_pid, congestion, win, neighbor_p.cost_index, pres_fac);
+		float congestion_cost = get_congestion_cost_mpi_rma(item.rr_node, g, pid, this_pid, congestion, win, neighbor_p.cost_index, pres_fac);
 		float delay = get_delay(e_p, neighbor_p, unbuffered_upstream_R);
 
 		item.delay = current_state->delay + delay;
@@ -769,8 +883,9 @@ void expand_neighbors_mpi(const RRGraph &g, RRNode current, const route_state_t 
 
 using bpqueue = priority_queue<pair<float, int>, vector<pair<float, int>>, std::greater<pair<float, int>>>;
 
+/* high interpartition edge cost */
 template<typename ShouldExpandFunc>
-void expand_neighbors_2(const RRGraph &g, RRNode current, const route_state_t *state, const congestion_t *congestion, const rr_node_property_t &target, float criticality_fac, float astar_fac, const ShouldExpandFunc &should_expand, const vector<int> &pid, int this_pid, std::priority_queue<route_state_t> &heap, bool &explored_interpartition_neighbor, perf_t *perf)
+void expand_neighbors_with_high_interpartition_cost(const RRGraph &g, RRNode current, const route_state_t *state, const congestion_t *congestion, const rr_node_property_t &target, float criticality_fac, float astar_fac, const ShouldExpandFunc &should_expand, const vector<int> &pid, int this_pid, std::priority_queue<route_state_t> &heap, bool &explored_interpartition_neighbor, perf_t *perf)
 {
 	for (const auto &e : get_out_edges(g, current)) {
 		int neighbor = get_target(g, e);
@@ -849,8 +964,9 @@ void expand_neighbors_2(const RRGraph &g, RRNode current, const route_state_t *s
 	}
 }
 
+/* with tracking of bounding nodes for partition hopping */
 template<typename ShouldExpandFunc>
-void expand_neighbors(const RRGraph &g, int current, const route_state_t *state, const congestion_t *congestion, const rr_node_property_t &target, float criticality_fac, float astar_fac, std::priority_queue<route_state_t> &heap, const ShouldExpandFunc &should_expand, const vector<int> &pid, int this_pid, bpqueue &boundary_nodes, bool lock, perf_t *perf, lock_perf_t *lock_perf)
+void expand_neighbors_with_partition_hopping(const RRGraph &g, int current, const route_state_t *state, const congestion_t *congestion, const rr_node_property_t &target, float criticality_fac, float astar_fac, std::priority_queue<route_state_t> &heap, const ShouldExpandFunc &should_expand, const vector<int> &pid, int this_pid, bpqueue &boundary_nodes, bool lock, perf_t *perf, lock_perf_t *lock_perf)
 {
 	bool added_boundary_node = false; 
 	for (const auto &e : get_out_edges(g, current)) {
@@ -929,8 +1045,9 @@ void expand_neighbors(const RRGraph &g, int current, const route_state_t *state,
 	}
 }
 
+/* fine grained locking based expand neighbor */
 template<typename ShouldExpandFunc>
-void expand_neighbors(const RRGraph &g, int current, const route_state_t *state, const congestion_t *congestion, const rr_node_property_t &target, float criticality_fac, float astar_fac, std::priority_queue<route_state_t> &heap, const ShouldExpandFunc &should_expand, bool lock, perf_t *perf, lock_perf_t *lock_perf)
+void expand_neighbors_with_fine_grain_lock(const RRGraph &g, int current, const route_state_t *state, const congestion_t *congestion, const rr_node_property_t &target, float criticality_fac, float astar_fac, std::priority_queue<route_state_t> &heap, const ShouldExpandFunc &should_expand, bool lock, perf_t *perf, lock_perf_t *lock_perf)
 {
 	for (const auto &e : get_out_edges(g, current)) {
 		int neighbor_id = get_target(g, e);
@@ -1266,11 +1383,7 @@ std::shared_ptr<vector<path_node_t>> get_path(int sink_rr_node_id, const route_s
 	//[>check_route_tree(rt, net, g);<]
 //}
 
-void route_impl()
-{
-}
-
-void route_net_5(const RRGraph &g, const vector<int> &pid, int this_pid, int vpr_id, const source_t *source, const vector<sink_t *> &sinks, const route_parameters_t &params, route_state_t *state, congestion_mpi_t *congestion, route_tree_t &rt, t_net_timing &net_timing, vector<sink_t *> &routed_sinks, vector<sink_t *> &unrouted_sinks, perf_t *perf)
+void route_net_mpi_send_recv(const RRGraph &g, const vector<int> &pid, int this_pid, int vpr_id, const source_t *source, const vector<sink_t *> &sinks, const route_parameters_t &params, route_state_t *state, congestion_mpi_t *congestion, MPI_Comm comm, route_tree_t &rt, t_net_timing &net_timing, vector<sink_t *> &routed_sinks, vector<sink_t *> &unrouted_sinks, perf_t *perf)
 {
 	std::priority_queue<route_state_t> heap;
 
@@ -1314,7 +1427,7 @@ void route_net_5(const RRGraph &g, const vector<int> &pid, int this_pid, int vpr
 	int isink = 0;
 	for (const auto &sink : sorted_sinks) {
 		sprintf_rr_node(sink->rr_node, buffer);
-		zlog_level(delta_log, ROUTER_V1, "Net %d Sink %d: %s criticality: %g BB: %d-%d %d-%d Prev BB: %d-%d %d-%d\n", vpr_id, sink->id, buffer, sink->criticality_fac, sink->current_bounding_box.xmin, sink->current_bounding_box.xmax, sink->current_bounding_box.ymin, sink->current_bounding_box.ymax, sink->previous_bounding_box.xmin, sink->previous_bounding_box.xmax, sink->previous_bounding_box.ymin, sink->previous_bounding_box.ymax);
+		zlog_level(delta_log, ROUTER_V1, "Net %d current sink %d: %s criticality: %g BB: %d-%d %d-%d Prev BB: %d-%d %d-%d\n", vpr_id, sink->id, buffer, sink->criticality_fac, sink->current_bounding_box.xmin, sink->current_bounding_box.xmax, sink->current_bounding_box.ymin, sink->current_bounding_box.ymax, sink->previous_bounding_box.xmin, sink->previous_bounding_box.xmax, sink->previous_bounding_box.ymin, sink->previous_bounding_box.ymax);
 
 		const auto &sink_rr_node = get_vertex_props(g, sink->rr_node);
 
@@ -1344,7 +1457,176 @@ void route_net_5(const RRGraph &g, const vector<int> &pid, int this_pid, int vpr
 				state[item.rr_node] = item;
 				modified.push_back(item.rr_node);
 
-				expand_neighbors(g, item.rr_node, state, congestion, sink_rr_node, sink->criticality_fac, params.astar_fac, heap, [&g, &sink, &sink_rr_node, &v, &pid, &item, &this_pid] (const RRNode &n) -> bool {
+				expand_neighbors_mpi_recv(g, item.rr_node, state, congestion, comm, sink_rr_node, sink->criticality_fac, params.astar_fac, params.astar_fac, [&g, &sink, &sink_rr_node, &v, &pid, &item, &this_pid] (const RRNode &n) -> bool {
+
+					/*if (trace_has_node(prev_trace, id(n))) {*/
+						/*zlog_level(delta_log, ROUTER_V3, " existing node route tree ");*/
+					/*}*/
+					const auto &prop = get_vertex_props(g, n);
+
+					if (prop.xhigh < sink->current_bounding_box.xmin
+							|| prop.xlow > sink->current_bounding_box.xmax
+							|| prop.yhigh < sink->current_bounding_box.ymin
+							|| prop.ylow > sink->current_bounding_box.ymax) {
+					zlog_level(delta_log, ROUTER_V3, "outside of bounding box\n");
+					return false;
+					}
+
+					if (prop.type == IPIN
+							&& (prop.xhigh != sink_rr_node.xhigh 
+								|| prop.yhigh != sink_rr_node.yhigh)) {
+					zlog_level(delta_log, ROUTER_V3, "not target IPIN\n");
+					return false;
+					}
+
+					/*if (net.sinks.size() >= HIGH_FANOUT_NET_LIM) {*/
+					/*if (prop.xhigh < target_x - highfanout_rlim*/
+							/*|| prop.xlow > target_x + highfanout_rlim*/
+							/*|| prop.yhigh < target_y - highfanout_rlim*/
+							/*|| prop.ylow > target_y + highfanout_rlim) {*/
+						/*return false;*/
+					/*}*/
+					/*}*/
+					if (pid[n] != -1 && pid[n] != this_pid) {
+						zlog_level(delta_log, ROUTER_V3, " pid %d not in current partition %d\n", pid[n], this_pid);
+						return false;
+					}
+
+					return true;
+				}, pid, heap, perf);
+			} else {
+				zlog_level(delta_log, ROUTER_V3, "\tNot expanding neighbor because known_cost %g > %g or cost %g > %g\n", item.known_cost, state[item.rr_node].known_cost, item.cost, state[item.rr_node].cost);
+			}
+		}
+
+		if (!found_sink) {
+			assert(heap.empty());
+			zlog_error(delta_log, "Error: Failed to find sink %d\n", sink->rr_node);
+
+			assert(find(begin(unrouted_sinks), end(unrouted_sinks), sink) == end(unrouted_sinks));
+			unrouted_sinks.push_back(sink);
+
+			if (sink->id != -1) {
+				net_timing.delay[sink->id+1] = 0;
+			}
+		} else {
+			assert(find(begin(routed_sinks), end(routed_sinks), sink) == end(routed_sinks));
+
+			routed_sinks.push_back(sink);
+
+			const auto &path = get_path(sink->rr_node, state, rt, g, vpr_id);
+
+			route_tree_add_path(rt, path, g, state);
+
+			vector<RRNode> added_nodes;
+			for (const auto &n : *path) {
+				if (n.update_cost) {
+					added_nodes.push_back(n.rr_node_id);
+				}
+			}
+
+			update_one_cost(g, congestion, added_nodes.begin(), added_nodes.end(), 1, params.pres_fac);
+
+			if (sink->id != -1) {
+				net_timing.delay[sink->id+1] = get_vertex_props(rt.graph, route_tree_get_rt_node(rt, sink->rr_node)).delay;
+			}
+
+			zlog_level(delta_log, ROUTER_V2, "Routed sink %d\n", sink->rr_node);
+		}
+
+		for (const auto &m : modified)  {
+			state[m].known_cost = std::numeric_limits<float>::max();
+			state[m].cost = std::numeric_limits<float>::max();
+		}
+
+		modified.clear();
+
+		heap = std::priority_queue<route_state_t>();
+	}
+	//zlog_level(delta_log, ROUTER_V1, "\n");
+
+	//return unrouted_sinks;
+
+	/*delete [] state;*/
+
+	/*check_route_tree(rt, net, g);*/
+}
+
+void route_net_lockless(const RRGraph &g, const vector<int> &pid, int this_pid, int vpr_id, const source_t *source, const vector<sink_t *> &sinks, const route_parameters_t &params, route_state_t *state, congestion_mpi_t *congestion, route_tree_t &rt, t_net_timing &net_timing, vector<sink_t *> &routed_sinks, vector<sink_t *> &unrouted_sinks, perf_t *perf)
+{
+	std::priority_queue<route_state_t> heap;
+
+	vector<int> modified;
+
+	zlog_level(delta_log, ROUTER_V1, "Routing net %d (%lu sinks)\n", vpr_id, sinks.size());
+
+	vector<sink_t *> sorted_sinks = sinks;
+	std::sort(begin(sorted_sinks), end(sorted_sinks), [] (const sink_t *a, const sink_t *b) -> bool {
+			return a->criticality_fac > b->criticality_fac;
+			});
+
+	char buffer[256];
+
+	if (route_tree_empty(rt)) {
+		/* special case */
+		sprintf_rr_node(source->rr_node, buffer);
+		zlog_level(delta_log, ROUTER_V2, "Empty route tree. Setting root to %s\n", buffer);
+
+		RouteTreeNode root_rt_node = route_tree_add_rr_node(rt, source->rr_node, g);
+		const auto &source_rr_node_p = get_vertex_props(g, source->rr_node);
+		route_tree_set_node_properties(get_vertex_props(rt.graph, root_rt_node), true, RRGraph::null_edge(), source_rr_node_p.R, 0.5 * source_rr_node_p.R * source_rr_node_p.C);
+		route_tree_add_root(rt, source->rr_node);
+
+		/*update_one_cost_internal(source_rr_node_p, 1, params.pres_fac);*/
+	} else {
+		if (rt.root_rt_node_id != -1) {
+			const auto &rt_root_p = get_vertex_props(rt.graph, rt.root_rt_node_id);
+			if (source && rt_root_p.rr_node != source->rr_node) {
+				char root[256];
+				char source_str[256];
+				sprintf_rr_node(rt_root_p.rr_node, root);
+				sprintf_rr_node(source->rr_node, source_str);
+				zlog_error(delta_log, "Error: Non empty route tree node has root %s that is different from net source %s\n",
+						root, source_str);
+				assert(false);
+			}
+		}
+	}
+
+	int isink = 0;
+	for (const auto &sink : sorted_sinks) {
+		sprintf_rr_node(sink->rr_node, buffer);
+		zlog_level(delta_log, ROUTER_V1, "Net %d current sink %d: %s criticality: %g BB: %d-%d %d-%d Prev BB: %d-%d %d-%d\n", vpr_id, sink->id, buffer, sink->criticality_fac, sink->current_bounding_box.xmin, sink->current_bounding_box.xmax, sink->current_bounding_box.ymin, sink->current_bounding_box.ymax, sink->previous_bounding_box.xmin, sink->previous_bounding_box.xmax, sink->previous_bounding_box.ymin, sink->previous_bounding_box.ymax);
+
+		const auto &sink_rr_node = get_vertex_props(g, sink->rr_node);
+
+		route_tree_multi_root_add_to_heap(rt, g, sink->rr_node, sink->criticality_fac, params.astar_fac, sink->current_bounding_box, heap, perf);
+
+		bool found_sink = false;
+		while (!heap.empty() && !found_sink) {
+			auto item = heap.top();
+			heap.pop();
+
+			if (perf) {
+				++perf->num_heap_pops;
+			}
+
+			sprintf_rr_node(item.rr_node, buffer);
+			const auto &v = get_vertex_props(g, item.rr_node);
+			zlog_level(delta_log, ROUTER_V3, "Current: %s pid: %d occ/cap: %d/%d prev: %d new_cost: %g new_known: %g new_delay: %g old_cost: %g old_known: %g old_delay: %g\n", buffer, pid[item.rr_node], congestion[item.rr_node].occ, v.capacity, valid(item.prev_edge) ? get_source(g, item.prev_edge) : -1, item.cost, item.known_cost, item.delay, state[item.rr_node].cost, state[item.rr_node].known_cost, state[item.rr_node].delay);
+
+			assert(pid[item.rr_node] == -1 || pid[item.rr_node] == this_pid);
+
+			if (item.rr_node == sink->rr_node) {
+				state[item.rr_node] = item;
+				modified.push_back(item.rr_node);
+				found_sink = true;
+			} else if (item.cost < state[item.rr_node].cost) {
+				assert(item.known_cost < state[item.rr_node].known_cost);
+				state[item.rr_node] = item;
+				modified.push_back(item.rr_node);
+
+				expand_neighbors_lockless(g, item.rr_node, state, congestion, sink_rr_node, sink->criticality_fac, params.astar_fac, heap, [&g, &sink, &sink_rr_node, &v, &pid, &item, &this_pid] (const RRNode &n) -> bool {
 
 					/*if (trace_has_node(prev_trace, id(n))) {*/
 						/*zlog_level(delta_log, ROUTER_V3, " existing node route tree ");*/
@@ -1439,7 +1721,7 @@ void route_net_5(const RRGraph &g, const vector<int> &pid, int this_pid, int vpr
 	/*check_route_tree(rt, net, g);*/
 }
 
-void route_net_mpi(const RRGraph &g, const vector<int> &pid, int this_pid, MPI_Win win, int vpr_id, const source_t *source, const vector<sink_t *> &sinks, const route_parameters_t &params, route_state_t *state, congestion_mpi_t *congestion, route_tree_t &rt, t_net_timing &net_timing, vector<interpartition_sink_t> &interpartition_sinks, perf_t *perf)
+void route_net_mpi_rma(const RRGraph &g, const vector<int> &pid, int this_pid, MPI_Win win, int vpr_id, const source_t *source, const vector<sink_t *> &sinks, const route_parameters_t &params, route_state_t *state, congestion_mpi_t *congestion, route_tree_t &rt, t_net_timing &net_timing, vector<interpartition_sink_t> &interpartition_sinks, perf_t *perf)
 {
 	std::priority_queue<route_state_t> heap;
 
@@ -1551,7 +1833,7 @@ void route_net_mpi(const RRGraph &g, const vector<int> &pid, int this_pid, MPI_W
 				state[item.rr_node] = item;
 				modified.push_back(item.rr_node);
 
-				expand_neighbors_mpi(g, item.rr_node, state, congestion, win, sink_rr_node, sink->criticality_fac, params.astar_fac, params.pres_fac,
+				expand_neighbors_mpi_rma(g, item.rr_node, state, congestion, win, sink_rr_node, sink->criticality_fac, params.astar_fac, params.pres_fac,
 						[&g, &sink, &sink_rr_node, &v, &pid, &boundary_node_heap, &item, &this_pid, &congestion] (const RRNode &n) -> bool {
 					const auto &prop = get_vertex_props(g, n);
 
@@ -1646,7 +1928,7 @@ void route_net_mpi(const RRGraph &g, const vector<int> &pid, int this_pid, MPI_W
 	/*check_route_tree(rt, net, g);*/
 }
 
-void route_net_4(const RRGraph &g, const vector<int> &pid, int this_pid, int vpr_id, const source_t *source, const vector<sink_t *> &sinks, const route_parameters_t &params, route_state_t *state, congestion_t *congestion, route_tree_t &rt, t_net_timing &net_timing, vector<interpartition_sink_t> &interpartition_sinks, bool lock, perf_t *perf, lock_perf_t *lock_perf)
+void route_net_with_high_interpartition_cost(const RRGraph &g, const vector<int> &pid, int this_pid, int vpr_id, const source_t *source, const vector<sink_t *> &sinks, const route_parameters_t &params, route_state_t *state, congestion_t *congestion, route_tree_t &rt, t_net_timing &net_timing, vector<interpartition_sink_t> &interpartition_sinks, bool lock, perf_t *perf, lock_perf_t *lock_perf)
 {
 	std::priority_queue<route_state_t> heap;
 
@@ -1758,7 +2040,7 @@ void route_net_4(const RRGraph &g, const vector<int> &pid, int this_pid, int vpr
 				state[item.rr_node] = item;
 				modified.push_back(item.rr_node);
 
-				expand_neighbors_2(g, item.rr_node, state, congestion, sink_rr_node, sink->criticality_fac, params.astar_fac, 
+				expand_neighbors_with_high_interpartition_cost(g, item.rr_node, state, congestion, sink_rr_node, sink->criticality_fac, params.astar_fac, 
 						[&g, &sink, &sink_rr_node, &v, &pid, &boundary_node_heap, &item, &this_pid, &congestion] (const RRNode &n) -> bool {
 					const auto &prop = get_vertex_props(g, n);
 
@@ -1853,7 +2135,7 @@ void route_net_4(const RRGraph &g, const vector<int> &pid, int this_pid, int vpr
 	/*check_route_tree(rt, net, g);*/
 }
 
-void route_net_3(const RRGraph &g, const vector<int> &pid, int this_pid, int vpr_id, const source_t *source, const vector<sink_t *> &sinks, const route_parameters_t &params, route_state_t *state, congestion_t *congestion, route_tree_t &rt, t_net_timing &net_timing, unrouted_t &unrouted, int num_partitions, bool lock, perf_t *perf, lock_perf_t *lock_perf)
+void route_net_with_partition_hopping(const RRGraph &g, const vector<int> &pid, int this_pid, int vpr_id, const source_t *source, const vector<sink_t *> &sinks, const route_parameters_t &params, route_state_t *state, congestion_t *congestion, route_tree_t &rt, t_net_timing &net_timing, unrouted_t &unrouted, int num_partitions, bool lock, perf_t *perf, lock_perf_t *lock_perf)
 {
 	std::priority_queue<route_state_t> heap;
 
@@ -1929,7 +2211,7 @@ void route_net_3(const RRGraph &g, const vector<int> &pid, int this_pid, int vpr
 				state[item.rr_node] = item;
 				modified.push_back(item.rr_node);
 
-				expand_neighbors(g, item.rr_node, state, congestion, sink_rr_node, sink->criticality_fac, params.astar_fac, heap, [&g, &sink, &sink_rr_node, &v, &pid, &boundary_node_heap, &item, &this_pid] (const RRNode &n) -> bool {
+				expand_neighbors_with_partition_hopping(g, item.rr_node, state, congestion, sink_rr_node, sink->criticality_fac, params.astar_fac, heap, [&g, &sink, &sink_rr_node, &v, &pid, &boundary_node_heap, &item, &this_pid] (const RRNode &n) -> bool {
 
 					/*if (trace_has_node(prev_trace, id(n))) {*/
 						/*zlog_level(delta_log, ROUTER_V3, " existing node route tree ");*/
@@ -2052,7 +2334,7 @@ void route_net_3(const RRGraph &g, const vector<int> &pid, int this_pid, int vpr
 	/*check_route_tree(rt, net, g);*/
 }
 
-vector<sink_t *> route_net_2(const RRGraph &g, int vpr_id, const source_t *source, const vector<sink_t *> &sinks, const route_parameters_t &params, route_state_t *state, congestion_t *congestion, route_tree_t &rt, t_net_timing &net_timing, bool lock, perf_t *perf, lock_perf_t *lock_perf)
+vector<sink_t *> route_net_with_fine_grain_lock(const RRGraph &g, int vpr_id, const source_t *source, const vector<sink_t *> &sinks, const route_parameters_t &params, route_state_t *state, congestion_t *congestion, route_tree_t &rt, t_net_timing &net_timing, bool lock, perf_t *perf, lock_perf_t *lock_perf)
 {
 	std::priority_queue<route_state_t> heap;
 
@@ -2077,11 +2359,12 @@ vector<sink_t *> route_net_2(const RRGraph &g, int vpr_id, const source_t *sourc
 		const auto &source_rr_node = get_vertex_props(g, source->rr_node);
 		RouteTreeNode root_rt_node = route_tree_add_rr_node(rt, source->rr_node, g);
 		route_tree_set_node_properties(get_vertex_props(rt.graph, root_rt_node), true, RRGraph::null_edge(), source_rr_node.R, 0.5 * source_rr_node.R * source_rr_node.C);
-		route_tree_set_root(rt, source->rr_node);
+		route_tree_add_root(rt, source->rr_node);
 
 		/*update_one_cost_internal(source_rr_node, 1, params.pres_fac);*/
 	} else {
-		const auto &rt_root_p = get_vertex_props(rt.graph, rt.root_rt_node_id);
+		assert(rt.root_rt_nodes.size() == 1);
+		const auto &rt_root_p = get_vertex_props(rt.graph, rt.root_rt_nodes[0]);
 		if (source && rt_root_p.rr_node != source->rr_node) {
 			char root[256];
 			char source_str[256];
@@ -2102,7 +2385,7 @@ vector<sink_t *> route_net_2(const RRGraph &g, int vpr_id, const source_t *sourc
 
 		const auto &sink_rr_node = get_vertex_props(g, sink->rr_node);
 
-		route_tree_add_to_heap(rt, g, sink->rr_node, sink->criticality_fac, params.astar_fac, sink->current_bounding_box, heap, perf);
+		route_tree_multi_root_add_to_heap(rt, g, sink->rr_node, sink->criticality_fac, params.astar_fac, sink->current_bounding_box, heap, perf);
 
 		bool found_sink = false;
 		while (!heap.empty() && !found_sink) {
@@ -2131,7 +2414,7 @@ vector<sink_t *> route_net_2(const RRGraph &g, int vpr_id, const source_t *sourc
 				state[item.rr_node] = item;
 				modified.push_back(item.rr_node);
 
-				expand_neighbors(g, item.rr_node, state, congestion, sink_rr_node, sink->criticality_fac, params.astar_fac, heap, [&g, &sink, &sink_rr_node] (const RRNode &v) -> bool {
+				expand_neighbors_with_fine_grain_lock(g, item.rr_node, state, congestion, sink_rr_node, sink->criticality_fac, params.astar_fac, heap, [&g, &sink, &sink_rr_node] (const RRNode &v) -> bool {
 
 					/*if (trace_has_node(prev_trace, id(v))) {*/
 						/*zlog_level(delta_log, ROUTER_V3, " existing node route tree ");*/
@@ -2173,10 +2456,18 @@ vector<sink_t *> route_net_2(const RRGraph &g, int vpr_id, const source_t *sourc
 			unrouted_sinks.push_back(sink);
 			assert(heap.empty());
 		} else {
-			vector<int> added_rr_nodes;
-			//route_tree_add_path(rt, g, state, sink->rr_node, vpr_id, added_rr_nodes);
+			const auto &path = get_path(sink->rr_node, state, rt, g, vpr_id);
 
-			update_one_cost(g, congestion, added_rr_nodes.begin(), added_rr_nodes.end(), 1, params.pres_fac, lock, lock_perf);
+			route_tree_add_path(rt, path, g, state);
+
+			vector<RRNode> added_nodes;
+			for (const auto &n : *path) {
+				if (n.update_cost) {
+					added_nodes.push_back(n.rr_node_id);
+				}
+			}
+
+			update_one_cost(g, congestion, added_nodes.begin(), added_nodes.end(), 1, params.pres_fac, lock, lock_perf);
 
 			net_timing.delay[sink->id+1] = get_vertex_props(rt.graph, route_tree_get_rt_node(rt, sink->rr_node)).delay;
 

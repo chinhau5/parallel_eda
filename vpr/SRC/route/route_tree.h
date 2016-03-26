@@ -51,7 +51,7 @@ typedef struct route_tree_t {
 	std::map<int, int> rr_node_to_rt_node;
 	//map<int, vector<int>> sink_rr_node_to_path;
 	map<RRNode, std::shared_ptr<vector<path_node_t>>> rr_node_to_path;
-	map<int, RouteTreeNode> path_branch_point;
+	//map<int, RouteTreeNode> path_branch_point;
 	bgi::rtree<rtree_value, bgi::rstar<64>> point_tree;
 	box scheduler_bounding_box;
 	std::map<int, std::vector<int>> sink_edges;
@@ -142,8 +142,6 @@ route_tree_get_branches(const route_tree_t &rt, int rt_node);
 
 void route_tree_mark_paths_to_be_ripped(route_tree_t &rt, const RRGraph &g, const vector<int> &pid, int this_pid, const vector<RRNode> &rr_nodes);
 
-bool route_tree_mark_congested_nodes_to_be_ripped(route_tree_t &rt, const RRGraph &g, const congestion_mpi_t *congestion);
-
 void route_tree_mark_all_nodes_to_be_ripped(route_tree_t &rt, const RRGraph &g);
 
 void route_tree_mark_paths_to_be_ripped(route_tree_t &rt, const RRGraph &g, const vector<RRNode> &rr_nodes);
@@ -185,6 +183,64 @@ void route_tree_add_to_heap_internal(const route_tree_t &rt, RouteTreeNode rt_no
 void route_tree_add_to_heap(const route_tree_t &rt, const RRGraph &g, RRNode target, float criticality_fac, float astar_fac, const bounding_box_t &current_bounding_box, std::priority_queue<route_state_t> &heap, perf_t *perf);
 
 void route_tree_multi_root_add_to_heap(const route_tree_t &rt, const RRGraph &g, RRNode target, float criticality_fac, float astar_fac, const bounding_box_t &current_bounding_box, std::priority_queue<route_state_t> &heap, perf_t *perf);
+
+template<typename Congestion>
+bool route_tree_node_check_and_mark_congested_for_rip_up(route_tree_t &rt, RouteTreeNode rt_node, const RRGraph &g, const Congestion *congestion)
+{
+	auto &rt_node_p = get_vertex_props(rt.graph, rt_node);
+	const auto &rr_node_p = get_vertex_props(g, rt_node_p.rr_node);
+
+	if (valid(rt_node_p.rt_edge_to_parent)) {
+		rt_node_p.pending_rip_up = get_vertex_props(rt.graph, get_source(rt.graph, rt_node_p.rt_edge_to_parent)).pending_rip_up;
+	} else {
+		rt_node_p.pending_rip_up = false;
+	}
+
+	rt_node_p.pending_rip_up |= (congestion[rt_node_p.rr_node].occ > rr_node_p.capacity);
+	/*rt_node_p.pending_rip_up = true;*/
+
+	if (rt_node_p.pending_rip_up) {
+		bg::expand(rt.scheduler_bounding_box, segment(point(rr_node_p.xlow, rr_node_p.ylow), point(rr_node_p.xhigh, rr_node_p.yhigh)));
+	}
+
+	rt_node_p.ripped_up = false;
+
+	return rt_node_p.pending_rip_up;
+}
+
+template<typename Congestion>
+bool route_tree_mark_congested_nodes_to_be_ripped_internal(route_tree_t &rt, const RRGraph &g, const Congestion *congestion, RouteTreeNode rt_node)
+{
+	const auto &rt_node_p = get_vertex_props(rt.graph, rt_node);
+	
+	assert(rt_node_p.valid);
+
+	bool marked = route_tree_node_check_and_mark_congested_for_rip_up(rt, rt_node, g, congestion);
+
+	for (auto &branch : route_tree_get_branches(rt, rt_node)) {
+		auto child = get_target(rt.graph, branch);
+
+		marked |= route_tree_mark_congested_nodes_to_be_ripped_internal(rt, g, congestion, child);
+	}
+
+	return marked;
+}
+
+template<typename Congestion>
+bool route_tree_mark_congested_nodes_to_be_ripped(route_tree_t &rt, const RRGraph &g, const Congestion *congestion)
+{
+	rt.scheduler_bounding_box = bg::make_inverse<box>();
+
+	bool marked = false;
+
+	assert(rt.root_rt_nodes.size() == 1 || rt.root_rt_nodes.size() == 0);
+
+	for (const auto &root_rt_node : rt.root_rt_nodes) {
+		marked |= route_tree_mark_congested_nodes_to_be_ripped_internal(rt, g, congestion, root_rt_node);
+	}
+
+	return marked;
+}
 
 //std::shared_ptr<vector<path_node_t>> route_tree_get_path(const route_tree_t &rt, RRNode to_node);
 

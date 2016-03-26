@@ -241,20 +241,20 @@ void update_one_cost_mpi(const vector<RRNode>::const_iterator &rr_nodes_begin, c
 	/*update_one_cost_internal(rr_node, delta, pres_fac);*/
 }
 
-void update_one_cost_internal(RRNode rr_node, const rr_node_property_t &rr_node_p, congestion_t &congestion, /*int net_id, */int delta, float pres_fac, bool lock, lock_perf_t *lock_perf)
+void update_one_cost_internal(RRNode rr_node, const RRGraph &g, congestion_t *congestion, /*int net_id, */int delta, float pres_fac, bool lock, lock_perf_t *lock_perf)
 {
 	if (lock) {
 		if (lock_perf) {
 			++lock_perf->num_lock_tries;
 		}
 
-		if (!congestion.lock.try_lock()) {
+		if (!congestion[rr_node].lock.try_lock()) {
 			if (lock_perf) {
 				++lock_perf->num_lock_waits;
 			}
 			using clock = std::chrono::high_resolution_clock;
 			auto wait_start = clock::now();
-			congestion.lock.lock();
+			congestion[rr_node].lock.lock();
 			if (lock_perf) {
 				lock_perf->total_wait_time += clock::now()-wait_start;
 			}
@@ -262,14 +262,16 @@ void update_one_cost_internal(RRNode rr_node, const rr_node_property_t &rr_node_
 		/*rr_node_p.lock->lock();*/
 	}
 	
-	congestion.occ += delta;
+	congestion[rr_node].occ += delta;
 
-	assert(congestion.occ >= 0);
+	assert(congestion[rr_node].occ >= 0);
 
-	if (congestion.occ < rr_node_p.capacity) {
-		congestion.pres_cost = 1;
+	const auto &rr_node_p = get_vertex_props(g, rr_node);
+
+	if (congestion[rr_node].occ < rr_node_p.capacity) {
+		congestion[rr_node].pres_cost = 1;
 	} else {
-		congestion.pres_cost = 1 + (congestion.occ + 1 - rr_node_p.capacity) * pres_fac;
+		congestion[rr_node].pres_cost = 1 + (congestion[rr_node].occ + 1 - rr_node_p.capacity) * pres_fac;
 	}
 
 	/*if (delta > 0) {*/
@@ -283,12 +285,12 @@ void update_one_cost_internal(RRNode rr_node, const rr_node_property_t &rr_node_
 	/*}*/
 
 	if (lock) {
-		congestion.lock.unlock();
+		congestion[rr_node].lock.unlock();
 	}
 		
 	char buffer[256];
 	sprintf_rr_node(rr_node, buffer);
-	zlog_level(delta_log, ROUTER_V2, "Update cost of %s delta: %d new_occ: %d pres_fac: %g\n", buffer, delta, congestion.occ, pres_fac);
+	zlog_level(delta_log, ROUTER_V2, "Update cost of %s delta: %d new_occ: %d pres_fac: %g\n", buffer, delta, congestion[rr_node].occ, pres_fac);
 }
 
 void update_one_cost(const RRGraph &g, congestion_t *congestion, const vector<RRNode>::const_iterator &rr_nodes_begin, const vector<RRNode>::const_iterator &rr_nodes_end, /*int net_id,*/ int delta, float pres_fac, bool lock, lock_perf_t *lock_perf)
@@ -299,8 +301,7 @@ void update_one_cost(const RRGraph &g, congestion_t *congestion, const vector<RR
 		/*const RouteTreeNode &rt_node = get_target(rt.graph, get_edge(rt.graph, rt_edge_id));*/
 		/*last = &get_target(rt.graph, get_edge(rt.graph, rt_edge_id));*/
 		/*RRNode &rr_node = get_vertex(g, rt_node.rr_node);*/
-		const auto &rr_node_p = get_vertex_props(g, *iter);
-		update_one_cost_internal(*iter, rr_node_p, congestion[*iter], /*net_id,*/ delta, pres_fac, lock, lock_perf);
+		update_one_cost_internal(*iter, g, congestion, /*net_id,*/ delta, pres_fac, lock, lock_perf);
 	}
 	/*RRNode &rr_node = get_vertex(g, last->rr_node);*/
 	/*update_one_cost_internal(rr_node, delta, pres_fac);*/

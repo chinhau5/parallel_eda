@@ -31,8 +31,21 @@ extern __itt_string_handle *shMainTask;
 using std::chrono::duration_cast;
 using std::chrono::nanoseconds;
 
-int zlog_custom_output(zlog_msg_t *msg);
-int zlog_sched_custom_output(zlog_msg_t *msg);
+vector<vector<FILE *>> delta_log_files;
+
+static int delta_log_output(zlog_msg_t *msg)
+{
+	int tid;
+	int iter;
+
+	if (sscanf(msg->path, "iter_%d_tid_%d.log", &iter, &tid) != 2) {
+		return 0;
+	}
+
+	concurrent_log_impl(msg, delta_log_files, iter, tid);
+
+	return 0;
+}
 
 void dump_all_net_bounding_boxes(const char *circuit_name, const vector<net_t> &nets)
 {
@@ -117,11 +130,9 @@ bool locking_route(t_router_opts *opts, int run)
 
 	using clock = std::chrono::high_resolution_clock;
 
-	extern clock::time_point start_time;
+	//extern clock::time_point start_time;
 
-	extern FILE *current_output_log;
-
-	start_time = clock::now();
+	//start_time = clock::now();
 
 /*#ifdef __linux__*/
 	/*printf("domain flags: %d\n", pD->flags);*/
@@ -129,9 +140,14 @@ bool locking_route(t_router_opts *opts, int run)
 /*#endif*/
 	
 	init_logging();
-	zlog_set_record("custom_output", zlog_custom_output);
-	zlog_set_record("sched_custom_output", zlog_sched_custom_output);
-	current_output_log = fopen("/Volumes/DATA/main.log", "w");
+	zlog_set_record("custom_output", delta_log_output);
+    delta_log_files.resize(opts->max_router_iterations);
+    for (int i = 0; i < opts->max_router_iterations; ++i) {
+        delta_log_files[i].resize(opts->num_threads, nullptr);
+    }
+
+	zlog_put_mdc("iter", "0");
+	zlog_put_mdc("tid", "0");
 
 	zlog_info(delta_log, "Using boost version %d\n", BOOST_VERSION);
 
@@ -139,13 +155,13 @@ bool locking_route(t_router_opts *opts, int run)
 	zlog_warn(delta_log, "Using debug version of TBB\n");
 #endif
 
-	box a(point(0, 0), point(5,5));
-	box b(point(5, 0), point(10,5));
-	box inter;
-	bg::intersection(a, b, inter);
-	bg::add_value(inter.max_corner(), 1);
-	int lol_area = bg::area(inter);
-	printf("we're here\n");
+	//box a(point(0, 0), point(5,5));
+	//box b(point(5, 0), point(10,5));
+	//box inter;
+	//bg::intersection(a, b, inter);
+	//bg::add_value(inter.max_corner(), 1);
+	//int lol_area = bg::area(inter);
+	//printf("we're here\n");
 
 	RRGraph g;
 	init_graph(g);
@@ -190,15 +206,13 @@ bool locking_route(t_router_opts *opts, int run)
 	}
 
 	vector<route_state_t *> states(opts->num_threads);
-	congestion_t *congestion = new congestion_t[num_vertices(g)];
-
 	for (int i = 0; i < opts->num_threads; ++i) {
 		states[i] = new route_state_t[num_vertices(g)];
 		for (int j = 0; j < num_vertices(g); ++j) {
-			states[i][j].rr_node = -1;
+			states[i][j].rr_node = RRGraph::null_vertex();
 			states[i][j].known_cost = std::numeric_limits<float>::max();
 			states[i][j].cost = std::numeric_limits<float>::max();
-			states[i][j].prev_edge = -1;
+			states[i][j].prev_edge = RRGraph::null_edge();
 			states[i][j].upstream_R = -1;
 			states[i][j].delay = std::numeric_limits<float>::max();
 		}
@@ -213,6 +227,7 @@ bool locking_route(t_router_opts *opts, int run)
 
 	//vector<vector<virtual_net_t>> virtual_nets_by_net;
 	//create_clustered_virtual_nets(nets, 5, opts->max_sink_bb_area, virtual_nets_by_net);
+	congestion_t *congestion = new congestion_t[num_vertices(g)];
 	for (int i = 0; i < num_vertices(g); ++i) {
 		congestion[i].acc_cost = 1;
 		congestion[i].pres_cost = 1;
@@ -220,10 +235,6 @@ bool locking_route(t_router_opts *opts, int run)
 	}
 
 	char buffer[256];
-
-	if (current_output_log) {
-		fclose(current_output_log);
-	}
 
 	vector<pair<box, net_t *>> nets_to_route;
 	vector<pair<box, net_t *>> nets_to_partition;
@@ -265,7 +276,7 @@ bool locking_route(t_router_opts *opts, int run)
 	clock::duration total_analyze_timing_time = clock::duration::zero();
 	clock::duration total_iter_time = clock::duration::zero();
 
-	int greedy_rip_up_all_period = 3;
+	//int greedy_rip_up_all_period = 3;
 	int partitioned_iter = -1;
 	int iter;
 	int next_greedy_rip_up_iter = 0;
@@ -278,9 +289,6 @@ bool locking_route(t_router_opts *opts, int run)
 		clock::duration partitioning_time = clock::duration::zero();
 		clock::duration analyze_timing_time = clock::duration::zero();
 		clock::duration iter_time = clock::duration::zero();
-
-		sprintf(buffer, "/Volumes/DATA/iter_%d.txt", iter);
-		current_output_log = fopen(buffer, "w");
 
 		zlog_info(delta_log, "Routing iteration: %d\n", iter);
 		bool partitioned_rip_up_all = (partitioned_iter % opts->rip_up_period) == 0;
@@ -296,10 +304,6 @@ bool locking_route(t_router_opts *opts, int run)
 		auto iter_start = clock::now();
 
 		//auto route_start = clock::now();
-
-		for (auto &net : nets) {
-			update_sink_criticalities(net, net_timing[net.vpr_id], params);
-		}
 
 #ifdef __linux__ 
 		__itt_frame_begin_v3(pD, NULL);
@@ -321,6 +325,13 @@ bool locking_route(t_router_opts *opts, int run)
 
 					int tid = range.begin();
 
+					char local_buffer[256];
+					sprintf(local_buffer, "%d", iter);
+					zlog_put_mdc("iter", local_buffer);
+
+					sprintf(local_buffer, "%d", tid);
+					zlog_put_mdc("tid", local_buffer);
+
 					//assert(debug_lock[tid].try_lock());
 					
 					perf_t local_perf;
@@ -337,10 +348,13 @@ bool locking_route(t_router_opts *opts, int run)
 					while ((i = net_index++) < nets_to_route.size()) {
 						net_t *net = nets_to_route[i].second;
 
+						update_sink_criticalities(*net, net_timing[net->vpr_id], params);
+
 						//auto rip_up_start = clock::now();
 						//if (greedy_rip_up_all) {
 							//route_tree_mark_all_nodes_to_be_ripped(route_trees[net->local_id], g);
 						//} else {
+						zlog_level(delta_log, ROUTER_V1, "Ripping up net %d\n", net->vpr_id);
 							route_tree_mark_congested_nodes_to_be_ripped(route_trees[net->local_id], g, congestion);
 						//}
 						route_tree_rip_up_marked(route_trees[net->local_id], g, congestion, params.pres_fac, true, &local_lock_perf);
@@ -352,15 +366,17 @@ bool locking_route(t_router_opts *opts, int run)
 						vector<sink_t *> sinks;	
 						sinks.reserve(net->sinks.size());
 						for (auto &sink : net->sinks) {
-							const RouteTreeNode *sink_rt_node = route_tree_get_rt_node(route_trees[net->local_id], sink.rr_node);
-							if (!sink_rt_node)  {
+							RouteTreeNode sink_rt_node = route_tree_get_rt_node(route_trees[net->local_id], sink.rr_node);
+							if (sink_rt_node == RouteTree::null_vertex())  {
 								sinks.push_back(&sink);
 							} else {
-								assert(!sink_rt_node->properties.pending_rip_up);
+								const auto &sink_rt_node_p = get_vertex_props(route_trees[net->local_id].graph, sink_rt_node);
+								assert(!sink_rt_node_p.pending_rip_up);
 							}
 						}
+
 						if (!sinks.empty()) {
-							route_net_2(g, net->vpr_id, &net->source, sinks, params, states[tid], congestion, route_trees[net->local_id], net_timing[net->vpr_id], true, &local_perf, &local_lock_perf);
+							route_net_with_fine_grain_lock(g, net->vpr_id, &net->source, sinks, params, states[tid], congestion, route_trees[net->local_id], net_timing[net->vpr_id], true, &local_perf, &local_lock_perf);
 
 							++num_nets_routed;
 						}
@@ -393,15 +409,16 @@ bool locking_route(t_router_opts *opts, int run)
 					vector<sink_t *> sinks;	
 					sinks.reserve(net->sinks.size());
 					for (auto &sink : net->sinks) {
-						const RouteTreeNode *sink_rt_node = route_tree_get_rt_node(route_trees[net->local_id], sink.rr_node);
-						if (!sink_rt_node)  {
+						RouteTreeNode sink_rt_node = route_tree_get_rt_node(route_trees[net->local_id], sink.rr_node);
+						if (sink_rt_node == RouteTree::null_vertex())  {
 							sinks.push_back(&sink);
 						} else {
-							assert(!sink_rt_node->properties.pending_rip_up);
+							const auto &sink_rt_node_p = get_vertex_props(route_trees[net->local_id].graph, sink_rt_node);
+							assert(!sink_rt_node_p.pending_rip_up);
 						}
 					}
 					if (!sinks.empty()) {
-						route_net_2(g, net->vpr_id, &net->source, sinks, params, states[0], congestion, route_trees[net->local_id], net_timing[net->vpr_id], true, nullptr, nullptr);
+						route_net_with_fine_grain_lock(g, net->vpr_id, &net->source, sinks, params, states[0], congestion, route_trees[net->local_id], net_timing[net->vpr_id], true, nullptr, nullptr);
 					}
 				}
 			} else {
@@ -437,15 +454,16 @@ bool locking_route(t_router_opts *opts, int run)
 							vector<sink_t *> sinks;	
 							sinks.reserve(net->sinks.size());
 							for (auto &sink : net->sinks) {
-								const RouteTreeNode *sink_rt_node = route_tree_get_rt_node(route_trees[net->local_id], sink.rr_node);
-								if (!sink_rt_node)  {
+								RouteTreeNode sink_rt_node = route_tree_get_rt_node(route_trees[net->local_id], sink.rr_node);
+								if (sink_rt_node == RouteTree::null_vertex()) {
 									sinks.push_back(&sink);
 								} else {
-									assert(!sink_rt_node->properties.pending_rip_up);
+									const auto &sink_rt_node_p = get_vertex_props(route_trees[net->local_id].graph, sink_rt_node);
+									assert(!sink_rt_node_p.pending_rip_up);
 								}
 							}
 							if (!sinks.empty()) {
-								route_net_2(g, net->vpr_id, &net->source, sinks, params, states[tid], congestion, route_trees[net->local_id], net_timing[net->vpr_id], true, &local_perf, &local_lock_perf);
+								route_net_with_fine_grain_lock(g, net->vpr_id, &net->source, sinks, params, states[tid], congestion, route_trees[net->local_id], net_timing[net->vpr_id], true, &local_perf, &local_lock_perf);
 
 								++num_nets_routed;
 							}
@@ -501,7 +519,8 @@ bool locking_route(t_router_opts *opts, int run)
 
 		for (const auto &net : nets) {
 			vector<int> overused_rr_node;
-			get_overused_nodes(route_trees[net.local_id], get_vertex(route_trees[net.local_id].graph, route_trees[net.local_id].root_rt_node_id), g, congestion, overused_rr_node);
+			assert(route_trees[net.local_id].root_rt_nodes.size() == 1);
+			get_overused_nodes(route_trees[net.local_id], route_trees[net.local_id].root_rt_nodes[0], g, congestion, overused_rr_node);
 			if (!overused_rr_node.empty()) {
 				zlog_level(delta_log, ROUTER_V1, "Net %d bb_rank %d overused nodes:\n", net.vpr_id, net.bb_area_rank);
 				for (const auto &item : overused_rr_node) {
@@ -519,7 +538,7 @@ bool locking_route(t_router_opts *opts, int run)
 		} else {
 			unsigned long num_overused_nodes = 0;
 			for (int i = 0; i < num_vertices(g); ++i) {
-				if (congestion[i].occ > get_vertex(g, i).properties.capacity) {
+				if (congestion[i].occ > get_vertex_props(g, i).capacity) {
 					++num_overused_nodes;
 				}
 			}
@@ -650,13 +669,6 @@ bool locking_route(t_router_opts *opts, int run)
 				printf("Thread %d partitioned wait time %g (%g)\n", i, duration_cast<nanoseconds>(partitioned_end_time[i]-partitioned_earliest_end_time).count() / 1e9, 100.0*(partitioned_end_time[i]-partitioned_earliest_end_time)/partitioned_route_time);
 			}
 		}
-
-		if (current_output_log && fclose(current_output_log)) {
-			char str[256];
-			strerror_r(errno, str, sizeof(str));
-			printf("failed to close file: %s\n", str);
-			assert(false);
-		}
 	}
 
 	sprintf(buffer, "%s_run_%d_rr_graph_occ.txt", s_circuit_name, run);
@@ -698,11 +710,11 @@ bool locking_route__1(t_router_opts *opts)
 
 	using clock = std::chrono::high_resolution_clock;
 
-	extern clock::time_point start_time;
+	//extern clock::time_point start_time;
 
-	extern FILE *current_output_log;
+	//extern FILE *current_output_log;
 
-	start_time = clock::now();
+	//start_time = clock::now();
 
 /*#ifdef __linux__*/
 	/*printf("domain flags: %d\n", pD->flags);*/
@@ -710,9 +722,9 @@ bool locking_route__1(t_router_opts *opts)
 /*#endif*/
 	
 	init_logging();
-	zlog_set_record("custom_output", zlog_custom_output);
-	zlog_set_record("sched_custom_output", zlog_sched_custom_output);
-	current_output_log = fopen("/Volumes/DATA/main.log", "w");
+	//zlog_set_record("custom_output", zlog_custom_output);
+	//zlog_set_record("sched_custom_output", zlog_sched_custom_output);
+	//current_output_log = fopen("/Volumes/DATA/main.log", "w");
 
 	zlog_info(delta_log, "Using boost version %d\n", BOOST_VERSION);
 
@@ -759,10 +771,10 @@ bool locking_route__1(t_router_opts *opts)
 	for (int i = 0; i < opts->num_threads; ++i) {
 		states[i] = new route_state_t[num_vertices(g)];
 		for (int j = 0; j < num_vertices(g); ++j) {
-			states[i][j].rr_node = -1;
+			states[i][j].rr_node = RRGraph::null_vertex();
 			states[i][j].known_cost = std::numeric_limits<float>::max();
 			states[i][j].cost = std::numeric_limits<float>::max();
-			states[i][j].prev_edge = -1;
+			states[i][j].prev_edge = RRGraph::null_edge();
 			states[i][j].upstream_R = -1;
 			states[i][j].delay = std::numeric_limits<float>::max();
 		}
@@ -786,9 +798,9 @@ bool locking_route__1(t_router_opts *opts)
 
 	char buffer[256];
 
-	if (current_output_log) {
-		fclose(current_output_log);
-	}
+	//if (current_output_log) {
+		//fclose(current_output_log);
+	//}
 
 	vector<pair<box, net_t *>> nets_to_route;
 	vector<pair<box, net_t *>> nets_to_partition;
@@ -823,7 +835,7 @@ bool locking_route__1(t_router_opts *opts)
 	
 	for (int iter = 0; iter < opts->max_router_iterations && !routed; ++iter) {
 		sprintf(buffer, "/Volumes/DATA/iter_%d.txt", iter);
-		current_output_log = fopen(buffer, "w");
+		//current_output_log = fopen(buffer, "w");
 
 		zlog_info(delta_log, "Routing iteration: %d\n", iter);
 		bool rip_up_all = (iter % rip_up_all_period) == 0 && !use_partitioned;
@@ -873,18 +885,19 @@ bool locking_route__1(t_router_opts *opts)
 						if (rip_up_all) {
 							route_tree_mark_all_nodes_to_be_ripped(route_trees[net->local_id], g);
 						} else {
-							route_tree_mark_congested_nodes_to_be_ripped(route_trees[net->local_id], g, nullptr);
+							//route_tree_mark_congested_nodes_to_be_ripped(route_trees[net->local_id], g, nullptr);
 						}
 						route_tree_rip_up_marked(route_trees[net->local_id], g, nullptr, params.pres_fac, true, &lock_perfs[tid]);
 
 						vector<sink_t *> sinks;	
 						sinks.reserve(net->sinks.size());
 						for (auto &sink : net->sinks) {
-							const RouteTreeNode *sink_rt_node = route_tree_get_rt_node(route_trees[net->local_id], sink.rr_node);
+							RouteTreeNode sink_rt_node = route_tree_get_rt_node(route_trees[net->local_id], sink.rr_node);
 							if (!sink_rt_node)  {
 								sinks.push_back(&sink);
 							} else {
-								assert(!sink_rt_node->properties.pending_rip_up);
+								const auto &sink_rt_node_p = get_vertex_props(route_trees[net->local_id].graph, sink_rt_node);
+								assert(!sink_rt_node_p.pending_rip_up);
 							}
 						}
 						if (!sinks.empty()) {
@@ -913,11 +926,12 @@ bool locking_route__1(t_router_opts *opts)
 						vector<sink_t *> sinks;	
 						sinks.reserve(net->sinks.size());
 						for (auto &sink : net->sinks) {
-							const RouteTreeNode *sink_rt_node = route_tree_get_rt_node(route_trees[net->local_id], sink.rr_node);
+							RouteTreeNode sink_rt_node = route_tree_get_rt_node(route_trees[net->local_id], sink.rr_node);
 							if (!sink_rt_node)  {
 								sinks.push_back(&sink);
 							} else {
-								assert(!sink_rt_node->properties.pending_rip_up);
+								const auto &sink_rt_node_p = get_vertex_props(route_trees[net->local_id].graph, sink_rt_node);
+								assert(!sink_rt_node_p.pending_rip_up);
 							}
 						}
 						if (!sinks.empty()) {
@@ -960,7 +974,8 @@ bool locking_route__1(t_router_opts *opts)
 
 		for (const auto &net : nets) {
 			vector<int> overused_rr_node;
-			get_overused_nodes(route_trees[net.local_id], get_vertex(route_trees[net.local_id].graph, route_trees[net.local_id].root_rt_node_id), g, nullptr, overused_rr_node);
+			assert(route_trees[net.local_id].root_rt_nodes.size() == 1);
+			//get_overused_nodes(route_trees[net.local_id], route_trees[net.local_id].root_rt_nodes[0], g, congestion, overused_rr_node);
 			if (!overused_rr_node.empty()) {
 				zlog_level(delta_log, ROUTER_V1, "Net %d bb_rank %d overused nodes:\n", net.vpr_id, net.bb_area_rank);
 				for (const auto &item : overused_rr_node) {
@@ -974,7 +989,7 @@ bool locking_route__1(t_router_opts *opts)
 		/*sprintf(filename, "congestion_%d.txt", iter);*/
 		/*dump_congestion_map(g, filename);*/
 
-		if (feasible_routing(g, nullptr)) {
+		if (true/*feasible_routing(g, nullptr)*/) {
 			zlog_info(delta_log, "Routed in %d iterations. Total route time: %g\n", iter+1, duration_cast<nanoseconds>(total_route_time).count() / 1e9);
 			printf("Routed in %d iterations. Total route time: %g\n", iter+1, duration_cast<nanoseconds>(total_route_time).count() / 1e9);
 			//dump_route(*current_traces_ptr, "route.txt");
@@ -998,12 +1013,12 @@ bool locking_route__1(t_router_opts *opts)
 						for (int i = range.begin(); i != range.end(); ++i) {
 							net_t *net = nets_to_route[i].second;
 
-							bool marked = route_tree_mark_congested_nodes_to_be_ripped(route_trees[net->local_id], g, nullptr);
-							if (marked) {
-								lock.lock();
-								nets_to_partition.push_back(nets_to_route[i]);
-								lock.unlock();
-							}
+							//bool marked = route_tree_mark_congested_nodes_to_be_ripped(route_trees[net->local_id], g, nullptr);
+							//if (marked) {
+								//lock.lock();
+								//nets_to_partition.push_back(nets_to_route[i]);
+								//lock.unlock();
+							//}
 						}
 					});
 
@@ -1013,7 +1028,7 @@ bool locking_route__1(t_router_opts *opts)
 				partition_nets(nets_to_partition, opts->num_threads, 1000, overlaps, partitions, has_interpartition_overlap);
 				use_partitioned = true;
 				for (int i = 0; i < opts->num_threads; ++i) {
-					printf("Partition %d size %d\n", i, partitions[i].size());
+					printf("Partition %d size %lu\n", i, partitions[i].size());
 				}
 			} else {
 				/* check whether we need to do this */
@@ -1050,12 +1065,12 @@ bool locking_route__1(t_router_opts *opts)
 
 		zlog_info(delta_log, "Iteration time: %g s. Route time: %g s. \n", duration_cast<nanoseconds>(iter_time).count() / 1e9, route_time / 1e9);
 
-		if (current_output_log && fclose(current_output_log)) {
-			char str[256];
-			strerror_r(errno, str, sizeof(str));
-			printf("failed to close file: %s\n", str);
-			assert(false);
-		}
+		//if (current_output_log && fclose(current_output_log)) {
+			//char str[256];
+			//strerror_r(errno, str, sizeof(str));
+			//printf("failed to close file: %s\n", str);
+			//assert(false);
+		//}
 	}
 
 	if (!routed) {
@@ -1071,11 +1086,11 @@ bool locking_route_0(t_router_opts *opts)
 
 	using clock = std::chrono::high_resolution_clock;
 
-	extern clock::time_point start_time;
+	//extern clock::time_point start_time;
 
-	extern FILE *current_output_log;
+	//extern FILE *current_output_log;
 
-	start_time = clock::now();
+	//start_time = clock::now();
 
 /*#ifdef __linux__*/
 	/*printf("domain flags: %d\n", pD->flags);*/
@@ -1083,9 +1098,9 @@ bool locking_route_0(t_router_opts *opts)
 /*#endif*/
 	
 	init_logging();
-	zlog_set_record("custom_output", zlog_custom_output);
-	zlog_set_record("sched_custom_output", zlog_sched_custom_output);
-	current_output_log = fopen("/Volumes/DATA/main.log", "w");
+	//zlog_set_record("custom_output", zlog_custom_output);
+	//zlog_set_record("sched_custom_output", zlog_sched_custom_output);
+	//current_output_log = fopen("/Volumes/DATA/main.log", "w");
 
 	zlog_info(delta_log, "Using boost version %d\n", BOOST_VERSION);
 
@@ -1132,10 +1147,10 @@ bool locking_route_0(t_router_opts *opts)
 	for (int i = 0; i < opts->num_threads; ++i) {
 		states[i] = new route_state_t[num_vertices(g)];
 		for (int j = 0; j < num_vertices(g); ++j) {
-			states[i][j].rr_node = -1;
+			states[i][j].rr_node = RRGraph::null_vertex();
 			states[i][j].known_cost = std::numeric_limits<float>::max();
 			states[i][j].cost = std::numeric_limits<float>::max();
-			states[i][j].prev_edge = -1;
+			states[i][j].prev_edge = RRGraph::null_edge();
 			states[i][j].upstream_R = -1;
 			states[i][j].delay = std::numeric_limits<float>::max();
 		}
@@ -1159,9 +1174,9 @@ bool locking_route_0(t_router_opts *opts)
 
 	char buffer[256];
 
-	if (current_output_log) {
-		fclose(current_output_log);
-	}
+	//if (current_output_log) {
+		//fclose(current_output_log);
+	//}
 
 	vector<pair<box, net_t *>> nets_to_partition;
 	vector<vector<int>> overlaps;
@@ -1203,7 +1218,7 @@ bool locking_route_0(t_router_opts *opts)
 
 	for (int iter = 0; iter < opts->max_router_iterations && !routed; ++iter) {
 		sprintf(buffer, "/Volumes/DATA/iter_%d.txt", iter);
-		current_output_log = fopen(buffer, "w");
+		//current_output_log = fopen(buffer, "w");
 
 		zlog_info(delta_log, "Routing iteration: %d\n", iter);
 
@@ -1247,17 +1262,18 @@ bool locking_route_0(t_router_opts *opts)
 				while ((i = net_index++) < nets_to_partition.size()) {
 					net_t *net = nets_to_partition[i].second;
 
-					route_tree_mark_nodes_to_be_ripped(route_trees[net->local_id], g, nullptr, 10000);
+					//route_tree_mark_nodes_to_be_ripped(route_trees[net->local_id], g, nullptr, 10000);
 					route_tree_rip_up_marked(route_trees[net->local_id], g, nullptr, params.pres_fac, true, &lock_perfs[tid]);
 
 					vector<sink_t *> sinks;	
 					sinks.reserve(net->sinks.size());
 					for (auto &sink : net->sinks) {
-						const RouteTreeNode *sink_rt_node = route_tree_get_rt_node(route_trees[net->local_id], sink.rr_node);
+						RouteTreeNode sink_rt_node = route_tree_get_rt_node(route_trees[net->local_id], sink.rr_node);
 						if (!sink_rt_node)  {
 							sinks.push_back(&sink);
 						} else {
-							assert(!sink_rt_node->properties.pending_rip_up);
+							const auto &sink_rt_node_p = get_vertex_props(route_trees[net->local_id].graph, sink_rt_node);
+							assert(!sink_rt_node_p.pending_rip_up);
 						}
 					}
 					if (!sinks.empty()) {
@@ -1300,7 +1316,7 @@ bool locking_route_0(t_router_opts *opts)
 
 		for (const auto &net : nets) {
 			vector<int> overused_rr_node;
-			get_overused_nodes(route_trees[net.local_id], get_vertex(route_trees[net.local_id].graph, route_trees[net.local_id].root_rt_node_id), g, nullptr, overused_rr_node);
+			//get_overused_nodes(route_trees[net.local_id], route_trees[net.local_id].root_rt_nodes[0], g, congestion, overused_rr_node);
 			if (!overused_rr_node.empty()) {
 				zlog_level(delta_log, ROUTER_V1, "Net %d bb_rank %d overused nodes:\n", net.vpr_id, net.bb_area_rank);
 				for (const auto &item : overused_rr_node) {
@@ -1314,7 +1330,7 @@ bool locking_route_0(t_router_opts *opts)
 		/*sprintf(filename, "congestion_%d.txt", iter);*/
 		/*dump_congestion_map(g, filename);*/
 
-		if (feasible_routing(g, nullptr)) {
+		if (true /*feasible_routing(g, nullptr)*/) {
 			zlog_info(delta_log, "Routed in %d iterations. Total route time: %g\n", iter+1, duration_cast<nanoseconds>(total_route_time).count() / 1e9);
 			printf("Routed in %d iterations. Total route time: %g\n", iter+1, duration_cast<nanoseconds>(total_route_time).count() / 1e9);
 			//dump_route(*current_traces_ptr, "route.txt");
@@ -1357,12 +1373,12 @@ bool locking_route_0(t_router_opts *opts)
 
 		zlog_info(delta_log, "Iteration time: %g s. Route time: %g s. \n", duration_cast<nanoseconds>(iter_time).count() / 1e9, route_time / 1e9);
 
-		if (current_output_log && fclose(current_output_log)) {
-			char str[256];
-			strerror_r(errno, str, sizeof(str));
-			printf("failed to close file: %s\n", str);
-			assert(false);
-		}
+		//if (current_output_log && fclose(current_output_log)) {
+			//char str[256];
+			//strerror_r(errno, str, sizeof(str));
+			//printf("failed to close file: %s\n", str);
+			//assert(false);
+		//}
 	}
 
 	if (!routed) {
@@ -1378,11 +1394,11 @@ bool locking_route_2(t_router_opts *opts)
 
 	using clock = std::chrono::high_resolution_clock;
 
-	extern clock::time_point start_time;
+	//extern clock::time_point start_time;
 
-	extern FILE *current_output_log;
+	//extern FILE *current_output_log;
 
-	start_time = clock::now();
+	//start_time = clock::now();
 
 /*#ifdef __linux__*/
 	/*printf("domain flags: %d\n", pD->flags);*/
@@ -1390,9 +1406,9 @@ bool locking_route_2(t_router_opts *opts)
 /*#endif*/
 	
 	init_logging();
-	zlog_set_record("custom_output", zlog_custom_output);
-	zlog_set_record("sched_custom_output", zlog_sched_custom_output);
-	current_output_log = fopen("/Volumes/DATA/main.log", "w");
+	//zlog_set_record("custom_output", zlog_custom_output);
+	//zlog_set_record("sched_custom_output", zlog_sched_custom_output);
+	//current_output_log = fopen("/Volumes/DATA/main.log", "w");
 
 	zlog_info(delta_log, "Using boost version %d\n", BOOST_VERSION);
 
@@ -1439,10 +1455,10 @@ bool locking_route_2(t_router_opts *opts)
 	for (int i = 0; i < opts->num_threads; ++i) {
 		states[i] = new route_state_t[num_vertices(g)];
 		for (int j = 0; j < num_vertices(g); ++j) {
-			states[i][j].rr_node = -1;
+			states[i][j].rr_node = RRGraph::null_vertex();
 			states[i][j].known_cost = std::numeric_limits<float>::max();
 			states[i][j].cost = std::numeric_limits<float>::max();
-			states[i][j].prev_edge = -1;
+			states[i][j].prev_edge = RRGraph::null_edge();
 			states[i][j].upstream_R = -1;
 			states[i][j].delay = std::numeric_limits<float>::max();
 		}
@@ -1466,9 +1482,9 @@ bool locking_route_2(t_router_opts *opts)
 
 	char buffer[256];
 
-	if (current_output_log) {
-		fclose(current_output_log);
-	}
+	//if (current_output_log) {
+		//fclose(current_output_log);
+	//}
 
 	vector<pair<box, net_t *>> nets_to_partition;
 	vector<vector<int>> overlaps;
@@ -1508,7 +1524,7 @@ bool locking_route_2(t_router_opts *opts)
 
 	for (int iter = 0; iter < opts->max_router_iterations && !routed; ++iter) {
 		sprintf(buffer, "/Volumes/DATA/iter_%d.txt", iter);
-		current_output_log = fopen(buffer, "w");
+		//current_output_log = fopen(buffer, "w");
 
 		zlog_info(delta_log, "Routing iteration: %d\n", iter);
 
@@ -1546,17 +1562,18 @@ bool locking_route_2(t_router_opts *opts)
 				while ((i = net_index++) < nets_to_partition.size()) {
 					net_t *net = nets_to_partition[i].second;
 
-					route_tree_mark_nodes_to_be_ripped(route_trees[net->local_id], g, nullptr, 10000);
+					//route_tree_mark_nodes_to_be_ripped(route_trees[net->local_id], g, nullptr, 10000);
 					route_tree_rip_up_marked(route_trees[net->local_id], g, nullptr, params.pres_fac, true, nullptr);
 
 					vector<sink_t *> sinks;	
 					sinks.reserve(net->sinks.size());
 					for (auto &sink : net->sinks) {
-						const RouteTreeNode *sink_rt_node = route_tree_get_rt_node(route_trees[net->local_id], sink.rr_node);
+						RouteTreeNode sink_rt_node = route_tree_get_rt_node(route_trees[net->local_id], sink.rr_node);
 						if (!sink_rt_node)  {
 							sinks.push_back(&sink);
 						} else {
-							assert(!sink_rt_node->properties.pending_rip_up);
+							const auto &sink_rt_node_p = get_vertex_props(route_trees[net->local_id].graph, sink_rt_node);
+							assert(!sink_rt_node_p.pending_rip_up);
 						}
 					}
 					if (!sinks.empty()) {
@@ -1609,7 +1626,7 @@ bool locking_route_2(t_router_opts *opts)
 
 		for (const auto &net : nets) {
 			vector<int> overused_rr_node;
-			get_overused_nodes(route_trees[net.local_id], get_vertex(route_trees[net.local_id].graph, route_trees[net.local_id].root_rt_node_id), g, nullptr, overused_rr_node);
+			//get_overused_nodes(route_trees[net.local_id], route_trees[net.local_id].root_rt_nodes[0], g, congestion, overused_rr_node);
 			if (!overused_rr_node.empty()) {
 				zlog_level(delta_log, ROUTER_V1, "Net %d bb_rank %d overused nodes:\n", net.vpr_id, net.bb_area_rank);
 				for (const auto &item : overused_rr_node) {
@@ -1623,7 +1640,7 @@ bool locking_route_2(t_router_opts *opts)
 		/*sprintf(filename, "congestion_%d.txt", iter);*/
 		/*dump_congestion_map(g, filename);*/
 
-		if (feasible_routing(g, nullptr)) {
+		if (true/*feasible_routing(g, nullptr)*/) {
 			zlog_info(delta_log, "Routed in %d iterations. Total route time: %g\n", iter+1, duration_cast<nanoseconds>(total_route_time).count() / 1e9);
 			printf("Routed in %d iterations. Total route time: %g\n", iter+1, duration_cast<nanoseconds>(total_route_time).count() / 1e9);
 			//dump_route(*current_traces_ptr, "route.txt");
@@ -1666,12 +1683,12 @@ bool locking_route_2(t_router_opts *opts)
 
 		zlog_info(delta_log, "Iteration time: %g s. Route time: %g s. \n", duration_cast<nanoseconds>(iter_time).count() / 1e9, route_time / 1e9);
 
-		if (current_output_log && fclose(current_output_log)) {
-			char str[256];
-			strerror_r(errno, str, sizeof(str));
-			printf("failed to close file: %s\n", str);
-			assert(false);
-		}
+		//if (current_output_log && fclose(current_output_log)) {
+			//char str[256];
+			//strerror_r(errno, str, sizeof(str));
+			//printf("failed to close file: %s\n", str);
+			//assert(false);
+		//}
 	}
 
 	if (!routed) {
@@ -1687,11 +1704,11 @@ bool locking_route_3(t_router_opts *opts)
 
 	using clock = std::chrono::high_resolution_clock;
 
-	extern clock::time_point start_time;
+	//extern clock::time_point start_time;
 
-	extern FILE *current_output_log;
+	//extern FILE *current_output_log;
 
-	start_time = clock::now();
+	//start_time = clock::now();
 
 /*#ifdef __linux__*/
 	/*printf("domain flags: %d\n", pD->flags);*/
@@ -1699,9 +1716,9 @@ bool locking_route_3(t_router_opts *opts)
 /*#endif*/
 	
 	init_logging();
-	zlog_set_record("custom_output", zlog_custom_output);
-	zlog_set_record("sched_custom_output", zlog_sched_custom_output);
-	current_output_log = fopen("/Volumes/DATA/main.log", "w");
+	//zlog_set_record("custom_output", zlog_custom_output);
+	//zlog_set_record("sched_custom_output", zlog_sched_custom_output);
+	//current_output_log = fopen("/Volumes/DATA/main.log", "w");
 
 	zlog_info(delta_log, "Using boost version %d\n", BOOST_VERSION);
 
@@ -1748,10 +1765,10 @@ bool locking_route_3(t_router_opts *opts)
 	for (int i = 0; i < opts->num_threads; ++i) {
 		states[i] = new route_state_t[num_vertices(g)];
 		for (int j = 0; j < num_vertices(g); ++j) {
-			states[i][j].rr_node = -1;
+			states[i][j].rr_node = RRGraph::null_vertex();
 			states[i][j].known_cost = std::numeric_limits<float>::max();
 			states[i][j].cost = std::numeric_limits<float>::max();
-			states[i][j].prev_edge = -1;
+			states[i][j].prev_edge = RRGraph::null_edge();
 			states[i][j].upstream_R = -1;
 			states[i][j].delay = std::numeric_limits<float>::max();
 		}
@@ -1775,9 +1792,9 @@ bool locking_route_3(t_router_opts *opts)
 
 	char buffer[256];
 
-	if (current_output_log) {
-		fclose(current_output_log);
-	}
+	//if (current_output_log) {
+		//fclose(current_output_log);
+	//}
 
 	vector<pair<box, net_t *>> nets_to_partition;
 	vector<vector<int>> overlaps;
@@ -1812,7 +1829,7 @@ bool locking_route_3(t_router_opts *opts)
 
 	for (int iter = 0; iter < opts->max_router_iterations && !routed; ++iter) {
 		sprintf(buffer, "/Volumes/DATA/iter_%d.txt", iter);
-		current_output_log = fopen(buffer, "w");
+		//current_output_log = fopen(buffer, "w");
 
 		zlog_info(delta_log, "Routing iteration: %d\n", iter);
 
@@ -1844,17 +1861,18 @@ bool locking_route_3(t_router_opts *opts)
 				for (int i = 0; i < partitions[tid].size(); ++i) {
 					net_t *net = nets_to_partition[partitions[tid][i]].second;
 
-					route_tree_mark_nodes_to_be_ripped(route_trees[net->local_id], g, nullptr, 5);
+					//route_tree_mark_nodes_to_be_ripped(route_trees[net->local_id], g, nullptr, 5);
 					route_tree_rip_up_marked(route_trees[net->local_id], g, nullptr, params.pres_fac, true, nullptr);
 
 					vector<sink_t *> sinks;	
 					sinks.reserve(net->sinks.size());
 					for (auto &sink : net->sinks) {
-						const RouteTreeNode *sink_rt_node = route_tree_get_rt_node(route_trees[net->local_id], sink.rr_node);
+						RouteTreeNode sink_rt_node = route_tree_get_rt_node(route_trees[net->local_id], sink.rr_node);
 						if (!sink_rt_node)  {
 							sinks.push_back(&sink);
 						} else {
-							assert(!sink_rt_node->properties.pending_rip_up);
+							const auto &sink_rt_node_p = get_vertex_props(route_trees[net->local_id].graph, sink_rt_node);
+							assert(!sink_rt_node_p.pending_rip_up);
 						}
 					}
 					if (!sinks.empty()) {
@@ -1907,7 +1925,7 @@ bool locking_route_3(t_router_opts *opts)
 
 		for (const auto &net : nets) {
 			vector<int> overused_rr_node;
-			get_overused_nodes(route_trees[net.local_id], get_vertex(route_trees[net.local_id].graph, route_trees[net.local_id].root_rt_node_id), g, nullptr, overused_rr_node);
+			//get_overused_nodes(route_trees[net.local_id], route_trees[net.local_id].root_rt_nodes[0], g, congestion, overused_rr_node);
 			if (!overused_rr_node.empty()) {
 				zlog_level(delta_log, ROUTER_V1, "Net %d bb_rank %d overused nodes:\n", net.vpr_id, net.bb_area_rank);
 				for (const auto &item : overused_rr_node) {
@@ -1921,7 +1939,7 @@ bool locking_route_3(t_router_opts *opts)
 		/*sprintf(filename, "congestion_%d.txt", iter);*/
 		/*dump_congestion_map(g, filename);*/
 
-		if (feasible_routing(g, nullptr)) {
+		if (true/*feasible_routing(g, nullptr)*/) {
 			zlog_info(delta_log, "Routed in %d iterations. Total route time: %g\n", iter+1, duration_cast<nanoseconds>(total_route_time).count() / 1e9);
 			printf("Routed in %d iterations. Total route time: %g\n", iter+1, duration_cast<nanoseconds>(total_route_time).count() / 1e9);
 			//dump_route(*current_traces_ptr, "route.txt");
@@ -1964,12 +1982,12 @@ bool locking_route_3(t_router_opts *opts)
 
 		zlog_info(delta_log, "Iteration time: %g s. Route time: %g s. \n", duration_cast<nanoseconds>(iter_time).count() / 1e9, route_time / 1e9);
 
-		if (current_output_log && fclose(current_output_log)) {
-			char str[256];
-			strerror_r(errno, str, sizeof(str));
-			printf("failed to close file: %s\n", str);
-			assert(false);
-		}
+		//if (current_output_log && fclose(current_output_log)) {
+			//char str[256];
+			//strerror_r(errno, str, sizeof(str));
+			//printf("failed to close file: %s\n", str);
+			//assert(false);
+		//}
 	}
 
 	if (!routed) {
