@@ -473,6 +473,12 @@ ProcessOption(INP char **Args, INOUTP t_options * Options) {
 		return ReadInt(Args, &Options->rip_up_period);
 	case OT_TRANSITION_THRESHOLD:
 		return ReadFloat(Args, &Options->transition_threshold);
+	case OT_LARGE_BB:
+		return ReadOnOff(Args, &Options->large_bb);
+	case OT_WORK_CONSERVING:
+		return ReadOnOff(Args, &Options->work_conserving);
+	case OT_RIP_UP_ALWAYS:
+		return ReadOnOff(Args, &Options->rip_up_always);
 			
 		/* Routing options valid only for timing-driven routing */
 	case OT_ASTAR_FAC:

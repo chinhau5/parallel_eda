@@ -1,0 +1,443 @@
+#ifndef FAST_GRAPH_H
+#define FAST_GRAPH_H
+#include <vector>
+#include <algorithm>
+#include <boost/iterator/counting_iterator.hpp>
+#include <boost/range/counting_range.hpp>
+
+using namespace std;
+
+template<typename Properties>
+struct edge_t {
+	int m_id;
+	int a;
+	int b;
+	Properties properties;	
+};
+
+template<typename VertexProperties, typename EdgeProperties>
+struct vertex_t {
+	int m_id;
+	vector<edge_t> edges;
+	VertexProperties properties;	
+};
+
+typedef struct edge_to_target_t {
+	int operator()(const edge_t &e) const
+	{
+		return e.b;
+	}
+} edge_to_target_t;
+
+template<typename VertexProperties, typename EdgeProperties>
+struct fast_graph_t {
+	typedef vector<vertex_t<VertexProperties, EdgeProperties>> Vertices;
+	typedef vector<edge_t<EdgeProperties>> Edges;
+	Vertices vertices;
+	Edges edges;
+
+	using base = fast_graph_t<VertexProperties, EdgeProperties>;
+
+	base &base_graph()
+	{
+		return *this;
+	}
+
+	const base &base_graph() const
+	{
+		return *this;
+	}
+
+	//struct out_edges_iterator : public std::iterator<
+					  //typename std::forward_iterator_tag,
+					  //edge_t<EdgeProperties>,
+					  //ptrdiff_t,
+					  //edge_t<EdgeProperties> *,
+					  //edge_t<EdgeProperties> & 
+					  //> {
+		//fast_graph_t &g;
+		//vector<int>::const_iterator iter;
+
+		//out_edges_iterator(fast_graph_t &g, const vector<int>::const_iterator &iter) 
+			//: g(g), iter(iter)
+		   //{
+		//}
+
+		//out_edges_iterator &operator++()
+		//{
+			//++iter;
+			//return *this;
+		//}
+
+		//typename out_edges_iterator::reference operator*() const
+		//{
+			//return g.edges[*iter];
+		//}
+
+		//typename out_edges_iterator::pointer operator->() const
+		//{
+			//return &g.edges[*iter];
+		//}
+
+		//bool operator==(const out_edges_iterator &other) const
+		//{
+			//return other.iter == iter;
+		//}
+
+		//bool operator!=(const out_edges_iterator &other) const
+		//{
+			//return other.iter != iter;
+		//}
+	//};
+
+	//struct out_edges_const_iterator : public std::iterator<
+					  //typename std::forward_iterator_tag,
+					  //edge_t<EdgeProperties>,
+					  //ptrdiff_t,
+					  //const edge_t<EdgeProperties> *,
+					  //const edge_t<EdgeProperties> & 
+					  //> {
+		//const fast_graph_t &g;
+		//vector<int>::const_iterator iter;
+
+		//out_edges_const_iterator(const fast_graph_t &g, const vector<int>::const_iterator &iter) 
+			//: g(g), iter(iter)
+		   //{
+		//}
+
+		//out_edges_const_iterator &operator++()
+		//{
+			//++iter;
+			//return *this;
+		//}
+
+		//typename out_edges_const_iterator::reference operator*() const
+		//{
+			//return g.edges[*iter];
+		//}
+
+		//typename out_edges_const_iterator::pointer operator->() const
+		//{
+			//return &g.edges[*iter];
+		//}
+
+		//bool operator==(const out_edges_const_iterator &other) const
+		//{
+			//return other.iter == iter;
+		//}
+
+		//bool operator!=(const out_edges_const_iterator &other) const
+		//{
+			//return other.iter != iter;
+		//}
+	//};
+
+	//template<typename Value, typename Base>
+	//struct iterator : public std::iterator<
+					  //typename std::forward_iterator_tag,
+					  //Value,
+					  //ptrdiff_t,
+					  //Value,
+					  //Value 
+					  //> {
+		//Base iter;
+
+		//iterator(const Base &iter) 
+			//: iter(iter)
+		   //{
+			////printf("iterator constructor\n");
+		//}
+
+		////iterator(const iterator &other) 
+			////: iter(other.iter)
+		   ////{
+			////printf("iterator copy constructor\n");
+		////}
+
+		////void operator=(const iterator &other) 
+		   ////{
+			////iter = other.iter;
+			////printf("iterator assignment\n");
+		////}
+
+		//iterator &operator++()
+		//{
+			//++iter;
+			//return *this;
+		//}
+
+		//typename iterator::reference operator*() const
+		//{
+			//return iter;
+		//}
+
+		////typename iterator::pointer operator->() const
+		////{
+			////return &(*iter);
+		////}
+
+		//bool operator==(const iterator &other) const
+		//{
+			//return other.iter == iter;
+		//}
+
+		//bool operator!=(const iterator &other) const
+		//{
+			//return other.iter != iter;
+		//}
+	//};
+
+	typedef boost::counting_iterator<unsigned long> vertex_iterator;
+
+	typedef boost::counting_iterator<unsigned long> edge_iterator;
+
+	typedef boost::transform_iterator<edge_to_target_t, vector<edge_t>::const_iterator> out_edges_iterator;
+};
+
+template<typename VertexProperties, typename EdgeProperties>
+boost::iterator_range<typename fast_graph_t<VertexProperties, EdgeProperties>::edge_iterator>
+get_edges(const fast_graph_t<VertexProperties, EdgeProperties> &g) 
+{
+	return boost::counting_range(0ul, g.edges.size());
+}
+
+template<typename VertexProperties, typename EdgeProperties>
+boost::iterator_range<typename fast_graph_t<VertexProperties, EdgeProperties>::vertex_iterator>
+get_vertices(const fast_graph_t<VertexProperties, EdgeProperties> &g) 
+{
+	return boost::counting_range(0ul, g.vertices.size());
+}
+
+template<typename VertexProperties, typename EdgeProperties>
+boost::iterator_range<typename fast_graph_t<VertexProperties, EdgeProperties>::out_edges_iterator>
+get_out_edges(const fast_graph_t<VertexProperties, EdgeProperties> &g, int v)
+{
+	assert(v < g.vertices.size());
+	
+	const auto &edges = g.vertices[v].edges;
+
+	return boost::make_iterator_range(edges.begin(), edges.end()); 
+}
+
+//get_neighbors(const fast_graph_t<VertexProperties, EdgeProperties> &g, int v)
+//{
+//}
+
+template<typename VertexProperties, typename EdgeProperties>
+int id(const vertex_t<VertexProperties, EdgeProperties> &v)
+{
+	return v.m_id;
+}
+
+template<typename EdgeProperties>
+int id(const edge_t<EdgeProperties> &e)
+{
+	return e.m_id;
+}
+
+template<typename VertexProperties, typename EdgeProperties>
+int num_vertices(const fast_graph_t<VertexProperties, EdgeProperties> &g)
+{
+	return g.vertices.size();
+}
+
+template<typename VertexProperties, typename EdgeProperties>
+int num_edges(const fast_graph_t<VertexProperties, EdgeProperties> &g)
+{
+	return g.edges.size();
+}
+
+template<typename VertexProperties, typename EdgeProperties>
+int num_out_edges(const fast_graph_t<VertexProperties, EdgeProperties> &g, int v)
+{
+	return g.vertices[v].edges.size();
+}
+
+template<typename VertexProperties, typename EdgeProperties>
+vertex_t<VertexProperties, EdgeProperties> &get_vertex(fast_graph_t<VertexProperties, EdgeProperties> &g, int v)
+{
+	assert(v < g.vertices.size());
+	return g.vertices[v];
+}
+
+template<typename VertexProperties, typename EdgeProperties>
+const vertex_t<VertexProperties, EdgeProperties> &get_vertex(const fast_graph_t<VertexProperties, EdgeProperties> &g, int v)
+{
+	assert(v < g.vertices.size());
+	return g.vertices[v];
+}
+
+template<typename VertexProperties, typename EdgeProperties>
+void add_vertex(fast_graph_t<VertexProperties, EdgeProperties> &g, int n = 1)
+{
+	int start = g.vertices.size();
+	g.vertices.resize(g.vertices.size()+n);
+	for (int i = start; i < g.vertices.size(); ++i) {
+		g.vertices[i].m_id = i;
+	}
+}
+
+template<typename VertexProperties, typename EdgeProperties>
+edge_t<EdgeProperties> &add_edge(fast_graph_t<VertexProperties, EdgeProperties> &g, int a, int b)
+{
+	assert(a < num_vertices(g));
+	assert(b < num_vertices(g));
+
+	edge_t<EdgeProperties> e;
+	e.m_id = g.edges.size();
+	e.a = a;
+	e.b = b;
+
+	auto &v_a = get_vertex(g, e.a);
+
+	assert(find_if(v_a.edges.begin(), v_a.edges.end(), [&g, b] (const edge_t<e) -> bool { return g.edges[e].b == b; }) == v_a.edges.end());
+
+	g.edges.push_back(e);
+	v_a.edges.push_back(e);
+
+	return g.edges[e.m_id];
+}
+
+//template<typename VertexProperties, typename EdgeProperties>
+//edge_t<EdgeProperties> &add_edge(fast_graph_t<VertexProperties, EdgeProperties> &g, const vertex_t<VertexProperties, EdgeProperties> &v_a, const vertex_t<VertexProperties, EdgeProperties> &v_b)
+//{
+	//edge_t<EdgeProperties> e;
+	//e.m_id = g.edges.size();
+	//e.a = v_a.m_id;
+	//e.b = v_b.m_id;
+
+	//auto &real_v_a = get_vertex(g, e.a);
+
+	//assert(find_if(real_v_a.edges.begin(), real_v_a.edges.end(), [&g, &v_b] (int e) -> bool { return g.edges[e].b == v_b.m_id; }) == real_v_a.edges.end());
+
+	//g.edges.push_back(e);
+	//real_v_a.edges.push_back(e.m_id);
+
+	//return g.edges[e.m_id];
+//}
+
+template<typename VertexProperties, typename EdgeProperties>
+void remove_edge(fast_graph_t<VertexProperties, EdgeProperties> &g, int e)
+{
+	for (auto &v : g.vertices) {
+		for (auto &other_e : v.edges) {
+			if (other_e > e) {
+				--e;
+			}
+		}
+	}
+
+	for (auto &other_e : g.edges) {
+		if (other_e.m_id > e) {
+			--other_e.m_id;
+		}
+	}
+
+	const auto &edge = get_edge(g, e);
+
+	auto iter = find_if(g.vertices[edge.a].edges.begin(), g.vertices[edge.a].edges.end(), [&g, &edge] (const edge_t<EdgeProperties> &e) -> bool { return e.b == edge.b; });
+	assert(iter != g.vertices[edge.a].edges.end());
+
+	g.vertices[edge.a].edges.erase(iter);
+	g.edges.erase(g.edges.begin() + e);
+}
+
+template<typename VertexProperties, typename EdgeProperties>
+edge_t<EdgeProperties> &get_edge(fast_graph_t<VertexProperties, EdgeProperties> &g, int e)
+{
+	assert(e < g.edges.size());
+	return g.edges[e];
+}
+
+template<typename VertexProperties, typename EdgeProperties>
+const edge_t<EdgeProperties> &get_edge(const fast_graph_t<VertexProperties, EdgeProperties> &g, int e)
+{
+	assert(e < g.edges.size());
+	return g.edges[e];
+}
+
+template<typename VertexProperties, typename EdgeProperties>
+const edge_t<EdgeProperties> &get_edge(const fast_graph_t<VertexProperties, EdgeProperties> &g, int a, int b)
+{
+	const auto &v_a = get_vertex(g, a);
+	auto iter = find_if(v_a.edges.begin(), v_a.edges.end(), [&g, &b] (const edge_t &e) -> bool { return e.b == b; });
+	assert(iter != v_a.edges.end());
+	return *iter;
+}
+
+template<typename VertexProperties, typename EdgeProperties>
+bool has_edge(const fast_graph_t<VertexProperties, EdgeProperties> &g, int a, int b)
+{
+	const auto &v_a = get_vertex(g, a);
+	auto iter = find_if(v_a.edges.begin(), v_a.edges.end(), [&g, &b] (const edge_t &e) -> bool { return e.b == b; });
+	return iter != v_a.edges.end();
+}
+
+template<typename VertexProperties, typename EdgeProperties>
+const vertex_t<VertexProperties, EdgeProperties> &get_source(const fast_graph_t<VertexProperties, EdgeProperties> &g, const edge_t<EdgeProperties> &e)
+{
+	assert(e.a < g.vertices.size());
+	return g.vertices[e.a];
+}
+
+template<typename VertexProperties, typename EdgeProperties>
+vertex_t<VertexProperties, EdgeProperties> &get_source(fast_graph_t<VertexProperties, EdgeProperties> &g, const edge_t<EdgeProperties> &e)
+{
+	assert(e.a < g.vertices.size());
+	return g.vertices[e.a];
+}
+
+template<typename VertexProperties, typename EdgeProperties>
+const vertex_t<VertexProperties, EdgeProperties> &get_target(const fast_graph_t<VertexProperties, EdgeProperties> &g, const edge_t<EdgeProperties> &e)
+{
+	assert(e.b < g.vertices.size());
+	return g.vertices[e.b];
+}
+
+template<typename VertexProperties, typename EdgeProperties>
+vertex_t<VertexProperties, EdgeProperties> &get_target(const fast_graph_t<VertexProperties, EdgeProperties> &g, const edge_t<EdgeProperties> &e)
+{
+	assert(e.b < g.vertices.size());
+	return g.vertices[e.b];
+}
+
+template<typename VertexProperties, typename EdgeProperties, typename Func>
+void clear_vertices(fast_graph_t<VertexProperties, EdgeProperties> &g)
+{
+	g.vertices.clear();
+	g.edges.clear();
+}
+
+template<typename VertexProperties, typename EdgeProperties>
+void clear_edges(fast_graph_t<VertexProperties, EdgeProperties> &g)
+{
+	for_all_vertices(g, [] (vertex_t<VertexProperties, EdgeProperties> &v) -> void {
+			v.edges.clear();
+			});
+	g.edges.clear();
+}
+
+template<typename VertexProperties, typename EdgeProperties, typename VertexLabeler, typename EdgeLabeler, typename VertexFilter>
+void write_graph(const fast_graph_t<VertexProperties, EdgeProperties> &g, const char *filename, const VertexLabeler &vertex_attrs, const EdgeLabeler &edge_label, const VertexFilter &vertex_filter)
+{
+	FILE *file = fopen(filename, "w");
+	fprintf(file, "digraph g {\n");
+	for_all_vertices(g, [&g, &vertex_attrs, &vertex_filter, &file] (const vertex_t<VertexProperties, EdgeProperties> &v) -> void {
+		if (!vertex_filter(v)) {
+			fprintf(file, "%d [%s];\n", id(v), vertex_attrs(v).c_str());
+		}
+	});
+	for_all_edges(g, [&g, &edge_label, &vertex_filter, &file] (const edge_t<EdgeProperties> &e) -> void {
+		const auto &from = get_vertex(g, get_source(g, id(e)));
+		const auto &to = get_vertex(g, get_target(g, id(e)));
+		if (!vertex_filter(from) && !vertex_filter(to)) {
+			fprintf(file, "%d -> %d [label=\"%s\"];\n", id(from), id(to), edge_label(e).c_str());
+		}
+	});
+	fprintf(file, "}\n");
+	fclose(file);
+}
+
+
+#endif
+

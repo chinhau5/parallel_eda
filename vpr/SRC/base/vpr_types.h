@@ -744,6 +744,9 @@ struct s_router_opts {
 	float transition_threshold;
     SchedulerType scheduler;
     int bb_expand_threshold;
+    boolean rip_up_always;
+	   boolean large_bb;
+	   boolean work_conserving;
 };
 
 /* All the parameters controlling the router's operation are in this        *

@@ -13,6 +13,7 @@ else()
 	link_directories(
 		/usr/local/lib
 		/opt/local/lib
+		/opt/X11/lib
 		/usr/local/Cellar/mpich/3.2/lib
 		/Users/chinhau5/Downloads/tbb44_20151115oss/build/macos_intel64_clang_cc5.2.0_os10.11.1_debug
 		/Users/chinhau5/Downloads/tbb44_20151115oss/build/macos_intel64_clang_cc5.2.0_os10.11.1_release
@@ -31,7 +32,7 @@ add_compile_options(
 	#-ferror-limit=0
 	-ftemplate-backtrace-limit=0
 	-std=c++14
-	-g -O3
+	-g -O0
 	#-Bdynamic
 	-Wall
 	#	-H

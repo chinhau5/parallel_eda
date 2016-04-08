@@ -396,15 +396,15 @@ void route_tree_mark_paths_to_be_ripped(route_tree_t &rt, const RRGraph &g, cons
 
 void route_tree_mark_all_nodes_to_be_ripped(route_tree_t &rt, const RRGraph &g)
 {
-	rt.scheduler_bounding_box = bg::make_inverse<box>();
+	/*rt.scheduler_bounding_box = bg::make_inverse<box>();*/
 
-	for (auto rt_node_id : route_tree_get_nodes(rt)) {
-		auto &rt_node = get_vertex_props(rt.graph, rt_node_id);
-		rt_node.pending_rip_up = true;
-		rt_node.ripped_up = false;
+	for (auto rt_node : route_tree_get_nodes(rt)) {
+		auto &rt_node_p = get_vertex_props(rt.graph, rt_node);
+		rt_node_p.pending_rip_up = true;
+		rt_node_p.ripped_up = false;
 
-		const auto &rr_node = get_vertex_props(g, rt_node.rr_node);
-		bg::expand(rt.scheduler_bounding_box, segment(point(rr_node.xlow, rr_node.ylow), point(rr_node.xhigh, rr_node.yhigh)));
+		/*const auto &rr_node = get_vertex_props(g, rt_node.rr_node);*/
+		/*bg::expand(rt.scheduler_bounding_box, segment(point(rr_node.xlow, rr_node.ylow), point(rr_node.xhigh, rr_node.yhigh)));*/
 	}
 }
 
@@ -461,7 +461,7 @@ void route_tree_remove_node(route_tree_t &rt, RRNode rr_node, const RRGraph &g)
 	/*assert(rt.num_nodes == rt.point_tree.size());*/
 }
 
-void route_tree_rip_up_marked(route_tree_t &rt, const RRGraph &g, congestion_mpi_t *congestion, float pres_fac)
+void route_tree_rip_up_marked(route_tree_t &rt, const RRGraph &g, congestion_t *congestion, float pres_fac)
 {
 	char buffer[256];
 	for (auto rt_node : route_tree_get_nodes(rt)) {
@@ -516,7 +516,7 @@ void route_tree_rip_up_marked(route_tree_t &rt, const RRGraph &g, congestion_mpi
 	}
 }
 
-void route_tree_rip_up_marked(route_tree_t &rt, const RRGraph &g, congestion_t *congestion, float pres_fac, bool lock, lock_perf_t *lock_perf)
+void route_tree_rip_up_marked(route_tree_t &rt, const RRGraph &g, congestion_locked_t *congestion, float pres_fac, bool lock, lock_perf_t *lock_perf)
 {
 	char buffer[256];
 	for (auto rt_node : route_tree_get_nodes(rt)) {
@@ -532,7 +532,7 @@ void route_tree_rip_up_marked(route_tree_t &rt, const RRGraph &g, congestion_t *
 		/*}*/
 
 		if (rt_node_p.pending_rip_up) {
-			zlog_level(delta_log, ROUTER_V2, "Ripping up node %s from route tree. Occ: %d Cap: %d\n", buffer, congestion[rt_node_p.rr_node].occ, rr_node_p.capacity);
+			zlog_level(delta_log, ROUTER_V2, "Ripping up node %s from route tree. Occ: %d Cap: %d\n", buffer, congestion[rt_node_p.rr_node].cong.occ, rr_node_p.capacity);
 
 			if (rr_node_p.type == SOURCE) {
 				/*assert(rt_node.saved_num_out_edges > 0);*/
@@ -568,7 +568,7 @@ void route_tree_rip_up_marked(route_tree_t &rt, const RRGraph &g, congestion_t *
 	}
 }
 
-void route_tree_rip_up_marked_mpi(route_tree_t &rt, const RRGraph &g, const vector<int> &pid, int this_pid, congestion_mpi_t *congestion, MPI_Win win, float pres_fac)
+void route_tree_rip_up_marked_mpi_rma(route_tree_t &rt, const RRGraph &g, const vector<int> &pid, int this_pid, congestion_t *congestion, MPI_Win win, float pres_fac)
 {
 	char buffer[256];
 	for (auto rt_node : route_tree_get_nodes(rt)) {
@@ -588,9 +588,9 @@ void route_tree_rip_up_marked_mpi(route_tree_t &rt, const RRGraph &g, const vect
 
 			if (rr_node_p.type == SOURCE) {
 				/*assert(rt_node.saved_num_out_edges > 0);*/
-				update_one_cost_internal_mpi(rr_node, g, pid, this_pid, congestion, win, -num_out_edges(rt.graph, rt_node), pres_fac); 
+				update_one_cost_internal_mpi_rma(rr_node, g, pid, this_pid, congestion, win, -num_out_edges(rt.graph, rt_node), pres_fac); 
 			} else {
-				update_one_cost_internal_mpi(rr_node, g, pid, this_pid, congestion, win, -1, pres_fac); 
+				update_one_cost_internal_mpi_rma(rr_node, g, pid, this_pid, congestion, win, -1, pres_fac); 
 			}
 			route_tree_remove_node(rt, rr_node, g);
 			rt_node_p.pending_rip_up = false;
@@ -605,7 +605,7 @@ void route_tree_rip_up_marked_mpi(route_tree_t &rt, const RRGraph &g, const vect
 				 * update the cost when ripping up also.
 				 * if parent is pending rip up, cost will be updated that time. so dont handle it here */
 				if (parent_rr_node_p.type == SOURCE && !parent_rt_node_p.pending_rip_up && !parent_rt_node_p.ripped_up) {
-					update_one_cost_internal_mpi(parent_rt_node_p.rr_node, g, pid, this_pid, congestion, win, -1, pres_fac); 
+					update_one_cost_internal_mpi_rma(parent_rt_node_p.rr_node, g, pid, this_pid, congestion, win, -1, pres_fac); 
 				}
 
 				route_tree_remove_edge(rt, edge, g);
@@ -617,5 +617,84 @@ void route_tree_rip_up_marked_mpi(route_tree_t &rt, const RRGraph &g, const vect
 			/* invalid assertion because we might have ripped this up from another virtual net */
 			/*assert(rt_node_p.ripped_up == false);*/
 		}
+	}
+}
+
+void route_tree_rip_up_marked_mpi_send_recv(route_tree_t &rt, const RRGraph &g, congestion_t *congestion, float pres_fac, int this_pid, int num_procs, MPI_Comm comm, vector<ongoing_transaction_t> &transactions)
+{
+	char buffer[256];
+	ongoing_transaction_t trans;
+	trans.data = make_shared<vector<send_data_t>>();
+
+	for (auto rt_node : route_tree_get_nodes(rt)) {
+		auto &rt_node_p = get_vertex_props(rt.graph, rt_node);
+
+		RRNode rr_node = rt_node_p.rr_node;
+		const auto &rr_node_p = get_vertex_props(g, rr_node);
+		sprintf_rr_node(rt_node_p.rr_node, buffer);
+
+		/*const auto &bp = rt.path_branch_point.find(rr_node);*/
+		/*if (bp != rt.path_branch_point.end()) {*/
+			/*rt.path_branch_point.erase(bp);*/
+		/*}*/
+
+		if (rt_node_p.pending_rip_up) {
+			zlog_level(delta_log, ROUTER_V2, "Ripping up node %s from route tree. Occ: %d Cap: %d\n", buffer, congestion[rt_node_p.rr_node].occ, rr_node_p.capacity);
+
+			send_data_t d;
+			d.rr_node = rr_node;
+			if (rr_node_p.type == SOURCE) {
+				/*assert(rt_node.saved_num_out_edges > 0);*/
+				/*update_one_cost_internal_mpi_send(rr_node, g, congestion, -num_out_edges(rt.graph, rt_node), pres_fac, this_pid, num_procs, comm); */
+				update_one_cost_internal(rr_node, g, congestion, -num_out_edges(rt.graph, rt_node), pres_fac); 
+
+				d.delta = -num_out_edges(rt.graph, rt_node);
+			} else {
+				/*update_one_cost_internal_mpi_send(rr_node, g, congestion, -1, pres_fac, this_pid, num_procs, comm); */
+				update_one_cost_internal(rr_node, g, congestion, -1, pres_fac); 
+				d.delta = -1;
+			}
+			trans.data->push_back(d);
+
+			route_tree_remove_node(rt, rr_node, g);
+
+			rt_node_p.pending_rip_up = false;
+			rt_node_p.ripped_up = true;
+
+			const auto &edge = rt_node_p.rt_edge_to_parent;
+			if (valid(edge)) {
+				RouteTreeNode parent_rt_node = get_source(rt.graph, edge);
+				const auto &parent_rt_node_p = get_vertex_props(rt.graph, parent_rt_node);
+				const auto &parent_rr_node_p = get_vertex_props(g, parent_rt_node_p.rr_node);
+				/* since reconnection back to SOURCE always causes cost to be updated, we need to
+				 * update the cost when ripping up also.
+				 * if parent is pending rip up, cost will be updated that time. so dont handle it here */
+				if (parent_rr_node_p.type == SOURCE && !parent_rt_node_p.pending_rip_up && !parent_rt_node_p.ripped_up) {
+					/*update_one_cost_internal_mpi_send(parent_rt_node_p.rr_node, g, congestion, -1, pres_fac, this_pid, num_procs, comm); */
+					update_one_cost_internal(parent_rt_node_p.rr_node, g, congestion, -1, pres_fac); 
+
+					d.rr_node = parent_rt_node_p.rr_node;
+					d.delta = -1;
+					trans.data->push_back(d);
+				}
+
+				route_tree_remove_edge(rt, edge, g);
+
+				assert(!valid(edge));
+			} 
+		} else {
+			zlog_level(delta_log, ROUTER_V2, "NOT ripping up node %s from route tree\n", buffer);
+			/* invalid assertion because we might have ripped this up from another virtual net */
+			/*assert(rt_node_p.ripped_up == false);*/
+		}
+	}
+
+	if (!trans.data->empty()) {
+		for (int i = 0; i < num_procs; ++i) {
+			if (i != this_pid) {
+				assert(MPI_Isend(trans.data->data(), trans.data->size()*2, MPI_INT, i, 0, comm, &trans.req) == MPI_SUCCESS);
+			}
+		}
+		transactions.push_back(trans);
 	}
 }

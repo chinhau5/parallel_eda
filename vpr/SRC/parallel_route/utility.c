@@ -1,5 +1,6 @@
 #include <assert.h>
 #include "vpr_types.h"
+#include "utility.h"
 
 static const char *rr_types[] =  {
 	"SOURCE", "SINK", "IPIN", "OPIN", "CHANX", "CHANY", "INTRA_CLUSTER_EDGE"
@@ -7,10 +8,11 @@ static const char *rr_types[] =  {
 
 /*#define PRINT_RR_NODE*/
 
-/*#ifdef PRINT_RR_NODE*/
+#ifdef PRINT_RR_NODE
 
 void sprintf_rr_node(int inode, char *buffer)
 {
+	/*assert(false);*/
 	extern t_rr_node *rr_node;
 	if (rr_node[inode].direction == INC_DIRECTION) {
 		sprintf(buffer, "%d %s (%d,%d)(%d,%d) ptc=%d dir=%d", inode, rr_types[rr_node[inode].type], rr_node[inode].xlow, rr_node[inode].ylow, rr_node[inode].xhigh, rr_node[inode].yhigh, rr_node[inode].ptc_num, rr_node[inode].direction);
@@ -39,4 +41,4 @@ void sprintf_rr_node(int inode, char *buffer)
 	/*}*/
 }
 
-/*#endif*/
+#endif

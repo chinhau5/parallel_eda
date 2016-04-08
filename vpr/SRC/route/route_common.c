@@ -31,6 +31,10 @@ bool greedy_route_4(t_router_opts *opts);
 bool spatial_route(t_router_opts *opts, struct s_det_routing_arch det_routing_arch, t_direct_inf *directs, int num_directs, t_segment_inf *segment_inf, t_timing_inf timing_inf);
 bool mpi_spatial_route(t_router_opts *opts, struct s_det_routing_arch det_routing_arch, t_direct_inf *directs, int num_directs, t_segment_inf *segment_inf, t_timing_inf timing_inf);
 bool mpi_spatial_route_new(t_router_opts *opts, struct s_det_routing_arch det_routing_arch, t_direct_inf *directs, int num_directs, t_segment_inf *segment_inf, t_timing_inf timing_inf);
+bool mpi_spatial_route_simulated(t_router_opts *opts, struct s_det_routing_arch det_routing_arch, t_direct_inf *directs, int num_directs, t_segment_inf *segment_inf, t_timing_inf timing_inf);
+bool mpi_spatial_route_flat(t_router_opts *opts, struct s_det_routing_arch det_routing_arch, t_direct_inf *directs, int num_directs, t_segment_inf *segment_inf, t_timing_inf timing_inf);
+bool new_astar_route(t_router_opts *opts);
+
 
 /***************** Variables shared only by route modules *******************/
 
@@ -372,8 +376,8 @@ boolean try_route_new(int width_fac, struct s_router_opts router_opts,
 		case HYBRID:
 			vpr_printf(TIO_MESSAGE_INFO, "Confirming Router Algorithm: HYBRID.\n");
 			assert(router_opts.route_type != GLOBAL);
-			/*success = locking_route(&router_opts, det_routing_arch, directs, num_directs, segment_inf, timing_inf);*/
-			success = locking_route_driver(&router_opts);
+			success = mpi_spatial_route_flat(&router_opts, det_routing_arch, directs, num_directs, segment_inf, timing_inf);
+			/*success = new_astar_route(&router_opts);*/
 			break;
 		default:
 			success = FALSE;

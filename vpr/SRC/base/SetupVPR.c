@@ -502,6 +502,20 @@ static void SetupRouterOpts(INP t_options Options, INP boolean TimingEnabled,
 		RouterOpts->bb_expand_threshold = Options.bb_expand_threshold;
 	}
 
+	RouterOpts->work_conserving = TRUE;
+	if (Options.Count[OT_WORK_CONSERVING]) {
+		RouterOpts->work_conserving = Options.work_conserving;
+	}
+
+	RouterOpts->large_bb = FALSE;
+	if (Options.Count[OT_LARGE_BB]) {
+		RouterOpts->large_bb = Options.large_bb;
+	}
+
+	RouterOpts->rip_up_always = FALSE;
+	if (Options.Count[OT_RIP_UP_ALWAYS]) {
+		RouterOpts->rip_up_always = Options.rip_up_always;
+	}
 }
 
 static void SetupAnnealSched(INP t_options Options,

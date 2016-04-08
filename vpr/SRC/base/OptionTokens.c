@@ -61,6 +61,7 @@ struct s_TokenPair OptionBaseTokenList[] = {
 	{ "scheduler", OT_SCHEDULER }, { "grain_size", OT_GRAIN_SIZE }, { "max_sink_bb_area", OT_MAX_SINK_BB_AREA },
 	{ "num_runs", OT_NUM_RUNS }, { "analyze_timing", OT_ANALYZE_TIMING },
 	{ "transition_threshold", OT_TRANSITION_THRESHOLD }, { "rip_up_period", OT_RIP_UP_PERIOD },
+	{ "rip_up_always", OT_RIP_UP_ALWAYS }, { "work_conserving", OT_WORK_CONSERVING }, { "large_bb", OT_LARGE_BB },
 		{ NULL, OT_BASE_UNKNOWN } /* End of list marker */
 };
 

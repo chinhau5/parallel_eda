@@ -146,11 +146,13 @@ void route_tree_mark_all_nodes_to_be_ripped(route_tree_t &rt, const RRGraph &g);
 
 void route_tree_mark_paths_to_be_ripped(route_tree_t &rt, const RRGraph &g, const vector<RRNode> &rr_nodes);
 
-void route_tree_rip_up_marked(route_tree_t &rt, const RRGraph &g, congestion_t *congestion, float pres_fac, bool lock, lock_perf_t *lock_perf);
+void route_tree_rip_up_marked(route_tree_t &rt, const RRGraph &g, congestion_locked_t *congestion, float pres_fac, bool lock, lock_perf_t *lock_perf);
 
-void route_tree_rip_up_marked(route_tree_t &rt, const RRGraph &g, congestion_mpi_t *congestion, float pres_fac);
+void route_tree_rip_up_marked(route_tree_t &rt, const RRGraph &g, congestion_t *congestion, float pres_fac);
 
-void route_tree_rip_up_marked_mpi(route_tree_t &rt, const RRGraph &g, const vector<int> &pid, int this_pid, congestion_mpi_t *congestion, MPI_Win win, float pres_fac);
+void route_tree_rip_up_marked_mpi_rma(route_tree_t &rt, const RRGraph &g, const vector<int> &pid, int this_pid, congestion_t *congestion, MPI_Win win, float pres_fac);
+
+void route_tree_rip_up_marked_mpi_send_recv(route_tree_t &rt, const RRGraph &g, congestion_t *congestion, float pres_fac, int this_pid, int num_procs, MPI_Comm comm, vector<ongoing_transaction_t> &transactions);
 
 //void route_tree_rip_up_segment(route_tree_t &rt, int sink_rr_node, RRGraph &g, float pres_fac);
 
@@ -196,7 +198,7 @@ bool route_tree_node_check_and_mark_congested_for_rip_up(route_tree_t &rt, Route
 		rt_node_p.pending_rip_up = false;
 	}
 
-	rt_node_p.pending_rip_up |= (congestion[rt_node_p.rr_node].occ > rr_node_p.capacity);
+	rt_node_p.pending_rip_up |= (get_occ(congestion[rt_node_p.rr_node]) > rr_node_p.capacity);
 	/*rt_node_p.pending_rip_up = true;*/
 
 	if (rt_node_p.pending_rip_up) {

@@ -1,3 +1,4 @@
+#include <assert.h>
 #include "log.h"
 
 zlog_category_t *sort_log;

@@ -63,30 +63,8 @@ set(srcs
 	SRC/route/check_rr_graph.c
 	SRC/route/route_breadth_first.c
 	SRC/route/route_common.c
-	SRC/route/route_common_local.c
 	SRC/route/route_timing.c
-	#SRC/route/parallel_route_timing.c
-	#SRC/route/new_cost_parallel_route_timing.c
-	#SRC/route/fine_grained_parallel_route_timing.c
-	#SRC/route/fine_grained_parallel_route_timing_2.c
-	#SRC/route/test.c
-	#SRC/route/partition.cxx
-	SRC/route/fine.cxx
-	#SRC/route/phased.cxx
-	SRC/route/congestion.cxx
-	SRC/route/router.cxx
-	SRC/route/init.cxx
-	SRC/route/log.cxx
-	SRC/route/spatial.cxx
-	#SRC/route/partitioning_route.c
-	SRC/route/route_tree.c
-	#SRC/route/trace.c
-	SRC/route/utility.c
-	SRC/route/net_cluster.cxx
-	SRC/route/scheduler.c
-	#SRC/route/advanced_parallel_route_timing.c
 	SRC/route/route_tree_timing.c
-	SRC/route/route_tree_timing_local.c
 	SRC/route/rr_graph2.c
 	SRC/route/rr_graph_area.c
 	SRC/route/rr_graph.c
@@ -95,6 +73,29 @@ set(srcs
 	SRC/route/rr_graph_timing_params.c
 	SRC/route/rr_graph_util.c
 	SRC/route/segment_stats.c
+	#SRC/route/parallel_route_timing.c
+	#SRC/route/new_cost_parallel_route_timing.c
+	#SRC/route/fine_grained_parallel_route_timing.c
+	#SRC/route/fine_grained_parallel_route_timing_2.c
+	#SRC/route/test.c
+	#SRC/route/partition.cxx
+	SRC/parallel_route/route_tree_timing_local.c
+	SRC/parallel_route/route_common_local.c
+	SRC/parallel_route/fine.cxx
+	#SRC/parallel_route/phased.cxx
+	SRC/parallel_route/congestion.cxx
+	SRC/parallel_route/router.cxx
+	SRC/parallel_route/init.cxx
+	SRC/parallel_route/log.cxx
+	SRC/parallel_route/spatial.cxx
+	SRC/parallel_route/astar.cxx
+	#SRC/parallel_route/partitioning_route.c
+	SRC/parallel_route/route_tree.c
+	#SRC/parallel_route/trace.c
+	SRC/parallel_route/utility.c
+	SRC/parallel_route/net_cluster.cxx
+	SRC/parallel_route/scheduler.c
+	#SRC/parallel_route/advanced_parallel_route_timing.c
 	SRC/timing/net_delay.c
 	SRC/timing/path_delay2.c
 	SRC/timing/path_delay.c
@@ -129,8 +130,9 @@ else()
 	set(external_includes 
 		/usr/local/include
 		/opt/local/include
-		/opt/local/include/libxml2
+		/usr/include/libxml2
 		/usr/local/Cellar/mpich/3.2/include
+		/opt/X11/include
 		/Users/chinhau5/Downloads/tbb44_20151115oss/include
 		/Users/chinhau5/Downloads/mlpack-1.0.12/build/include
 		/Users/chinhau5/Downloads/armadillo-6.400.3/include
@@ -151,6 +153,7 @@ target_include_directories(Vpr PUBLIC
 	SRC/base 
 	SRC/route 
 	SRC/power 
+	SRC/parallel_route
 )
 
 target_compile_options(Vpr PRIVATE

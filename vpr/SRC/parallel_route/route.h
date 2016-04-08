@@ -2,6 +2,7 @@
 #define ROUTE_H
 
 #include <chrono>
+#include <mpi.h>
 #include "geometry.h"
 #include "quadtree.h"
 #include "new_rr_graph.h"
@@ -143,16 +144,17 @@ typedef struct virtual_net_t {
 //} 
 //
 
-typedef struct congestion_mpi_t {
+typedef struct congestion_t {
 	int occ;
 	float pres_cost;
 	float acc_cost;
 	int recalc_occ;
-} congestion_mpi_t;
-
-typedef struct congestion_t : congestion_mpi_t {
-	tbb::spin_mutex lock;
 } congestion_t;
+
+typedef struct congestion_locked_t {
+	tbb::spin_mutex lock;
+	congestion_t cong;
+} congestion_locked_t;
 
 typedef struct route_state_t {
 	int rr_node;
@@ -180,6 +182,16 @@ typedef struct boundary_node_t {
 	RRNode rr_node;
 	vector<path_node_t> path;
 } boundary_node_t;
+
+typedef	struct send_data_t {
+	int rr_node;
+	int delta;
+} send_data_t;
+
+typedef struct ongoing_transaction_t {
+	std::shared_ptr<vector<send_data_t>> data;
+	MPI_Request req;
+} ongoing_transaction_t;
 
 //typedef struct unrouted_sink_t {
 	//sink_t *sink;

@@ -324,7 +324,7 @@ void init_nets(vector<net_t> &nets, vector<net_t> &global_nets, int bb_factor, c
 	/*}*/
 }
 
-void init_nets(vector<net_t> &nets, vector<net_t> &global_nets, int bb_factor)
+void init_nets(vector<net_t> &nets, vector<net_t> &global_nets, int bb_factor, bool large_bb)
 {
 	extern struct s_net *clb_net;
 	extern int num_nets;
@@ -430,9 +430,11 @@ void init_nets(vector<net_t> &nets, vector<net_t> &global_nets, int bb_factor)
 
 		net.bounding_box = bb;
 
-		//for (auto &sink : net.sinks) {
-			//sink.current_bounding_box = bb;
-		//}
+		if (large_bb) {
+			for (auto &sink : net.sinks) {
+				sink.current_bounding_box = bb;
+			}
+		}
 
 		/*net.box.xmin = route_bb[i].xmin;*/
 		/*net.box.ymin = route_bb[i].ymin;*/

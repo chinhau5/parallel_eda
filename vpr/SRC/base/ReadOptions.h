@@ -87,6 +87,9 @@ struct s_options {
     boolean analyze_timing;
     int rip_up_period;
     float transition_threshold;
+    boolean rip_up_always;
+    boolean large_bb;
+    boolean work_conserving;
 
 	/* Timing-driven router options only */
 	float astar_fac;
