@@ -131,7 +131,8 @@ else()
 		/usr/local/include
 		/opt/local/include
 		/usr/include/libxml2
-		/usr/local/Cellar/mpich/3.2/include
+		#/usr/local/Cellar/mpich/3.2/include
+		/usr/local/Cellar/open-mpi/1.10.2/include
 		/opt/X11/include
 		/Users/chinhau5/Downloads/tbb44_20151115oss/include
 		/Users/chinhau5/Downloads/mlpack-1.0.12/build/include

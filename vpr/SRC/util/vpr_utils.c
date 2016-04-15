@@ -509,6 +509,10 @@ void free_cb(t_pb *pb) {
 	const t_pb_type * pb_type;
 	int i, total_nodes;
 
+	if (!pb->pb_graph_node) {
+		return;
+	}
+
 	pb_type = pb->pb_graph_node->pb_type;
 
 	total_nodes = pb->pb_graph_node->total_pb_pins + pb_type->num_input_pins

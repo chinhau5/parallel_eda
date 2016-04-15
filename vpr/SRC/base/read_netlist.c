@@ -8,6 +8,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <assert.h>
+#include <mpi.h>
 #include "util.h"
 #include "hash.h"
 #include "vpr_types.h"
@@ -147,6 +148,8 @@ void read_netlist(INP const char *net_file, INP const t_arch *arch,
 	}
 	
 	/* Prcoess netlist */
+	int procid;
+	MPI_Comm_rank(MPI_COMM_WORLD, &procid);
 
 	Cur = Top->child;
 	i = 0;
@@ -163,22 +166,25 @@ void read_netlist(INP const char *net_file, INP const t_arch *arch,
 		}
 	}
 	assert(i == bcount);
-	assert(num_primitives == num_logical_blocks);
-
-	/* Error check */
-	for (i = 0; i < num_logical_blocks; i++) {
-		if (logical_block[i].pb == NULL) {
-			vpr_printf(TIO_MESSAGE_ERROR, ".blif file and .net file do not match, .net file missing atom %s.\n", 
-				logical_block[i].name);
-			exit(1);
-		}
+	if (procid == 0) {
+		assert(num_primitives == num_logical_blocks);
 	}
-	/* TODO: Add additional check to make sure net connections match */
 
-	
-	mark_constant_generators(bcount, blist, num_logical_nets, vpack_net);
-	load_external_nets_and_cb(bcount, blist, num_logical_nets, vpack_net, &ext_ncount,
-			&ext_nlist, circuit_clocks);
+	if (procid == 0) {
+		/* Error check */
+		for (i = 0; i < num_logical_blocks; i++) {
+			if (logical_block[i].pb == NULL) {
+				vpr_printf(TIO_MESSAGE_ERROR, ".blif file and .net file do not match, .net file missing atom %s.\n",
+						logical_block[i].name);
+				exit(1);
+			}
+		}
+		/* TODO: Add additional check to make sure net connections match */
+
+		mark_constant_generators(bcount, blist, num_logical_nets, vpack_net);
+		load_external_nets_and_cb(bcount, blist, num_logical_nets, vpack_net, &ext_ncount,
+				&ext_nlist, circuit_clocks);
+	}
 
 	/* TODO: create this function later
 	 check_top_IO_matches_IO_blocks(circuit_inputs, circuit_outputs, circuit_clocks, blist, bcount);
@@ -192,24 +198,35 @@ void read_netlist(INP const char *net_file, INP const t_arch *arch,
 
 	/* load mapping between external nets and all nets */
 	/* jluu TODO: Should use local variables here then assign to globals later, clean up later */
-	clb_to_vpack_net_mapping = (int *) my_malloc(ext_ncount * sizeof(int));
-	vpack_to_clb_net_mapping = (int *) my_malloc(num_logical_nets * sizeof(int));
-	for (i = 0; i < num_logical_nets; i++) {
-		vpack_to_clb_net_mapping[i] = OPEN;
-	}
+	if (procid == 0) {
+		clb_to_vpack_net_mapping = (int *) my_malloc(ext_ncount * sizeof(int));
+		vpack_to_clb_net_mapping = (int *) my_malloc(num_logical_nets * sizeof(int));
+		for (i = 0; i < num_logical_nets; i++) {
+			vpack_to_clb_net_mapping[i] = OPEN;
+		}
 
-	for (i = 0; i < ext_ncount; i++) {
-		temp_hash = get_hash_entry(vpack_net_hash, ext_nlist[i].name);
-		assert(temp_hash != NULL);
-		clb_to_vpack_net_mapping[i] = temp_hash->index;
-		vpack_to_clb_net_mapping[temp_hash->index] = i;
+		for (i = 0; i < ext_ncount; i++) {
+			temp_hash = get_hash_entry(vpack_net_hash, ext_nlist[i].name);
+			assert(temp_hash != NULL);
+			clb_to_vpack_net_mapping[i] = temp_hash->index;
+			vpack_to_clb_net_mapping[temp_hash->index] = i;
+		}
+	} else {
+		clb_to_vpack_net_mapping = nullptr;
+		vpack_to_clb_net_mapping = nullptr;
 	}
 
 	/* Return blocks and nets */
 	*L_num_blocks = bcount;
 	*block_list = blist;
-	*L_num_nets = ext_ncount;
-	*net_list = ext_nlist;
+
+	if (procid == 0) {
+		*L_num_nets = ext_ncount;
+		*net_list = ext_nlist;
+	} else {
+		*L_num_nets = 0;
+		*net_list = nullptr;
+	}
 
 	free_hash_table(logical_block_hash);
 	free_hash_table(vpack_net_hash);
@@ -269,17 +286,22 @@ static void processComplexBlock(INOUTP ezxml_t Parent, INOUTP t_block *cb,
 		exit(1);
 	}
 
+	int procid;
+	MPI_Comm_rank(MPI_COMM_WORLD, &procid);
+
 	/* Parse all pbs and CB internal nets*/
 	cb[index].pb->logical_block = OPEN;
-	cb[index].pb->pb_graph_node = cb[index].type->pb_graph_head;
-	num_rr_nodes = cb[index].pb->pb_graph_node->total_pb_pins;
-	rr_node = (t_rr_node*)my_calloc((num_rr_nodes * 2) + cb[index].type->pb_type->num_input_pins
-			+ cb[index].type->pb_type->num_output_pins + cb[index].type->pb_type->num_clock_pins,
-			sizeof(t_rr_node));
-	alloc_and_load_rr_graph_for_pb_graph_node(cb[index].pb->pb_graph_node, arch,
-			0);
-	cb[index].pb->rr_node_to_pb_mapping = (t_pb **)my_calloc(cb[index].type->pb_graph_head->total_pb_pins, sizeof(t_pb *));
-	cb[index].pb->rr_graph = rr_node;
+	if (procid == 0) {
+		cb[index].pb->pb_graph_node = cb[index].type->pb_graph_head;
+		num_rr_nodes = cb[index].pb->pb_graph_node->total_pb_pins;
+		rr_node = (t_rr_node*)my_calloc((num_rr_nodes * 2) + cb[index].type->pb_type->num_input_pins
+				+ cb[index].type->pb_type->num_output_pins + cb[index].type->pb_type->num_clock_pins,
+				sizeof(t_rr_node));
+		alloc_and_load_rr_graph_for_pb_graph_node(cb[index].pb->pb_graph_node, arch,
+				0);
+		cb[index].pb->rr_node_to_pb_mapping = (t_pb **)my_calloc(cb[index].type->pb_graph_head->total_pb_pins, sizeof(t_pb *));
+		cb[index].pb->rr_graph = rr_node;
+	}
 	
 	Prop = FindProperty(Parent, "mode", TRUE);
 	ezxml_set_attr(Parent, "mode", NULL);
@@ -297,19 +319,21 @@ static void processComplexBlock(INOUTP ezxml_t Parent, INOUTP t_block *cb,
 		exit(1);
 	}
 
-	processPb(Parent, cb[index].pb, cb[index].pb->rr_graph, cb[index].pb->rr_node_to_pb_mapping, num_primitives, vpack_net_hash, logical_block_hash, index);
+	if (procid == 0) {
+		processPb(Parent, cb[index].pb, cb[index].pb->rr_graph, cb[index].pb->rr_node_to_pb_mapping, num_primitives, vpack_net_hash, logical_block_hash, index);
 
-	cb[index].nets = (int *)my_malloc(cb[index].type->num_pins * sizeof(int));
-	for (i = 0; i < cb[index].type->num_pins; i++) {
-		cb[index].nets[i] = OPEN;
+		cb[index].nets = (int *)my_malloc(cb[index].type->num_pins * sizeof(int));
+		for (i = 0; i < cb[index].type->num_pins; i++) {
+			cb[index].nets[i] = OPEN;
+		}
+		alloc_internal_cb_nets(cb[index].pb, cb[index].pb->pb_graph_node,
+				cb[index].pb->rr_graph, 1);
+		alloc_internal_cb_nets(cb[index].pb, cb[index].pb->pb_graph_node,
+				cb[index].pb->rr_graph, 2);
+		i = 0;
+		load_internal_cb_nets(cb[index].pb, cb[index].pb->pb_graph_node,
+				cb[index].pb->rr_graph, &i);
 	}
-	alloc_internal_cb_nets(cb[index].pb, cb[index].pb->pb_graph_node,
-			cb[index].pb->rr_graph, 1);
-	alloc_internal_cb_nets(cb[index].pb, cb[index].pb->pb_graph_node,
-			cb[index].pb->rr_graph, 2);
-	i = 0;
-	load_internal_cb_nets(cb[index].pb, cb[index].pb->pb_graph_node,
-			cb[index].pb->rr_graph, &i);
 	freeTokens(tokens, num_tokens);
 #if 0
 	/* print local nets */

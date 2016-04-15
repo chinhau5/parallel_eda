@@ -174,7 +174,7 @@ void route_tree_add_root(route_tree_t &rt, int rr_node);
 
 //pair<int, const RRNode *> route_tree_get_connection(const RRNode &current_rr_node, const RRGraph &g, const route_state_t *state, bool end);
 
-void route_tree_set_node_properties(rt_node_property_t &rt_node_p, bool reexpand, const RREdge &prev_edge, float upstream_R, float delay);
+void route_tree_set_node_properties(route_tree_t &rt, RouteTreeNode &rt_node, bool reexpand, const RREdge &prev_edge, float upstream_R, float delay);
 
 //RouteTreeNode &route_tree_add_or_get_rr_node(route_tree_t &rt, int rr_node_id, const RRGraph &g, const route_state_t *state, bool &update_cost, bool &stop_traceback);
 

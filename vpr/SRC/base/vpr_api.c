@@ -12,6 +12,7 @@
 #include <assert.h>
 #include <time.h>
 #include <zlog.h>
+#include <mpi.h>
 
 #include "util.h"
 #include "vpr_types.h"
@@ -49,7 +50,7 @@ static void free_complex_block_types(void);
 
 static void free_arch(t_arch* Arch);
 static void free_options(t_options *options);
-static void free_circuit(void);
+void free_circuit(void);
 
 static boolean has_printhandler_pre_vpr = FALSE;
 
@@ -242,12 +243,17 @@ void vpr_init_pre_place_and_route(INP t_vpr_setup vpr_setup, INP t_arch Arch) {
 	int current, high, low;
 	boolean fit;
 
+	int procid;
+	MPI_Comm_rank(MPI_COMM_WORLD, &procid);
+
 	/* Read in netlist file for placement and routing */
 	if (vpr_setup.FileNameOpts.NetFile) {
 		read_netlist(vpr_setup.FileNameOpts.NetFile, &Arch, &num_blocks, &block,
 				&num_nets, &clb_net);
 		/* This is done so that all blocks have subblocks and can be treated the same */
-		check_netlist();
+		if (procid == 0) {
+			check_netlist();
+		}
 
 		for (int i = 0; i < num_nets; ++i) {
 			assert(!pthread_mutex_init(&clb_net[i].lock, NULL));
@@ -255,7 +261,9 @@ void vpr_init_pre_place_and_route(INP t_vpr_setup vpr_setup, INP t_arch Arch) {
 	}
 
 	/* Output the current settings to console. */
-	printClusteredNetlistStats();
+	if (procid == 0) {
+		printClusteredNetlistStats();
+	}
 
 	if (vpr_setup.Operation == TIMING_ANALYSIS_ONLY) {
 		do_constant_net_delay_timing_analysis(vpr_setup.Timing,

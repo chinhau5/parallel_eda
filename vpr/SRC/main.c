@@ -19,6 +19,7 @@
 #include <zlog.h>
 #include <chrono>
 #include <mpi.h>
+/*#include <mcheck.h>*/
 /*#include "tbb/task_scheduler_init.h"*/
 #include "vpr_api.h"
 
@@ -50,6 +51,8 @@ int main(int argc, char **argv) {
 	clock_t entire_flow_begin,entire_flow_end;
 
 	MPI_Init(&argc, &argv);
+
+	/*mtrace();*/
 
 	program_start = std::chrono::high_resolution_clock::now(); 
 

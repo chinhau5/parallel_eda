@@ -2,6 +2,7 @@
 #include <stdio.h>
 #include <sys/types.h>
 #include <time.h>
+#include <mpi.h>
 #include "util.h"
 #include "vpr_types.h"
 #include "vpr_utils.h"
@@ -95,7 +96,13 @@ void place_and_route_new(enum e_operation operation,
 #endif
 	}
 	begin = clock();
-	post_place_sync(num_blocks, block);
+
+	int procid;
+	MPI_Comm_rank(MPI_COMM_WORLD, &procid);
+
+	if (procid == 0) {
+		post_place_sync(num_blocks, block);
+	}
 
 	fflush(stdout);
 
@@ -126,7 +133,9 @@ void place_and_route_new(enum e_operation operation,
 
 		clb_opins_used_locally = alloc_route_structs();
 
-		alloc_and_load_timing_graph_new(timing_inf);
+		if (procid == 0) {
+			alloc_and_load_timing_graph_new(timing_inf);
+		}
 
 		t_net_timing *net_timing = alloc_net_timing(clb_net, num_nets);
 

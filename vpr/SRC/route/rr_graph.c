@@ -3,6 +3,7 @@
 #include <assert.h>
 #include <string.h>
 #include <zlog.h>
+#include <mpi.h>
 #include <queue>
 #include "util.h"
 #include "vpr_types.h"
@@ -697,9 +698,17 @@ static void rr_graph_externals(t_timing_inf timing_inf,
 	alloc_and_load_rr_indexed_data(segment_inf, num_seg_types, rr_node_indices,
 			nodes_per_chan, wire_to_ipin_switch, base_cost_type);
 
-	alloc_net_rr_terminals();
-	load_net_rr_terminals(rr_node_indices);
-	alloc_and_load_rr_clb_source(rr_node_indices);
+	int procid;
+	MPI_Comm_rank(MPI_COMM_WORLD, &procid);
+
+	if (procid == 0) {
+		alloc_net_rr_terminals();
+		load_net_rr_terminals(rr_node_indices);
+		alloc_and_load_rr_clb_source(rr_node_indices);
+	} else {
+		net_rr_terminals = nullptr;
+		rr_blk_source = nullptr;
+	}
 }
 
 static boolean *
@@ -1031,7 +1040,7 @@ void free_rr_graph(void) {
 	assert(rr_node_indices);
 	free_rr_node_indices(rr_node_indices);
 	delete [] rr_node;
-	free(rr_indexed_data);
+	/*free(rr_indexed_data);*/
 	for (i = 0; i < num_blocks; i++) {
 		free(rr_blk_source[i]);
 	}
@@ -1040,7 +1049,7 @@ void free_rr_graph(void) {
 	net_rr_terminals = NULL;
 	rr_node = NULL;
 	rr_node_indices = NULL;
-	rr_indexed_data = NULL;
+	/*rr_indexed_data = NULL;*/
 	num_rr_nodes = 0;
 }
 

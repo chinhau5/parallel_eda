@@ -4,6 +4,7 @@
 #include <time.h>
 #include <zlog.h>
 #include <algorithm>
+#include <mpi.h>
 #include "util.h"
 #include "vpr_types.h"
 #include "vpr_utils.h"
@@ -802,7 +803,14 @@ alloc_route_structs(void) {
 	t_ivec **clb_opins_used_locally;
 
 	alloc_route_static_structs();
-	clb_opins_used_locally = alloc_and_load_clb_opins_used_locally();
+
+	int procid;
+	MPI_Comm_rank(MPI_COMM_WORLD, &procid);
+	if (procid == 0) {
+		clb_opins_used_locally = alloc_and_load_clb_opins_used_locally();
+	} else {
+		clb_opins_used_locally = nullptr;
+	}
 
 	return (clb_opins_used_locally);
 }

@@ -76,19 +76,19 @@ void FreeNode(INOUTP ezxml_t Node) {
 
 	/* Shouldn't have unprocessed properties */
 	if (Node->attr[0]) {
-		vpr_printf(TIO_MESSAGE_ERROR, "[LINE %d] Node '%s' has invalid property %s=\"%s\".\n",
-				Node->line, Node->name, Node->attr[0], Node->attr[1]);
-		exit(1);
+		//vpr_printf(TIO_MESSAGE_ERROR, "[LINE %d] Node '%s' has invalid property %s=\"%s\".\n",
+		//		Node->line, Node->name, Node->attr[0], Node->attr[1]);
+		//exit(1);
 	}
 
 	/* Shouldn't have non-whitespace text */
 	Txt = Node->txt;
 	while (*Txt) {
 		if (!IsWhitespace(*Txt)) {
-			vpr_printf(TIO_MESSAGE_ERROR,
-			"[LINE %d] Node '%s' has unexpected text '%s' within it.\n",
-					Node->line, Node->name, Node->txt);
-			exit(1);
+			//vpr_printf(TIO_MESSAGE_ERROR,
+			//"[LINE %d] Node '%s' has unexpected text '%s' within it.\n",
+			//		Node->line, Node->name, Node->txt);
+			//exit(1);
 		}
 		++Txt;
 	}
@@ -96,9 +96,9 @@ void FreeNode(INOUTP ezxml_t Node) {
 	/* We shouldn't have child items left */
 	Cur = Node->child;
 	if (Cur) {
-		vpr_printf(TIO_MESSAGE_ERROR, "[LINE %d] Node '%s' has invalid child node '%s'.\n",
-				Node->line, Node->name, Cur->name);
-		exit(1);
+		//vpr_printf(TIO_MESSAGE_ERROR, "[LINE %d] Node '%s' has invalid child node '%s'.\n",
+		//		Node->line, Node->name, Cur->name);
+		//exit(1);
 	}
 
 	/* Now actually unlink and free the node */

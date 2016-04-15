@@ -175,6 +175,7 @@ my_realloc(void *ptr, size_t size) {
 			vpr_printf(TIO_MESSAGE_ERROR,
 					"my_realloc: ptr == NULL. Aborting.\n");
 		}
+		assert(false);
 		exit(1);
 	}
 	return (ret);

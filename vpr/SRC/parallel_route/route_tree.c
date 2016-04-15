@@ -152,8 +152,10 @@ RouteTreeNode route_tree_get_rt_node(const route_tree_t &rt, RRNode rr_node)
 	return res;
 }
 
-void route_tree_set_node_properties(rt_node_property_t &rt_node_p, bool reexpand, const RREdge &prev_edge, float upstream_R, float delay)
+void route_tree_set_node_properties(route_tree_t &rt, RouteTreeNode &rt_node, bool reexpand, const RREdge &prev_edge, float upstream_R, float delay)
 {
+	auto &rt_node_p = get_vertex_props(rt.graph, rt_node);
+
 	rt_node_p.reexpand = reexpand;
 	rt_node_p.rr_edge_to_parent = prev_edge;
 	rt_node_p.upstream_R = upstream_R;
@@ -307,9 +309,9 @@ void route_tree_add_path(route_tree_t &rt, const std::shared_ptr<vector<path_nod
 	const auto &current_rr_node_p = get_vertex_props(g, current_rr_node_id);
 
 	if (state) {
-		route_tree_set_node_properties(get_vertex_props(rt.graph, current_rt_node), current_rr_node_p.type != IPIN && current_rr_node_p.type != SINK, path[0].prev_edge, state[current_rr_node_id].upstream_R, state[current_rr_node_id].delay);
+		route_tree_set_node_properties(rt, current_rt_node, current_rr_node_p.type != IPIN && current_rr_node_p.type != SINK, path[0].prev_edge, state[current_rr_node_id].upstream_R, state[current_rr_node_id].delay);
 	} else {
-		route_tree_set_node_properties(get_vertex_props(rt.graph, current_rt_node), current_rr_node_p.type != IPIN && current_rr_node_p.type != SINK, path[0].prev_edge, 0, 0);
+		route_tree_set_node_properties(rt, current_rt_node, current_rr_node_p.type != IPIN && current_rr_node_p.type != SINK, path[0].prev_edge, 0, 0);
 	}
 
 	for (int i = 1; i < path.size(); ++i) {
@@ -327,9 +329,9 @@ void route_tree_add_path(route_tree_t &rt, const std::shared_ptr<vector<path_nod
 			const auto &previous_rr_node_p = get_vertex_props(g, previous_rr_node_id);
 
 			if (state) {
-				route_tree_set_node_properties(get_vertex_props(rt.graph, previous_rt_node), previous_rr_node_p.type != IPIN && previous_rr_node_p.type != SINK, path[i].prev_edge, state[previous_rr_node_id].upstream_R, state[previous_rr_node_id].delay);
+				route_tree_set_node_properties(rt, previous_rt_node, previous_rr_node_p.type != IPIN && previous_rr_node_p.type != SINK, path[i].prev_edge, state[previous_rr_node_id].upstream_R, state[previous_rr_node_id].delay);
 			} else {
-				route_tree_set_node_properties(get_vertex_props(rt.graph, previous_rt_node), previous_rr_node_p.type != IPIN && previous_rr_node_p.type != SINK, path[i].prev_edge, 0, 0);
+				route_tree_set_node_properties(rt, previous_rt_node, previous_rr_node_p.type != IPIN && previous_rr_node_p.type != SINK, path[i].prev_edge, 0, 0);
 			}
 		} else {
 			/*RouteTreeNode bp = route_tree_get_rt_node(rt, previous_rr_node_id);*/
@@ -652,6 +654,7 @@ void route_tree_rip_up_marked_mpi_send_recv(route_tree_t &rt, const RRGraph &g, 
 			} else {
 				/*update_one_cost_internal_mpi_send(rr_node, g, congestion, -1, pres_fac, this_pid, num_procs, comm); */
 				update_one_cost_internal(rr_node, g, congestion, -1, pres_fac); 
+
 				d.delta = -1;
 			}
 			trans.data->push_back(d);
@@ -675,6 +678,7 @@ void route_tree_rip_up_marked_mpi_send_recv(route_tree_t &rt, const RRGraph &g, 
 
 					d.rr_node = parent_rt_node_p.rr_node;
 					d.delta = -1;
+
 					trans.data->push_back(d);
 				}
 

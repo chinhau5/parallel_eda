@@ -14,11 +14,12 @@ else()
 		/usr/local/lib
 		/opt/local/lib
 		/opt/X11/lib
-		/usr/local/Cellar/mpich/3.2/lib
+		#/usr/local/Cellar/mpich/3.2/lib
+		/usr/local/Cellar/open-mpi/1.10.2/lib
 		/Users/chinhau5/Downloads/tbb44_20151115oss/build/macos_intel64_clang_cc5.2.0_os10.11.1_debug
 		/Users/chinhau5/Downloads/tbb44_20151115oss/build/macos_intel64_clang_cc5.2.0_os10.11.1_release
 		/Users/chinhau5/Downloads/mlpack-1.0.12/build/lib
-		/Users/chinhau5/Downloads/metis-5.1.0/build/Darwin-x86_64/libmetis/Debug
+		/Users/chinhau5/Downloads/metis-5.1.0/build/Darwin-x86_64/libmetis/
 		)
 endif()
 
@@ -32,7 +33,7 @@ add_compile_options(
 	#-ferror-limit=0
 	-ftemplate-backtrace-limit=0
 	-std=c++14
-	-g -O0
+	-g -O2
 	#-Bdynamic
 	-Wall
 	#	-H
@@ -68,9 +69,8 @@ if (CMAKE_SYSTEM_NAME STREQUAL "Linux")
 else()
 	set(link_libs
 		Vpr
-		mpicxx 
+		mpi_cxx 
 		mpi 
-		pmpi
 		X11
 		pthread
 		dl 

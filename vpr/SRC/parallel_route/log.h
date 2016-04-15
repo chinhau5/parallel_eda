@@ -26,10 +26,10 @@ extern zlog_category_t *ss_log;
 	zlog(cat, __FILE__, sizeof(__FILE__)-1, __func__, sizeof(__func__)-1, __LINE__, \
 	level, __VA_ARGS__)
 
-//#define zlog_level(cat, level, ...)
-//#define zlog_debug(cat, ...)
-//#define zlog_info(cat, ...)
-//#define zlog_warn(cat, ...)
+#define zlog_level(cat, level, ...)
+#define zlog_debug(cat, ...)
+#define zlog_info(cat, ...)
+#define zlog_warn(cat, ...)
 
 #define LOG_PATH_PREFIX "/Volumes/DATA/"
 

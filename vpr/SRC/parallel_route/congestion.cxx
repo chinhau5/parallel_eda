@@ -262,8 +262,8 @@ void update_one_cost_mpi_send(const vector<RRNode>::const_iterator &rr_nodes_beg
 	for (int i = 0; i < num_procs; ++i) {
 		if (i != this_pid) {
 			zlog_level(delta_log, ROUTER_V3, "MPI update from %d to %d\n", this_pid, i);
-			//assert(MPI_Isend(trans.data->data(), trans.data->size()*2, MPI_INT, i, 0, comm, &trans.req) == MPI_SUCCESS);
-			assert(MPI_Send(trans.data->data(), trans.data->size()*2, MPI_INT, i, 0, comm) == MPI_SUCCESS);
+			assert(MPI_Isend(trans.data->data(), trans.data->size()*2, MPI_INT, i, 0, comm, &trans.req) == MPI_SUCCESS);
+			//assert(MPI_ISend(trans.data->data(), trans.data->size()*2, MPI_INT, i, 0, comm) == MPI_SUCCESS);
 		}
 	}
 	transactions.push_back(trans);

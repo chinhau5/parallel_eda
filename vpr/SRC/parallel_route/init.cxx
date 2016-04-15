@@ -51,8 +51,8 @@ void init_graph(RRGraph &g, vector<vector<RRNode>> &sink_in_nodes, vector<vector
 		v.cost_index = rr_node[i].cost_index;
 		v.capacity = rr_node[i].capacity;
 
-		char buffer[256];
-		sprintf_rr_node(i, buffer);
+		//char buffer[256];
+		//sprintf_rr_node(i, buffer);
 		//zlog_debug(rr_log, "%s: real_xlow: %d real_xhigh: %d real_ylow: %d real_yhigh: %d\n", buffer, v.real_xlow, v.real_xhigh, v.real_ylow, v.real_yhigh);
 
 		for (int j = 0; j < rr_node[i].num_edges; ++j) {
@@ -109,8 +109,8 @@ void init_graph(RRGraph &g)
 		v.cost_index = rr_node[i].cost_index;
 		v.capacity = rr_node[i].capacity;
 
-		char buffer[256];
-		sprintf_rr_node(i, buffer);
+		//char buffer[256];
+		//sprintf_rr_node(i, buffer);
 		//zlog_debug(rr_log, "%s: real_xlow: %d real_xhigh: %d real_ylow: %d real_yhigh: %d\n", buffer, v.real_xlow, v.real_xhigh, v.real_ylow, v.real_yhigh);
 
 		for (int j = 0; j < rr_node[i].num_edges; ++j) {
@@ -329,7 +329,7 @@ void init_nets(vector<net_t> &nets, vector<net_t> &global_nets, int bb_factor, b
 	extern struct s_net *clb_net;
 	extern int num_nets;
 	extern int **net_rr_terminals; /* [0..num_nets-1][0..num_pins-1] */
-	extern struct s_rr_node *rr_node;
+	//extern struct s_rr_node *rr_node;
 	extern struct s_bb *route_bb;
 	extern struct s_block *block;
 
@@ -354,6 +354,7 @@ void init_nets(vector<net_t> &nets, vector<net_t> &global_nets, int bb_factor, b
 		tr.y = net.source.y;
 
 		char buffer[256];
+		buffer[0] = 0;
 		sprintf_rr_node(net.source.rr_node, buffer);
 		zlog_debug(net_log, "Net %d source %s\n", net.vpr_id, buffer);
 
