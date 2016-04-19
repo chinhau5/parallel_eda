@@ -1803,7 +1803,7 @@ void route_net_with_partitioned_fine_grain_lock(const RRGraph &g, const vector<i
 	/*check_route_tree(rt, net, g);*/
 }
 
-void sync(congestion_t *congestion, int this_pid, int num_procs, MPI_Comm comm)
+void sync(congestion_t *congestion, const RRGraph &g, float pres_fac, int this_pid, int num_procs, MPI_Comm comm)
 {
 	int flag = 0;
 
@@ -1837,7 +1837,7 @@ void sync(congestion_t *congestion, int this_pid, int num_procs, MPI_Comm comm)
 				zlog_level(delta_log, ROUTER_V3, "Received a path of length %d from %d\n", count/2, status.MPI_SOURCE);
 
 				for (int i = 0; i < count/2; ++i) {
-					congestion[d[i].rr_node].occ += d[i].delta;
+					update_one_cost_internal(d[i].rr_node, g, congestion, d[i].delta, pres_fac);
 					zlog_level(delta_log, ROUTER_V3, "MPI update, source %d node %d delta %d\n", status.MPI_SOURCE, d[i].rr_node, d[i].delta);
 				}
 
@@ -1966,8 +1966,6 @@ void route_net_mpi_send_recv(const RRGraph &g, const vector<int> &pid, int this_
 			}
 		}
 
-		sync(congestion, this_pid, num_procs, comm);
-
 		if (!found_sink) {
 			assert(heap.empty());
 			zlog_error(delta_log, "Error: Failed to find sink %d\n", sink->rr_node);
@@ -2002,6 +2000,8 @@ void route_net_mpi_send_recv(const RRGraph &g, const vector<int> &pid, int this_
 
 			zlog_level(delta_log, ROUTER_V2, "Routed sink %d\n", sink->rr_node);
 		}
+
+		sync(congestion, g, params.pres_fac, this_pid, num_procs, comm);
 
 		for (const auto &m : modified)  {
 			state[m].known_cost = std::numeric_limits<float>::max();

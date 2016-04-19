@@ -40,8 +40,8 @@ filtered_graph_t<Graph, VertexPredicate2, EdgePredicate2> make_filtered_graph(co
 }
 
 template<typename Graph, typename VertexPredicate, typename EdgePredicate>
-//boost::iterator_range<boost::filter_iterator<graph_filter_t, typename graph_t<VertexProperties, EdgeProperties>::vertex_iterator>>
-auto
+boost::iterator_range<boost::filter_iterator<VertexPredicate, typename Graph::vertex_iterator>>
+//auto
 get_vertices(const filtered_graph_t<Graph, VertexPredicate, EdgePredicate> &fg) 
 {
 	//graph_filter_t filter(fg.valid_vertex);
@@ -55,8 +55,8 @@ get_vertices(const filtered_graph_t<Graph, VertexPredicate, EdgePredicate> &fg)
 }
 
 template<typename Graph, typename VertexPredicate, typename EdgePredicate>
-//boost::iterator_range<boost::filter_iterator<graph_filter_t, typename graph_t<VertexProperties, EdgeProperties>::edge_iterator>>
-auto 
+boost::iterator_range<boost::filter_iterator<EdgePredicate, typename Graph::edge_iterator>>
+//auto 
 get_edges(const filtered_graph_t<Graph, VertexPredicate, EdgePredicate> &fg) 
 {
 	//graph_filter_t filter(fg.valid_edge);
@@ -72,8 +72,8 @@ get_edges(const filtered_graph_t<Graph, VertexPredicate, EdgePredicate> &fg)
 }
 
 template<typename Graph, typename VertexPredicate, typename EdgePredicate>
-//boost::iterator_range<boost::filter_iterator<graph_filter_t, typename graph_t<VertexProperties, EdgeProperties>::out_edges_iterator>>
-auto 
+boost::iterator_range<boost::filter_iterator<EdgePredicate, typename Graph::out_edges_iterator>>
+//auto 
 get_out_edges(const filtered_graph_t<Graph, VertexPredicate, EdgePredicate> &fg, int v)
 {
 	assert(v < fg.g.vertices.size());
@@ -113,14 +113,14 @@ int get_target(const filtered_graph_t<Graph, VertexPredicate, EdgePredicate> &fg
 }
 
 template<typename Graph, typename VertexPredicate, typename EdgePredicate>
-auto &get_vertex_props(filtered_graph_t<Graph, VertexPredicate, EdgePredicate> &fg, int v)
+typename Graph::vertex_properties &get_vertex_props(filtered_graph_t<Graph, VertexPredicate, EdgePredicate> &fg, int v)
 {
 	assert(v < fg.g.vertices.size() && fg.valid_vertex(v));
 	return fg.g.vertices[v].properties;
 }
 
 template<typename Graph, typename VertexPredicate, typename EdgePredicate>
-const auto &get_vertex_props(const filtered_graph_t<Graph, VertexPredicate, EdgePredicate> &fg, int v)
+const typename Graph::vertex_properties &get_vertex_props(const filtered_graph_t<Graph, VertexPredicate, EdgePredicate> &fg, int v)
 {
 	assert(v < fg.g.vertices.size() && fg.valid_vertex(v));
 	return fg.g.vertices[v].properties;

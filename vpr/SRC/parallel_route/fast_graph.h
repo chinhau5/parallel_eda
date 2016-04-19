@@ -47,6 +47,9 @@ struct fast_graph_t {
 
 	using base = fast_graph_t<VertexProperties, EdgeProperties>;
 
+	typedef VertexProperties vertex_properties;
+	typedef EdgeProperties edge_properties;
+
 	base &base_graph()
 	{
 		return *this;

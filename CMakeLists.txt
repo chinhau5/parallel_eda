@@ -32,7 +32,7 @@ add_compile_options(
 	#-D TBB_USE_DEBUG=1
 	#-ferror-limit=0
 	-ftemplate-backtrace-limit=0
-	-std=c++14
+	-std=c++11
 	-g -O2
 	#-Bdynamic
 	-Wall
@@ -54,6 +54,7 @@ add_executable(Router vpr/SRC/main.c)
 
 if (CMAKE_SYSTEM_NAME STREQUAL "Linux")
 	set(link_libs
+		-Wl,--eh-frame-hdr
 		Vpr
 		X11
 		pthread
@@ -64,7 +65,6 @@ if (CMAKE_SYSTEM_NAME STREQUAL "Linux")
 		boost_system
 		tbb
 		metis
-		#-Wl,--eh-frame-hdr
 		)
 else()
 	set(link_libs
