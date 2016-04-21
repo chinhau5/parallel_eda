@@ -502,7 +502,7 @@ static void SetupRouterOpts(INP t_options Options, INP boolean TimingEnabled,
 		RouterOpts->bb_expand_threshold = Options.bb_expand_threshold;
 	}
 
-	RouterOpts->work_conserving = TRUE;
+	RouterOpts->work_conserving = FALSE;
 	if (Options.Count[OT_WORK_CONSERVING]) {
 		RouterOpts->work_conserving = Options.work_conserving;
 	}
@@ -512,7 +512,7 @@ static void SetupRouterOpts(INP t_options Options, INP boolean TimingEnabled,
 		RouterOpts->large_bb = Options.large_bb;
 	}
 
-	RouterOpts->rip_up_always = FALSE;
+	RouterOpts->rip_up_always = TRUE;
 	if (Options.Count[OT_RIP_UP_ALWAYS]) {
 		RouterOpts->rip_up_always = Options.rip_up_always;
 	}

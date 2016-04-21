@@ -5522,7 +5522,7 @@ bool mpi_spatial_route_flat(t_router_opts *opts, struct s_det_routing_arch det_r
         nets_to_route.push_back(make_pair(b, &net));
     }
     std::sort(begin(nets_to_route), end(nets_to_route), [] (const pair<box, net_t *> &a, const pair<box, net_t *> &b) -> bool {
-            return a.second->sinks.size() > b.second->sinks.size();
+            return a.second->sinks.size()*get_bounding_box_area(a.second->bounding_box) > b.second->sinks.size()*get_bounding_box_area(b.second->bounding_box);
             });
 
     bool routed = false;
@@ -6006,7 +6006,7 @@ bool mpi_spatial_route_flat(t_router_opts *opts, struct s_det_routing_arch det_r
 
 			zlog_level(delta_log, ROUTER_V1, "not_decreasing: %d reduced_not_decreasing: %d\n", not_decreasing, reduced_not_decreasing);
 
-			if (reduced_not_decreasing && initial_num_procs > 1) {
+			if (reduced_not_decreasing && initial_num_procs > 1 && current_level < (int)std::log2(initial_num_procs)) {
 				/* need to send route tree over */
 
 				auto combine_start = clock::now();

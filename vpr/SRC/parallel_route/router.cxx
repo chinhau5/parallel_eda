@@ -1865,6 +1865,8 @@ void broadcast_costs(const vector<RRNode>::const_iterator &rr_nodes_begin, const
 		trans.data->push_back(d);
 	}
 
+	assert(!trans.data->empty());
+
 	for (int i = 0; i < num_procs; ++i) {
 		if (i != this_pid) {
 			zlog_level(delta_log, ROUTER_V3, "MPI update from %d to %d\n", this_pid, i);
@@ -1874,6 +1876,35 @@ void broadcast_costs(const vector<RRNode>::const_iterator &rr_nodes_begin, const
 	}
 
 	transactions.push_back(trans);
+}
+
+void broadcast_pending_cost_updates(queue<RRNode> &cost_update_q, int delta, int this_pid, int num_procs, MPI_Comm comm, vector<ongoing_transaction_t> &transactions)
+{
+	ongoing_transaction_t trans;
+
+	trans.data = make_shared<vector<send_data_t>>();
+
+	while (!cost_update_q.empty()) {
+		send_data_t d;
+		d.rr_node = cost_update_q.front();
+		d.delta = delta;
+
+		trans.data->push_back(d);
+
+		cost_update_q.pop();
+	}
+
+	if (!trans.data->empty()) {
+		for (int i = 0; i < num_procs; ++i) {
+			if (i != this_pid) {
+				zlog_level(delta_log, ROUTER_V3, "MPI update from %d to %d\n", this_pid, i);
+				assert(MPI_Isend(trans.data->data(), trans.data->size()*2, MPI_INT, i, 0, comm, &trans.req) == MPI_SUCCESS);
+				//assert(MPI_ISend(trans.data->data(), trans.data->size()*2, MPI_INT, i, 0, comm) == MPI_SUCCESS);
+			}
+		}
+
+		transactions.push_back(trans);
+	}
 }
 
 void route_net_mpi_send_recv(const RRGraph &g, const vector<int> &pid, int this_pid, int vpr_id, const source_t *source, const vector<sink_t *> &sinks, const route_parameters_t &params, route_state_t *state, congestion_t *congestion, int num_procs, MPI_Comm comm, vector<ongoing_transaction_t> &transactions, route_tree_t &rt, t_net_timing &net_timing, vector<sink_t *> &routed_sinks, vector<sink_t *> &unrouted_sinks, perf_t *perf)
@@ -1921,6 +1952,9 @@ void route_net_mpi_send_recv(const RRGraph &g, const vector<int> &pid, int this_
 			}
 		}
 	}
+
+	queue<RRNode> cost_update_q;
+	int sync_freq = (int)floor(sqrt(sorted_sinks.size()));
 
 	int isink = 0;
 	for (const auto &sink : sorted_sinks) {
@@ -1997,6 +2031,9 @@ void route_net_mpi_send_recv(const RRGraph &g, const vector<int> &pid, int this_
 			}
 		}
 
+		bool sync_costs = (isink % sync_freq) == 0;
+		//bool sync_costs = true;
+
 		if (!found_sink) {
 			assert(heap.empty());
 			zlog_error(delta_log, "Error: Failed to find sink %d\n", sink->rr_node);
@@ -2026,12 +2063,15 @@ void route_net_mpi_send_recv(const RRGraph &g, const vector<int> &pid, int this_
 			for (const auto &n : *path) {
 				if (n.update_cost) {
 					added_nodes.push_back(n.rr_node_id);
+					cost_update_q.push(n.rr_node_id);
 				}
 			}
 
 			update_one_cost(g, congestion, added_nodes.begin(), added_nodes.end(), 1, params.pres_fac);
 
-			broadcast_costs(added_nodes.begin(), added_nodes.end(), 1, this_pid, num_procs, comm, transactions);
+			if (sync_costs) {
+				broadcast_pending_cost_updates(cost_update_q, 1, this_pid, num_procs, comm, transactions);
+			}
 
 			if (sink->id != -1) {
 				net_timing.delay[sink->id+1] = get_vertex_props(rt.graph, route_tree_get_rt_node(rt, sink->rr_node)).delay;
@@ -2040,7 +2080,9 @@ void route_net_mpi_send_recv(const RRGraph &g, const vector<int> &pid, int this_
 			zlog_level(delta_log, ROUTER_V2, "Routed sink %d\n", sink->rr_node);
 		}
 
-		sync(congestion, g, params.pres_fac, this_pid, num_procs, comm);
+		if (sync_costs) {
+			sync(congestion, g, params.pres_fac, this_pid, num_procs, comm);
+		}
 
 		for (const auto &m : modified)  {
 			state[m].known_cost = std::numeric_limits<float>::max();
@@ -2053,6 +2095,8 @@ void route_net_mpi_send_recv(const RRGraph &g, const vector<int> &pid, int this_
 
 		++isink;
 	}
+
+	broadcast_pending_cost_updates(cost_update_q, 1, this_pid, num_procs, comm, transactions);
 	//zlog_level(delta_log, ROUTER_V1, "\n");
 
 	//return unrouted_sinks;
