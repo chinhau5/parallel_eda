@@ -1209,19 +1209,20 @@ class rr_graph_partitioner {
 
 			//dump_rr_graph(channel_with_interior_g, "/Volumes/DATA/rr_graph_channel_with_interior.txt");
 
-			init_graph(orig_g, sink_in_nodes, ipin_in_nodes);
+			//init_graph(orig_g, sink_in_nodes, ipin_in_nodes);
+			init_graph(orig_g);
 
 			init_sprintf_rr_node(&orig_g);
 
-			dump_rr_graph(orig_g, "/Volumes/DATA/rr_graph.txt");
+			dump_rr_graph(orig_g, "rr_graph.txt");
 
-			undirected_orig_g = orig_g;
+			//undirected_orig_g = orig_g;
 
-			for (const auto &e : get_edges(orig_g)) {
-				int from = get_source(orig_g, e);
-				int to = get_target(orig_g, e);
-				add_edge(undirected_orig_g, to, from);
-			}
+			//for (const auto &e : get_edges(orig_g)) {
+				//int from = get_source(orig_g, e);
+				//int to = get_target(orig_g, e);
+				//add_edge(undirected_orig_g, to, from);
+			//}
 
 			//free_rr_graph();
 			//for (int i = 0; i < det_routing_arch->num_segment; ++i) {
@@ -1302,7 +1303,7 @@ class rr_graph_partitioner {
 				}
 			}
 			//load_real_track_numbers();
-			alloc_num_tracks_in_partition();
+			//alloc_num_tracks_in_partition();
 			result_pid.resize(num_vertices(orig_g));
 		}
 
@@ -4063,10 +4064,10 @@ void recv_route_tree(net_t *net, const RRGraph &g, vector<vector<sink_t *>> &rou
 	}
 
 	/* hacky fix for titan benchmark */
-	RouteTreeNode source_rt_node = route_tree_get_rt_node(route_trees[net->local_id], source_rr_node);
-	assert(source_rt_node != RouteTree::null_vertex());
-	int delta = num_out_edges(route_trees[net->local_id].graph, source_rt_node)-1;
-	update_one_cost_internal(source_rr_node, g, congestion, delta, pres_fac);
+	//RouteTreeNode source_rt_node = route_tree_get_rt_node(route_trees[net->local_id], source_rr_node);
+	//assert(source_rt_node != RouteTree::null_vertex());
+	//int delta = num_out_edges(route_trees[net->local_id].graph, source_rt_node)-1;
+	//update_one_cost_internal(source_rr_node, g, congestion, delta, pres_fac);
 
 	delete [] recv;
 }
@@ -5294,6 +5295,8 @@ bool mpi_spatial_route_flat_with_net_partitioning(t_router_opts *opts, struct s_
     return routed;
 }
 
+int get_num_interpartition_nets(const vector<net_t> &nets, int num_partitions);
+
 bool mpi_spatial_route_flat(t_router_opts *opts, struct s_det_routing_arch det_routing_arch, t_direct_inf *directs, int num_directs, t_segment_inf *segment_inf, t_timing_inf timing_inf)
 {
     using std::chrono::duration_cast;
@@ -5305,6 +5308,8 @@ bool mpi_spatial_route_flat(t_router_opts *opts, struct s_det_routing_arch det_r
 
     MPI_Comm_size(cur_comm, &initial_num_procs);
     MPI_Comm_rank(cur_comm, &initial_procid);
+
+	printf("[%d] Initializing router\n", initial_procid);
 
 	num_procs = initial_num_procs;
 	procid = initial_procid;
@@ -5327,12 +5332,12 @@ bool mpi_spatial_route_flat(t_router_opts *opts, struct s_det_routing_arch det_r
 
     //fclose(fopen(LOG_PATH_PREFIX"iter__tid_.log", "w"));
 
-    test_fast_graph();
-    test_topo();
-    test_fm();
-    test_filter_graph();
-    test_partition_graph();
-    test_connected_components();
+    //test_fast_graph();
+    //test_topo();
+    //test_fm();
+    //test_filter_graph();
+    //test_partition_graph();
+    //test_connected_components();
 
     vector<RRGraph *> graphs;
     rr_graph_partitioner partitioner;
@@ -5458,6 +5463,13 @@ bool mpi_spatial_route_flat(t_router_opts *opts, struct s_det_routing_arch det_r
 	if (procid == 0) {
 		printf("[%d] initializing nets\n", procid);
 		init_nets(nets, global_nets, opts->bb_factor, opts->large_bb);	
+
+		//printf("Num_interpatition_nets [%d nets]: ", nets.size());
+		//for (int i = 2; i <= 16; i *= 2) {
+			//printf("%d ", get_num_interpartition_nets(nets, i));
+		//}
+		//printf("\n");
+		//exit(0);
 	}
 	printf("[%d] syncing nets\n", procid);
 	sync_nets(nets, global_nets, procid, cur_comm);
@@ -5529,13 +5541,16 @@ bool mpi_spatial_route_flat(t_router_opts *opts, struct s_det_routing_arch det_r
     clock::duration total_update_cost_time = clock::duration::zero();
     clock::duration total_analyze_timing_time = clock::duration::zero();
     clock::duration total_iter_time = clock::duration::zero();
+    clock::duration total_wait_time = clock::duration::zero();
+    clock::duration total_combine_time = clock::duration::zero();
 
     for (iter = 0; iter < opts->max_router_iterations && !routed; ++iter) {
         clock::duration greedy_route_time = clock::duration::zero();
         clock::duration update_cost_time = clock::duration::zero();
-        clock::duration partitioning_time = clock::duration::zero();
         clock::duration analyze_timing_time = clock::duration::zero();
         clock::duration iter_time = clock::duration::zero();
+        clock::duration wait_time = clock::duration::zero();
+        clock::duration combine_time = clock::duration::zero();
 
         //for (int i = 0; i < opts->num_threads; ++i) {
             //sprintf(buffer, LOG_PATH_PREFIX"iter_%d_tid_%d.log", iter, i);
@@ -5654,7 +5669,9 @@ bool mpi_spatial_route_flat(t_router_opts *opts, struct s_det_routing_arch det_r
 			}
 		}
 
+		auto wait_start = clock::now();
 		MPI_Barrier(cur_comm);
+		wait_time = clock::now()-wait_start;
 
 		sync(congestion, partitioner.orig_g, params.pres_fac, procid, num_procs, cur_comm);
 
@@ -5816,9 +5833,9 @@ bool mpi_spatial_route_flat(t_router_opts *opts, struct s_det_routing_arch det_r
 		if (procid == 0) {
 			bool valid = true;
 			for (int i = 0; i < num_vertices(partitioner.orig_g); ++i) {
-				sprintf_rr_node(i, buffer);
+				sprintf_rr_node_impl(i, buffer);
 				if (congestion[i].recalc_occ != congestion[i].occ) {
-					zlog_error(delta_log, "Node %s occ mismatch, recalc: %d original: %d\n", buffer, congestion[i].recalc_occ, congestion[i].occ);
+					printf("Node %s occ mismatch, recalc: %d original: %d\n", buffer, congestion[i].recalc_occ, congestion[i].occ);
 					valid = false;
 				}
 			}
@@ -5979,7 +5996,7 @@ bool mpi_spatial_route_flat(t_router_opts *opts, struct s_det_routing_arch det_r
 			delete [] overused_nodes_by_type_send;
 			delete [] all_num_overused_nodes;
 
-			int not_decreasing = (num_overused_nodes > prev_num_overused_nodes && iter > 10) ? 1 : 0;
+			int not_decreasing = (num_overused_nodes >= prev_num_overused_nodes && iter > 10) ? 1 : 0;
 			//int not_decreasing = current_level+1 < partitioner.result_pid_by_level.size(); [> testing <]
 			//int not_decreasing = current_level+1 <= std::log2(initial_num_procs); [> testing <]
 			int reduced_not_decreasing;
@@ -5989,8 +6006,11 @@ bool mpi_spatial_route_flat(t_router_opts *opts, struct s_det_routing_arch det_r
 
 			zlog_level(delta_log, ROUTER_V1, "not_decreasing: %d reduced_not_decreasing: %d\n", not_decreasing, reduced_not_decreasing);
 
-			if (reduced_not_decreasing) {
+			if (reduced_not_decreasing && initial_num_procs > 1) {
 				/* need to send route tree over */
+
+				auto combine_start = clock::now();
+
 				if (procid % 2 == 0) {
 					/*receiver*/
 					for (int i = (procid+1)*pow(2, current_level); i < nets_to_route.size(); i += initial_num_procs) {
@@ -6021,9 +6041,11 @@ bool mpi_spatial_route_flat(t_router_opts *opts, struct s_det_routing_arch det_r
 				MPI_Comm new_comm;
 				MPI_Comm_split(cur_comm, procid%2, procid, &new_comm);
 
+				combine_time = clock::now()-combine_start;
+
 				if (procid % 2 == 1) {
 					/* early exit code */
-					break;
+					goto done;
 				}
 
 				cur_comm = new_comm;
@@ -6080,9 +6102,9 @@ bool mpi_spatial_route_flat(t_router_opts *opts, struct s_det_routing_arch det_r
 				if (procid == 0) {
 					bool valid = true;
 					for (int i = 0; i < num_vertices(partitioner.orig_g); ++i) {
-						sprintf_rr_node(i, buffer);
+						sprintf_rr_node_impl(i, buffer);
 						if (congestion[i].recalc_occ != congestion[i].occ) {
-							zlog_error(delta_log, "Node %s occ mismatch, recalc: %d original: %d\n", buffer, congestion[i].recalc_occ, congestion[i].occ);
+							printf("Node %s occ mismatch, recalc: %d original: %d\n", buffer, congestion[i].recalc_occ, congestion[i].occ);
 							valid = false;
 						}
 					}
@@ -6121,13 +6143,28 @@ bool mpi_spatial_route_flat(t_router_opts *opts, struct s_det_routing_arch det_r
         total_update_cost_time += update_cost_time;
         total_analyze_timing_time += analyze_timing_time;
         total_iter_time += iter_time;
+		total_wait_time += wait_time;
+		total_combine_time += combine_time;
 
 		if (procid == 0) {
+			vector<clock::duration> all_wait_time(num_procs);
+
 			printf("Iteration time: %g s.\n", duration_cast<nanoseconds>(iter_time).count() / 1e9);
 			printf("\tRoute time: %g s.\n", duration_cast<nanoseconds>(greedy_route_time).count() / 1e9);
+			printf("\tWait time: %g (%g) ", duration_cast<nanoseconds>(wait_time).count() / 1e9, duration_cast<nanoseconds>(wait_time).count() * 100.0 / duration_cast<nanoseconds>(greedy_route_time).count());
+			for (int i = 1; i < num_procs; ++i) {
+				float f_wait_time;
+				MPI_Recv(&f_wait_time, 1, MPI_FLOAT, i, i, cur_comm, MPI_STATUS_IGNORE);
+				printf("%g (%g) ", f_wait_time, f_wait_time * 100 / (duration_cast<nanoseconds>(greedy_route_time).count() / 1e9));
+			}
+			printf("\n");
 			printf("\tUpdate cost time: %g s.\n", duration_cast<nanoseconds>(update_cost_time).count() / 1e9);
 			printf("\tAnalyze timing time: %g s.\n", duration_cast<nanoseconds>(analyze_timing_time).count() / 1e9);
+			printf("\tCombine time: %g s.\n", duration_cast<nanoseconds>(combine_time).count() / 1e9);
 			printf("Critical path: %g ns\n", crit_path_delay);
+		} else {
+			float f_wait_time = duration_cast<nanoseconds>(wait_time).count() / 1e9;
+			MPI_Send(&f_wait_time, 1, MPI_FLOAT, 0, procid, cur_comm);
 		}
 
         //clock::time_point greedy_earliest_end_time = *std::min_element(begin(greedy_end_time), begin(greedy_end_time)+num_procs);
@@ -6139,27 +6176,44 @@ bool mpi_spatial_route_flat(t_router_opts *opts, struct s_det_routing_arch det_r
 		//printf("\n");
     }
 
+done:
+	MPI_Barrier(MPI_COMM_WORLD);
     //sprintf(buffer, "%s_run_%d_rr_graph_occ.txt", s_circuit_name, run);
     //dump_rr_graph_occ(congestion, num_vertices(g), buffer);
 	if (initial_procid == 0) {
 		if (routed) {
 			printf("Routed in %d iterations. Total iteration time: %g\n", iter, duration_cast<nanoseconds>(total_iter_time).count() / 1e9);
 			printf("\tTotal route time: %g s.\n", duration_cast<nanoseconds>(total_greedy_route_time).count() / 1e9);
-			printf("\t\tTotal greedy route time: %g s.\n", duration_cast<nanoseconds>(total_greedy_route_time).count() / 1e9);
+			printf("\tTotal wait time: %g (%g) ", duration_cast<nanoseconds>(total_wait_time).count() / 1e9, duration_cast<nanoseconds>(total_wait_time).count() * 100.0 / duration_cast<nanoseconds>(total_greedy_route_time).count());
+			for (int i = 1; i < initial_num_procs; ++i) {
+				float f_total_wait_time;
+				MPI_Recv(&f_total_wait_time, 1, MPI_FLOAT, i, i, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+				printf("%g (%g) ", f_total_wait_time, f_total_wait_time * 100.0 / (duration_cast<nanoseconds>(total_greedy_route_time).count() / 1e9));
+			}
+			printf("\n");
 			printf("\tTotal update cost time: %g s.\n", duration_cast<nanoseconds>(total_update_cost_time).count() / 1e9);
 			printf("\tTotal analyze timing time: %g s.\n", duration_cast<nanoseconds>(total_analyze_timing_time).count() / 1e9);
+			printf("\tTotal combine time: %g s.\n", duration_cast<nanoseconds>(total_combine_time).count() / 1e9);
 
 			printf("Final critical path: %g ns\n", crit_path_delay);
 		} else {
 			printf("Failed to route in %d iterations. Total iteration time: %g\n", opts->max_router_iterations, duration_cast<nanoseconds>(total_iter_time).count() / 1e9);
 			printf("\tTotal route time: %g s.\n", duration_cast<nanoseconds>(total_greedy_route_time).count() / 1e9);
-			printf("\t\tTotal greedy route time: %g s.\n", duration_cast<nanoseconds>(total_greedy_route_time).count() / 1e9);
+			printf("\tTotal wait time: %g (%g) ", duration_cast<nanoseconds>(total_wait_time).count() / 1e9, duration_cast<nanoseconds>(total_wait_time).count() * 100.0 / duration_cast<nanoseconds>(total_greedy_route_time).count());
+			for (int i = 1; i < initial_num_procs; ++i) {
+				float f_total_wait_time;
+				MPI_Recv(&f_total_wait_time, 1, MPI_FLOAT, i, i, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+				printf("%g (%g) ", f_total_wait_time, f_total_wait_time * 100.0 / (duration_cast<nanoseconds>(total_greedy_route_time).count() / 1e9));
+			}
+			printf("\n");
 			printf("\tTotal update cost time: %g s.\n", duration_cast<nanoseconds>(total_update_cost_time).count() / 1e9);
 			printf("\tTotal analyze timing time: %g s.\n", duration_cast<nanoseconds>(total_analyze_timing_time).count() / 1e9);
+			printf("\tTotal combine time: %g s.\n", duration_cast<nanoseconds>(total_combine_time).count() / 1e9);
 		}
-	} 
-
-	MPI_Barrier(MPI_COMM_WORLD);
+	} else {
+		float f_total_wait_time = duration_cast<nanoseconds>(total_wait_time).count() / 1e9;
+		MPI_Send(&f_total_wait_time, 1, MPI_FLOAT, 0, initial_procid, MPI_COMM_WORLD);
+	}
 
 	MPI_Finalize();
 	exit(0);

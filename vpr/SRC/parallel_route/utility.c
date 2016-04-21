@@ -8,8 +8,6 @@ static const char *rr_types[] =  {
 
 /*#define PRINT_RR_NODE*/
 
-#ifdef PRINT_RR_NODE
-
 static const RRGraph *rr_graph;
 
 void init_sprintf_rr_node(const RRGraph *_rr_graph)
@@ -17,7 +15,7 @@ void init_sprintf_rr_node(const RRGraph *_rr_graph)
 	rr_graph = _rr_graph;
 }
 
-void sprintf_rr_node(int inode, char *buffer)
+void sprintf_rr_node_impl(int inode, char *buffer)
 {
 	/*assert(false);*/
 	/*extern t_rr_node *rr_node;*/
@@ -55,5 +53,3 @@ void sprintf_rr_node(int inode, char *buffer)
 		/*sprintf(buffer, "%d %s (%d,%d)(%d,%d) %d %d", inode, rr_types[rr_node[inode].type], rr_node[inode].xlow, rr_node[inode].ylow, rr_node[inode].xhigh, rr_node[inode].yhigh, rr_node[inode].ptc_num, rr_node[inode].direction);*/
 	/*}*/
 }
-
-#endif

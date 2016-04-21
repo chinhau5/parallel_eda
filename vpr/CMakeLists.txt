@@ -95,6 +95,7 @@ set(srcs
 	SRC/parallel_route/utility.c
 	SRC/parallel_route/net_cluster.cxx
 	SRC/parallel_route/scheduler.c
+	SRC/parallel_route/bounding_boxes.cxx
 	#SRC/parallel_route/advanced_parallel_route_timing.c
 	SRC/timing/net_delay.c
 	SRC/timing/path_delay2.c
@@ -125,6 +126,12 @@ if (CMAKE_SYSTEM_NAME STREQUAL "Linux")
 		/home/chinhau5/Downloads/mlpack-1.0.12/build/include
 		/home/chinhau5/Downloads/armadillo-6.400.3/include
 		/home/chinhau5/Downloads/metis-5.1.0/include/
+		/home/chinhau/Downloads/boost_1_60_0/
+		/home/chinhau/Downloads/tbb44_20160128oss/include
+		/home/chinhau/Downloads/mlpack-1.0.12/build/include
+		/home/chinhau/Downloads/armadillo-6.400.3/include
+		/home/chinhau/Downloads/metis-5.1.0/include/
+		/home/chinhau/zlog/include
 		)
 else()
 	set(external_includes 

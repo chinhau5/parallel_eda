@@ -239,52 +239,6 @@ void update_one_cost_internal_mpi_rma_old(RRNode rr_node, const RRGraph &g, cons
 	assert(MPI_Win_unlock(from_pid, win) == MPI_SUCCESS);
 }
 
-void update_one_cost_mpi_send(const vector<RRNode>::const_iterator &rr_nodes_begin, const vector<RRNode>::const_iterator &rr_nodes_end, const RRGraph &g, congestion_t *congestion, int delta, float pres_fac, int this_pid, int num_procs, MPI_Comm comm, vector<ongoing_transaction_t> &transactions)
-{
-	/*const RouteTreeNode *last = nullptr;*/
-
-	ongoing_transaction_t trans;
-	trans.data = make_shared<vector<send_data_t>>();
-	for (auto iter = rr_nodes_begin; iter != rr_nodes_end; ++iter) {
-		/* we don't update get_source because that's the link to existing route tree and the cost is handled by update_one_cost_internal */
-		/*const RouteTreeNode &rt_node = get_target(rt.graph, get_edge(rt.graph, rt_edge_id));*/
-		/*last = &get_target(rt.graph, get_edge(rt.graph, rt_edge_id));*/
-		/*RRNode &rr_node = get_vertex(g, rt_node.rr_node);*/
-		update_one_cost_internal(*iter, g, congestion, /*net_id,*/ delta, pres_fac);
-
-		send_data_t d;
-		d.rr_node = *iter;
-		d.delta = delta;
-
-		trans.data->push_back(d);
-	}
-
-	for (int i = 0; i < num_procs; ++i) {
-		if (i != this_pid) {
-			zlog_level(delta_log, ROUTER_V3, "MPI update from %d to %d\n", this_pid, i);
-			assert(MPI_Isend(trans.data->data(), trans.data->size()*2, MPI_INT, i, 0, comm, &trans.req) == MPI_SUCCESS);
-			//assert(MPI_ISend(trans.data->data(), trans.data->size()*2, MPI_INT, i, 0, comm) == MPI_SUCCESS);
-		}
-	}
-	transactions.push_back(trans);
-	/*RRNode &rr_node = get_vertex(g, last->rr_node);*/
-	/*update_one_cost_internal(rr_node, delta, pres_fac);*/
-}
-
-void update_one_cost_mpi_rma(const vector<RRNode>::const_iterator &rr_nodes_begin, const vector<RRNode>::const_iterator &rr_nodes_end, const RRGraph &g, const vector<int> &pid, int this_pid, congestion_t *congestion, MPI_Win win, int delta, float pres_fac)
-{
-	/*const RouteTreeNode *last = nullptr;*/
-	for (auto iter = rr_nodes_begin; iter != rr_nodes_end; ++iter) {
-		/* we don't update get_source because that's the link to existing route tree and the cost is handled by update_one_cost_internal */
-		/*const RouteTreeNode &rt_node = get_target(rt.graph, get_edge(rt.graph, rt_edge_id));*/
-		/*last = &get_target(rt.graph, get_edge(rt.graph, rt_edge_id));*/
-		/*RRNode &rr_node = get_vertex(g, rt_node.rr_node);*/
-		update_one_cost_internal_mpi_rma(*iter, g, pid, this_pid, congestion, win, delta, pres_fac);
-	}
-	/*RRNode &rr_node = get_vertex(g, last->rr_node);*/
-	/*update_one_cost_internal(rr_node, delta, pres_fac);*/
-}
-
 void update_one_cost_internal(RRNode rr_node, const RRGraph &g, congestion_locked_t *congestion, /*int net_id, */int delta, float pres_fac, bool lock, lock_perf_t *lock_perf)
 {
 	if (lock) {
@@ -337,20 +291,6 @@ void update_one_cost_internal(RRNode rr_node, const RRGraph &g, congestion_locke
 	zlog_level(delta_log, ROUTER_V2, "Update cost of %s delta: %d new_occ: %d pres_fac: %g\n", buffer, delta, congestion[rr_node].cong.occ, pres_fac);
 }
 
-void update_one_cost(const RRGraph &g, congestion_locked_t *congestion, const vector<RRNode>::const_iterator &rr_nodes_begin, const vector<RRNode>::const_iterator &rr_nodes_end, /*int net_id,*/ int delta, float pres_fac, bool lock, lock_perf_t *lock_perf)
-{
-	/*const RouteTreeNode *last = nullptr;*/
-	for (auto iter = rr_nodes_begin; iter != rr_nodes_end; ++iter) {
-		/* we don't update get_source because that's the link to existing route tree and the cost is handled by update_one_cost_internal */
-		/*const RouteTreeNode &rt_node = get_target(rt.graph, get_edge(rt.graph, rt_edge_id));*/
-		/*last = &get_target(rt.graph, get_edge(rt.graph, rt_edge_id));*/
-		/*RRNode &rr_node = get_vertex(g, rt_node.rr_node);*/
-		update_one_cost_internal(*iter, g, congestion, /*net_id,*/ delta, pres_fac, lock, lock_perf);
-	}
-	/*RRNode &rr_node = get_vertex(g, last->rr_node);*/
-	/*update_one_cost_internal(rr_node, delta, pres_fac);*/
-}
-
 void update_one_cost_internal(RRNode rr_node, const RRGraph &g, congestion_t *congestion, /*int net_id, */int delta, float pres_fac)
 {
 	congestion[rr_node].occ += delta;
@@ -368,6 +308,66 @@ void update_one_cost_internal(RRNode rr_node, const RRGraph &g, congestion_t *co
 	char buffer[256];
 	sprintf_rr_node(rr_node, buffer);
 	zlog_level(delta_log, ROUTER_V2, "Update cost of %s delta: %d new_occ: %d pres_fac: %g\n", buffer, delta, congestion[rr_node].occ, pres_fac);
+}
+
+void update_one_cost_mpi_send(const vector<RRNode>::const_iterator &rr_nodes_begin, const vector<RRNode>::const_iterator &rr_nodes_end, const RRGraph &g, congestion_t *congestion, int delta, float pres_fac, int this_pid, int num_procs, MPI_Comm comm, vector<ongoing_transaction_t> &transactions)
+{
+	/*const RouteTreeNode *last = nullptr;*/
+
+	ongoing_transaction_t trans;
+	trans.data = make_shared<vector<send_data_t>>();
+	for (auto iter = rr_nodes_begin; iter != rr_nodes_end; ++iter) {
+		/* we don't update get_source because that's the link to existing route tree and the cost is handled by update_one_cost_internal */
+		/*const RouteTreeNode &rt_node = get_target(rt.graph, get_edge(rt.graph, rt_edge_id));*/
+		/*last = &get_target(rt.graph, get_edge(rt.graph, rt_edge_id));*/
+		/*RRNode &rr_node = get_vertex(g, rt_node.rr_node);*/
+		update_one_cost_internal(*iter, g, congestion, /*net_id,*/ delta, pres_fac);
+
+		send_data_t d;
+		d.rr_node = *iter;
+		d.delta = delta;
+
+		trans.data->push_back(d);
+	}
+
+	for (int i = 0; i < num_procs; ++i) {
+		if (i != this_pid) {
+			zlog_level(delta_log, ROUTER_V3, "MPI update from %d to %d\n", this_pid, i);
+			assert(MPI_Isend(trans.data->data(), trans.data->size()*2, MPI_INT, i, 0, comm, &trans.req) == MPI_SUCCESS);
+			//assert(MPI_ISend(trans.data->data(), trans.data->size()*2, MPI_INT, i, 0, comm) == MPI_SUCCESS);
+		}
+	}
+	transactions.push_back(trans);
+	/*RRNode &rr_node = get_vertex(g, last->rr_node);*/
+	/*update_one_cost_internal(rr_node, delta, pres_fac);*/
+}
+
+void update_one_cost_mpi_rma(const vector<RRNode>::const_iterator &rr_nodes_begin, const vector<RRNode>::const_iterator &rr_nodes_end, const RRGraph &g, const vector<int> &pid, int this_pid, congestion_t *congestion, MPI_Win win, int delta, float pres_fac)
+{
+	/*const RouteTreeNode *last = nullptr;*/
+	for (auto iter = rr_nodes_begin; iter != rr_nodes_end; ++iter) {
+		/* we don't update get_source because that's the link to existing route tree and the cost is handled by update_one_cost_internal */
+		/*const RouteTreeNode &rt_node = get_target(rt.graph, get_edge(rt.graph, rt_edge_id));*/
+		/*last = &get_target(rt.graph, get_edge(rt.graph, rt_edge_id));*/
+		/*RRNode &rr_node = get_vertex(g, rt_node.rr_node);*/
+		update_one_cost_internal_mpi_rma(*iter, g, pid, this_pid, congestion, win, delta, pres_fac);
+	}
+	/*RRNode &rr_node = get_vertex(g, last->rr_node);*/
+	/*update_one_cost_internal(rr_node, delta, pres_fac);*/
+}
+
+void update_one_cost(const RRGraph &g, congestion_locked_t *congestion, const vector<RRNode>::const_iterator &rr_nodes_begin, const vector<RRNode>::const_iterator &rr_nodes_end, /*int net_id,*/ int delta, float pres_fac, bool lock, lock_perf_t *lock_perf)
+{
+	/*const RouteTreeNode *last = nullptr;*/
+	for (auto iter = rr_nodes_begin; iter != rr_nodes_end; ++iter) {
+		/* we don't update get_source because that's the link to existing route tree and the cost is handled by update_one_cost_internal */
+		/*const RouteTreeNode &rt_node = get_target(rt.graph, get_edge(rt.graph, rt_edge_id));*/
+		/*last = &get_target(rt.graph, get_edge(rt.graph, rt_edge_id));*/
+		/*RRNode &rr_node = get_vertex(g, rt_node.rr_node);*/
+		update_one_cost_internal(*iter, g, congestion, /*net_id,*/ delta, pres_fac, lock, lock_perf);
+	}
+	/*RRNode &rr_node = get_vertex(g, last->rr_node);*/
+	/*update_one_cost_internal(rr_node, delta, pres_fac);*/
 }
 
 void update_one_cost(const RRGraph &g, congestion_t *congestion, const vector<RRNode>::const_iterator &rr_nodes_begin, const vector<RRNode>::const_iterator &rr_nodes_end, int delta, float pres_fac)

@@ -5,17 +5,17 @@
 
 //#define PRINT_RR_NODE
 
-#ifdef PRINT_RR_NODE
-
 void init_sprintf_rr_node(const RRGraph *_rr_graph);
 
-void sprintf_rr_node(int inode, char *buffer);
+void sprintf_rr_node_impl(int inode, char *buffer);
+
+#ifdef PRINT_RR_NODE
+
+#define sprintf_rr_node(inode, buffer) sprintf_rr_node_impl((inode), (buffer))
 
 #else
 
-#define init_sprintf_rr_node(...)
-
-#define sprintf_rr_node(...) 
+#define sprintf_rr_node(inode, buffer) 
 
 #endif
 

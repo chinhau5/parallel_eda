@@ -25,7 +25,7 @@
 
 #ifdef __linux__
 #include <sys/syscall.h>
-#include <ittnotify.h>
+//#include <ittnotify.h>
 #endif
 
 #include <boost/numeric/interval.hpp>

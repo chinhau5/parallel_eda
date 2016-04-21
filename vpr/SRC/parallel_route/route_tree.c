@@ -643,20 +643,23 @@ void route_tree_rip_up_marked_mpi_send_recv(route_tree_t &rt, const RRGraph &g, 
 		if (rt_node_p.pending_rip_up) {
 			zlog_level(delta_log, ROUTER_V2, "Ripping up node %s from route tree. Occ: %d Cap: %d\n", buffer, congestion[rt_node_p.rr_node].occ, rr_node_p.capacity);
 
+			/*if (rr_node_p.type == SOURCE) {*/
+				/*[>assert(rt_node.saved_num_out_edges > 0);<]*/
+				/*[>update_one_cost_internal_mpi_send(rr_node, g, congestion, -num_out_edges(rt.graph, rt_node), pres_fac, this_pid, num_procs, comm); <]*/
+				/*update_one_cost_internal(rr_node, g, congestion, -num_out_edges(rt.graph, rt_node), pres_fac); */
+
+				/*d.delta = -num_out_edges(rt.graph, rt_node);*/
+			/*} else {*/
+				/*[>update_one_cost_internal_mpi_send(rr_node, g, congestion, -1, pres_fac, this_pid, num_procs, comm); <]*/
+				/*update_one_cost_internal(rr_node, g, congestion, -1, pres_fac); */
+
+				/*d.delta = -1;*/
+			/*}*/
+			update_one_cost_internal(rr_node, g, congestion, -1, pres_fac); 
+
 			send_data_t d;
 			d.rr_node = rr_node;
-			if (rr_node_p.type == SOURCE) {
-				/*assert(rt_node.saved_num_out_edges > 0);*/
-				/*update_one_cost_internal_mpi_send(rr_node, g, congestion, -num_out_edges(rt.graph, rt_node), pres_fac, this_pid, num_procs, comm); */
-				update_one_cost_internal(rr_node, g, congestion, -num_out_edges(rt.graph, rt_node), pres_fac); 
-
-				d.delta = -num_out_edges(rt.graph, rt_node);
-			} else {
-				/*update_one_cost_internal_mpi_send(rr_node, g, congestion, -1, pres_fac, this_pid, num_procs, comm); */
-				update_one_cost_internal(rr_node, g, congestion, -1, pres_fac); 
-
-				d.delta = -1;
-			}
+			d.delta = -1;
 			trans.data->push_back(d);
 
 			route_tree_remove_node(rt, rr_node, g);
@@ -672,15 +675,15 @@ void route_tree_rip_up_marked_mpi_send_recv(route_tree_t &rt, const RRGraph &g, 
 				/* since reconnection back to SOURCE always causes cost to be updated, we need to
 				 * update the cost when ripping up also.
 				 * if parent is pending rip up, cost will be updated that time. so dont handle it here */
-				if (parent_rr_node_p.type == SOURCE && !parent_rt_node_p.pending_rip_up && !parent_rt_node_p.ripped_up) {
-					/*update_one_cost_internal_mpi_send(parent_rt_node_p.rr_node, g, congestion, -1, pres_fac, this_pid, num_procs, comm); */
-					update_one_cost_internal(parent_rt_node_p.rr_node, g, congestion, -1, pres_fac); 
+				/*if (parent_rr_node_p.type == SOURCE && !parent_rt_node_p.pending_rip_up && !parent_rt_node_p.ripped_up) {*/
+					/*[>update_one_cost_internal_mpi_send(parent_rt_node_p.rr_node, g, congestion, -1, pres_fac, this_pid, num_procs, comm); <]*/
+					/*update_one_cost_internal(parent_rt_node_p.rr_node, g, congestion, -1, pres_fac); */
 
-					d.rr_node = parent_rt_node_p.rr_node;
-					d.delta = -1;
+					/*d.rr_node = parent_rt_node_p.rr_node;*/
+					/*d.delta = -1;*/
 
-					trans.data->push_back(d);
-				}
+					/*trans.data->push_back(d);*/
+				/*}*/
 
 				route_tree_remove_edge(rt, edge, g);
 

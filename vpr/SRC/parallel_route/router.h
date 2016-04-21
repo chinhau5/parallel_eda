@@ -24,11 +24,11 @@ void recalculate_occ_internal(const route_tree_t &rt, RouteTreeNode rt_node, con
 
 	int rr_node = rt_node_p.rr_node;
 	auto &rr_node_p = get_vertex_props(g, rr_node);
-	if (rr_node_p.type == SOURCE) {
-		get_recalc_occ(congestion[rr_node]) += num_out_edges(rt.graph, rt_node);
-	} else {
+	//if (rr_node_p.type == SOURCE) {
+		//get_recalc_occ(congestion[rr_node]) += num_out_edges(rt.graph, rt_node);
+	//} else {
 		++get_recalc_occ(congestion[rr_node]);
-	}
+	//}
 
 	for (const auto &branch : route_tree_get_branches(rt, rt_node)) {
 		/*for_all_out_edges(rt.graph, node, [&rt, &g, &visited_sinks, &visited_nodes] (const RouteTreeEdge &e) -> void {*/

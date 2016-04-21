@@ -1261,7 +1261,8 @@ std::shared_ptr<vector<path_node_t>> get_path(int sink_rr_node_id, const route_s
 	path_node_t node;
 	node.rr_node_id = current_rr_node_id;
 	node.prev_edge = RRGraph::null_edge();
-	node.update_cost = get_vertex_props(g, current_rr_node_id).type == SOURCE;
+	//node.update_cost = get_vertex_props(g, current_rr_node_id).type == SOURCE;
+	node.update_cost = false;
 
 	path->emplace_back(node);
 
@@ -1850,6 +1851,31 @@ void sync(congestion_t *congestion, const RRGraph &g, float pres_fac, int this_p
 	}
 }
 
+void broadcast_costs(const vector<RRNode>::const_iterator &rr_nodes_begin, const vector<RRNode>::const_iterator &rr_nodes_end, int delta, int this_pid, int num_procs, MPI_Comm comm, vector<ongoing_transaction_t> &transactions)
+{
+	ongoing_transaction_t trans;
+
+	trans.data = make_shared<vector<send_data_t>>();
+
+	for (auto iter = rr_nodes_begin; iter != rr_nodes_end; ++iter) {
+		send_data_t d;
+		d.rr_node = *iter;
+		d.delta = delta;
+
+		trans.data->push_back(d);
+	}
+
+	for (int i = 0; i < num_procs; ++i) {
+		if (i != this_pid) {
+			zlog_level(delta_log, ROUTER_V3, "MPI update from %d to %d\n", this_pid, i);
+			assert(MPI_Isend(trans.data->data(), trans.data->size()*2, MPI_INT, i, 0, comm, &trans.req) == MPI_SUCCESS);
+			//assert(MPI_ISend(trans.data->data(), trans.data->size()*2, MPI_INT, i, 0, comm) == MPI_SUCCESS);
+		}
+	}
+
+	transactions.push_back(trans);
+}
+
 void route_net_mpi_send_recv(const RRGraph &g, const vector<int> &pid, int this_pid, int vpr_id, const source_t *source, const vector<sink_t *> &sinks, const route_parameters_t &params, route_state_t *state, congestion_t *congestion, int num_procs, MPI_Comm comm, vector<ongoing_transaction_t> &transactions, route_tree_t &rt, t_net_timing &net_timing, vector<sink_t *> &routed_sinks, vector<sink_t *> &unrouted_sinks, perf_t *perf)
 {
 	std::priority_queue<route_state_t> heap;
@@ -1865,6 +1891,8 @@ void route_net_mpi_send_recv(const RRGraph &g, const vector<int> &pid, int this_
 
 	char buffer[256];
 
+	bool empty_route_tree;
+
 	if (route_tree_empty(rt)) {
 		/* special case */
 		sprintf_rr_node(source->rr_node, buffer);
@@ -1875,8 +1903,11 @@ void route_net_mpi_send_recv(const RRGraph &g, const vector<int> &pid, int this_
 		route_tree_set_node_properties(rt, root_rt_node, true, RRGraph::null_edge(), source_rr_node_p.R, 0.5 * source_rr_node_p.R * source_rr_node_p.C);
 		route_tree_add_root(rt, source->rr_node);
 
-		/*update_one_cost_internal(source_rr_node_p, 1, params.pres_fac);*/
+		//update_one_cost_internal(source->rr_node, g, congestion, 1, params.pres_fac);
+		empty_route_tree = true;
 	} else {
+		empty_route_tree = false;
+
 		if (rt.root_rt_node_id != -1) {
 			const auto &rt_root_p = get_vertex_props(rt.graph, rt.root_rt_node_id);
 			if (source && rt_root_p.rr_node != source->rr_node) {
@@ -1985,6 +2016,12 @@ void route_net_mpi_send_recv(const RRGraph &g, const vector<int> &pid, int this_
 
 			route_tree_add_path(rt, path, g, state);
 
+			if (empty_route_tree) {
+				assert(path->back().rr_node_id == source->rr_node);
+				path->back().update_cost = true;
+				empty_route_tree = false;
+			}
+
 			vector<RRNode> added_nodes;
 			for (const auto &n : *path) {
 				if (n.update_cost) {
@@ -1992,7 +2029,9 @@ void route_net_mpi_send_recv(const RRGraph &g, const vector<int> &pid, int this_
 				}
 			}
 
-			update_one_cost_mpi_send(added_nodes.begin(), added_nodes.end(), g, congestion, 1, params.pres_fac, this_pid, num_procs, comm, transactions);
+			update_one_cost(g, congestion, added_nodes.begin(), added_nodes.end(), 1, params.pres_fac);
+
+			broadcast_costs(added_nodes.begin(), added_nodes.end(), 1, this_pid, num_procs, comm, transactions);
 
 			if (sink->id != -1) {
 				net_timing.delay[sink->id+1] = get_vertex_props(rt.graph, route_tree_get_rt_node(rt, sink->rr_node)).delay;
@@ -2011,6 +2050,8 @@ void route_net_mpi_send_recv(const RRGraph &g, const vector<int> &pid, int this_
 		modified.clear();
 
 		heap = std::priority_queue<route_state_t>();
+
+		++isink;
 	}
 	//zlog_level(delta_log, ROUTER_V1, "\n");
 
