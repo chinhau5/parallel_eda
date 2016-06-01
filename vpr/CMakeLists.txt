@@ -85,9 +85,18 @@ set(srcs
 	#SRC/parallel_route/phased.cxx
 	SRC/parallel_route/congestion.cxx
 	SRC/parallel_route/router.cxx
+	SRC/parallel_route/route_net_mpi_send_recv.cxx
 	SRC/parallel_route/init.cxx
 	SRC/parallel_route/log.cxx
 	SRC/parallel_route/spatial.cxx
+	SRC/parallel_route/spatial_route.cxx
+	SRC/parallel_route/spatial_route_2.cxx
+	SRC/parallel_route/spatial_route_3.cxx
+	SRC/parallel_route/mpi_spatial_route_flat_with_net_partitioning.cxx
+	SRC/parallel_route/mpi_spatial_route_flat.cxx
+	SRC/parallel_route/mpi_spatial_route_partitioned.cxx
+	SRC/parallel_route/mpi_spatial_route_rma.cxx
+	SRC/parallel_route/mpi_spatial_route_simulated.cxx
 	SRC/parallel_route/astar.cxx
 	#SRC/parallel_route/partitioning_route.c
 	SRC/parallel_route/route_tree.c
@@ -119,10 +128,10 @@ if (CMAKE_SYSTEM_NAME STREQUAL "Linux")
 	set(external_includes 
 		/usr/include/libxml2
 		/usr/local/include
-		/opt/intel/vtune_amplifier_xe/include/
-		/opt/intel/tbb/include/
+		#/opt/intel/vtune_amplifier_xe/include/
+		#/opt/intel/tbb/include/
 		/home/chinhau5/Downloads/boost_1_60_0/
-		/home/chinhau5/Downloads/tbb44_20151115oss/include
+		/home/chinhau5/Downloads/tbb44_20160128oss/include
 		/home/chinhau5/Downloads/mlpack-1.0.12/build/include
 		/home/chinhau5/Downloads/armadillo-6.400.3/include
 		/home/chinhau5/Downloads/metis-5.1.0/include/
@@ -165,7 +174,7 @@ target_include_directories(Vpr PUBLIC
 )
 
 target_compile_options(Vpr PRIVATE
-	-Wno-write-strings -Wno-unused-variable -Wno-unused-private-field
+	-Wno-write-strings -Wno-unused-variable -Wno-unused-private-field -Wno-sign-compare
 	#-DNO_GRAPHICS
 	) 
 

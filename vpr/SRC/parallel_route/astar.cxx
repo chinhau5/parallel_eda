@@ -23,7 +23,7 @@
 using std::chrono::duration_cast;
 using std::chrono::nanoseconds;
 
-vector<vector<FILE *>> delta_log_files;
+extern vector<vector<FILE *>> delta_log_files;
 
 static int delta_log_output(zlog_msg_t *msg)
 {
@@ -142,11 +142,11 @@ bool new_astar_route(t_router_opts *opts)
 
 	//vector<vector<virtual_net_t>> virtual_nets_by_net;
 	//create_clustered_virtual_nets(nets, 5, opts->max_sink_bb_area, virtual_nets_by_net);
-	congestion_locked_t *congestion = new congestion_locked_t[num_vertices(g)];
+	congestion_t *congestion = new congestion_t[num_vertices(g)];
 	for (int i = 0; i < num_vertices(g); ++i) {
-		congestion[i].cong.acc_cost = 1;
-		congestion[i].cong.pres_cost = 1;
-		congestion[i].cong.occ = 0;
+		congestion[i].acc_cost = 1;
+		congestion[i].pres_cost = 1;
+		congestion[i].occ = 0;
 	}
 
 	char buffer[256];
@@ -273,7 +273,7 @@ bool new_astar_route(t_router_opts *opts)
 							} else {
 								route_tree_mark_congested_nodes_to_be_ripped(route_trees[net->local_id], g, congestion);
 							}
-							route_tree_rip_up_marked(route_trees[net->local_id], g, congestion, params.pres_fac, true, &local_lock_perf);
+							route_tree_rip_up_marked(route_trees[net->local_id], g, congestion, params.pres_fac);
 
 							//local_perf.total_rip_up_time += clock::now()-rip_up_start;
 
@@ -319,7 +319,7 @@ bool new_astar_route(t_router_opts *opts)
 							} else {
 								route_tree_mark_congested_nodes_to_be_ripped(route_trees[net->local_id], g, congestion);
 							}
-							route_tree_rip_up_marked(route_trees[net->local_id], g, congestion, params.pres_fac, true, &local_lock_perf);
+							route_tree_rip_up_marked(route_trees[net->local_id], g, congestion, params.pres_fac);
 
 							//local_perf.total_rip_up_time += clock::now()-rip_up_start;
 
@@ -373,7 +373,7 @@ bool new_astar_route(t_router_opts *opts)
 					} else {
 						route_tree_mark_congested_nodes_to_be_ripped(route_trees[net->local_id], g, congestion);
 					}
-					route_tree_rip_up_marked(route_trees[net->local_id], g, congestion, params.pres_fac, true, nullptr);
+					route_tree_rip_up_marked(route_trees[net->local_id], g, congestion, params.pres_fac);
 
 					vector<sink_t *> sinks;	
 					sinks.reserve(net->sinks.size());
@@ -387,7 +387,7 @@ bool new_astar_route(t_router_opts *opts)
 						}
 					}
 					if (!sinks.empty()) {
-						route_net_with_fine_grain_lock(g, net->vpr_id, &net->source, sinks, params, states[0], congestion, route_trees[net->local_id], net_timing[net->vpr_id], true, nullptr, nullptr);
+						//route_net_with_fine_grain_lock(g, net->vpr_id, &net->source, sinks, params, states[0], congestion, route_trees[net->local_id], net_timing[net->vpr_id], true, nullptr, nullptr);
 					}
 				}
 			} else {
@@ -420,7 +420,7 @@ bool new_astar_route(t_router_opts *opts)
 							} else {
 								route_tree_mark_congested_nodes_to_be_ripped(route_trees[net->local_id], g, congestion);
 							}
-							route_tree_rip_up_marked(route_trees[net->local_id], g, congestion, params.pres_fac, true, &local_lock_perf);
+							route_tree_rip_up_marked(route_trees[net->local_id], g, congestion, params.pres_fac);
 
 							vector<sink_t *> sinks;	
 							sinks.reserve(net->sinks.size());
@@ -434,7 +434,7 @@ bool new_astar_route(t_router_opts *opts)
 								}
 							}
 							if (!sinks.empty()) {
-								route_net_with_fine_grain_lock(g, net->vpr_id, &net->source, sinks, params, states[tid], congestion, route_trees[net->local_id], net_timing[net->vpr_id], true, &local_perf, &local_lock_perf);
+								//route_net_with_fine_grain_lock(g, net->vpr_id, &net->source, sinks, params, states[tid], congestion, route_trees[net->local_id], net_timing[net->vpr_id], true, &local_perf, &local_lock_perf);
 
 								++num_nets_routed;
 							}
@@ -470,7 +470,7 @@ bool new_astar_route(t_router_opts *opts)
 
 		/* checking */
 		for (int i = 0; i < num_vertices(g); ++i) {
-			congestion[i].cong.recalc_occ = 0; 
+			congestion[i].recalc_occ = 0; 
 		}
 
 		for (const auto &net : nets) {
@@ -481,8 +481,8 @@ bool new_astar_route(t_router_opts *opts)
 		bool valid = true;
 		for (int i = 0; i < num_vertices(g); ++i) {
 			sprintf_rr_node(i, buffer);
-			if (congestion[i].cong.recalc_occ != congestion[i].cong.occ) {
-				zlog_error(delta_log, "Node %s occ mismatch, recalc: %d original: %d\n", buffer, congestion[i].cong.recalc_occ, congestion[i].cong.occ);
+			if (congestion[i].recalc_occ != congestion[i].occ) {
+				zlog_error(delta_log, "Node %s occ mismatch, recalc: %d original: %d\n", buffer, congestion[i].recalc_occ, congestion[i].occ);
 				valid = false;
 			}
 		}
@@ -509,7 +509,7 @@ bool new_astar_route(t_router_opts *opts)
 		} else {
 			unsigned long num_overused_nodes = 0;
 			for (int i = 0; i < num_vertices(g); ++i) {
-				if (congestion[i].cong.occ > get_vertex_props(g, i).capacity) {
+				if (congestion[i].occ > get_vertex_props(g, i).capacity) {
 					++num_overused_nodes;
 				}
 			}

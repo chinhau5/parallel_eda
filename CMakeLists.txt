@@ -6,11 +6,12 @@ if (CMAKE_SYSTEM_NAME STREQUAL "Linux")
 	link_directories(
 		/usr/local/lib
 		/usr/X11/lib
-		/opt/intel/tbb/lib/intel64/gcc4.4
+		#/opt/intel/tbb/lib/intel64/gcc4.4
 		/home/chinhau5/Downloads/metis-5.1.0/build/Linux-x86_64/libmetis
+		/home/chinhau5/Downloads/tbb44_20160128oss/lib/intel64/gcc4.4/
 		/home/chinhau/Downloads/metis-5.1.0/build/Linux-x86_64/libmetis
-		/home/chinhau/zlog/lib
 		/home/chinhau/Downloads/tbb44_20160128oss/lib/intel64/gcc4.4/
+		/home/chinhau/zlog/lib
 		)
 else()
 	link_directories(

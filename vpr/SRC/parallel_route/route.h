@@ -29,6 +29,12 @@ typedef struct perf_t {
 	std::chrono::high_resolution_clock::duration total_scheduler_box_time;
 } perf_t;
 
+typedef struct mpi_perf_t {
+	std::chrono::high_resolution_clock::duration total_sync_time;
+	std::chrono::high_resolution_clock::duration total_broadcast_time;
+	std::chrono::high_resolution_clock::duration total_probe_time;
+} mpi_perf_t;
+
 typedef struct sched_perf_t {
 	unsigned long num_updates;
 	unsigned long num_leaf_node_pred_calls;

@@ -31,7 +31,7 @@ extern __itt_string_handle *shMainTask;
 using std::chrono::duration_cast;
 using std::chrono::nanoseconds;
 
-vector<vector<FILE *>> delta_log_files;
+extern vector<vector<FILE *>> delta_log_files;
 
 static int delta_log_output(zlog_msg_t *msg)
 {
