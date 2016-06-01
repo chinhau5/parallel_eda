@@ -40,7 +40,7 @@ void free_circuit();
 void init_displ(int num_procs, int current_level, const vector<pair<box, net_t *>> &nets_to_route, int initial_num_procs, int **recvcounts, int **displs);
 void get_sinks_to_route(net_t *net, const route_tree_t &rt, const vector<sink_t *> &unroutable_sinks, vector<sink_t *> &sinks_to_route);
 void send_route_tree(net_t *net, const RRGraph &g, const vector<vector<sink_t *>> &routed_sinks, const vector<route_tree_t> &route_trees, int to_procid, MPI_Comm comm);
-void recv_route_tree(net_t *net, const RRGraph &g, vector<vector<sink_t *>> &routed_sinks, route_state_t *states, congestion_t *congestion, float pres_fac, vector<route_tree_t> &route_trees, t_net_timing *net_timing, int from_procid, MPI_Comm comm);
+void recv_route_tree(net_t *net, const RRGraph &g, vector<vector<sink_t *>> &routed_sinks, route_state_t *states, vector<route_tree_t> &route_trees, t_net_timing *net_timing, int from_procid, MPI_Comm comm);
 void init_route_structs(const RRGraph &g, const vector<net_t> &nets, const vector<net_t> &global_nets, route_state_t **states, congestion_t **congestion, vector<route_tree_t> &route_trees, t_net_timing **net_timing);
 
 extern vector<vector<FILE *>> delta_log_files;
@@ -730,7 +730,7 @@ bool mpi_spatial_route_partitioned(t_router_opts *opts, struct s_det_routing_arc
 
 							zlog_level(delta_log, ROUTER_V3, "Recving net index %d from %d\n", i+j, procid+1);
 
-							recv_route_tree(net, partitioner.orig_g, routed_sinks, states, congestion, params.pres_fac, route_trees, net_timing, procid+1, cur_comm);
+							recv_route_tree(net, partitioner.orig_g, routed_sinks, states, route_trees, net_timing, procid+1, cur_comm);
 						}
 					}
 				} else {

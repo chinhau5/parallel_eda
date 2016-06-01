@@ -2733,7 +2733,7 @@ void sync_net_delay(const vector<pair<box, net_t *>> &nets_to_route, int procid,
 	delete [] all_delays;
 }
 
-void recv_route_tree(net_t *net, const RRGraph &g, vector<vector<sink_t *>> &routed_sinks, route_state_t *states, congestion_t *congestion, float pres_fac, vector<route_tree_t> &route_trees, t_net_timing *net_timing, int from_procid, MPI_Comm comm)
+void recv_route_tree(net_t *net, const RRGraph &g, vector<vector<sink_t *>> &routed_sinks, route_state_t *states, vector<route_tree_t> &route_trees, t_net_timing *net_timing, int from_procid, MPI_Comm comm)
 {
 	MPI_Status status;
 	MPI_Probe(from_procid, net->local_id, comm, &status);

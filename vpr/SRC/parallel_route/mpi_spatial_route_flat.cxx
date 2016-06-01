@@ -40,7 +40,7 @@ void free_circuit();
 void init_displ(int num_procs, int current_level, const vector<pair<box, net_t *>> &nets_to_route, int initial_num_procs, int **recvcounts, int **displs);
 void get_sinks_to_route(net_t *net, const route_tree_t &rt, const vector<sink_t *> &unroutable_sinks, vector<sink_t *> &sinks_to_route);
 void send_route_tree(net_t *net, const RRGraph &g, const vector<vector<sink_t *>> &routed_sinks, const vector<route_tree_t> &route_trees, int to_procid, MPI_Comm comm);
-void recv_route_tree(net_t *net, const RRGraph &g, vector<vector<sink_t *>> &routed_sinks, route_state_t *states, congestion_t *congestion, float pres_fac, vector<route_tree_t> &route_trees, t_net_timing *net_timing, int from_procid, MPI_Comm comm);
+void recv_route_tree(net_t *net, const RRGraph &g, vector<vector<sink_t *>> &routed_sinks, route_state_t *states, vector<route_tree_t> &route_trees, t_net_timing *net_timing, int from_procid, MPI_Comm comm);
 void init_route_structs(const RRGraph &g, const vector<net_t> &nets, const vector<net_t> &global_nets, route_state_t **states, congestion_t **congestion, vector<route_tree_t> &route_trees, t_net_timing **net_timing);
 
 extern vector<vector<FILE *>> delta_log_files;
@@ -52,8 +52,9 @@ bool mpi_spatial_route_flat(t_router_opts *opts, struct s_det_routing_arch det_r
     using std::chrono::nanoseconds;
     using clock = std::chrono::high_resolution_clock;
 
-	int initial_num_procs, num_procs, initial_procid, procid;
+	int initial_num_procs, prev_num_procs, num_procs, initial_procid, prev_procid, procid;
 	MPI_Comm cur_comm = MPI_COMM_WORLD;
+	MPI_Comm prev_comm = cur_comm;
 
     MPI_Comm_size(cur_comm, &initial_num_procs);
     MPI_Comm_rank(cur_comm, &initial_procid);
@@ -61,7 +62,10 @@ bool mpi_spatial_route_flat(t_router_opts *opts, struct s_det_routing_arch det_r
 	printf("[%d] Initializing router\n", initial_procid);
 
 	num_procs = initial_num_procs;
+	prev_num_procs = num_procs;
+
 	procid = initial_procid;
+	prev_procid = procid;
 
 	init_congestion_mpi_datatype();
 	init_datatypes();
@@ -275,6 +279,7 @@ bool mpi_spatial_route_flat(t_router_opts *opts, struct s_det_routing_arch det_r
             });
 
     bool routed = false;
+	bool idling = false;
 
     int iter;
     float crit_path_delay;
@@ -293,7 +298,7 @@ bool mpi_spatial_route_flat(t_router_opts *opts, struct s_det_routing_arch det_r
     clock::duration total_wait_time = clock::duration::zero();
     clock::duration total_combine_time = clock::duration::zero();
 
-    for (iter = 0; iter < opts->max_router_iterations && !routed; ++iter) {
+    for (iter = 0; iter < opts->max_router_iterations && !routed && !idling; ++iter) {
         clock::duration greedy_route_time = clock::duration::zero();
         clock::duration update_cost_time = clock::duration::zero();
         clock::duration analyze_timing_time = clock::duration::zero();
@@ -310,15 +315,12 @@ bool mpi_spatial_route_flat(t_router_opts *opts, struct s_det_routing_arch det_r
 
         //tbb::enumerable_thread_specific<state_t *> state_tls;
         //
-		vector<perf_t> perfs(num_procs);
-		vector<mpi_perf_t> mpi_perfs(num_procs);
-        vector<int> thread_num_nets_routed(num_procs, 0);
-        vector<int> thread_num_nets_to_route(num_procs, 0);
-        vector<int> thread_num_sinks_routed(num_procs, 0);
-        vector<int> thread_num_sinks_to_route(num_procs, 0);
-		vector<int> thread_num_interpartition_sinks(num_procs, 0);
-        bool has_interpartition_sinks = false;
-        vector<vector<interpartition_sink_t>> interpartition_sinks(nets.size()); 
+		perf_t perf;
+		mpi_perf_t mpi_perf;
+        int thread_num_nets_routed = 0;
+        int thread_num_nets_to_route = 0;
+        int thread_num_sinks_routed = 0;
+        int thread_num_sinks_to_route = 0;
 		//vector<vector<RRNode>> net_sinks(nets.size());
 
 		sprintf(buffer, "%d", iter);
@@ -338,13 +340,13 @@ bool mpi_spatial_route_flat(t_router_opts *opts, struct s_det_routing_arch det_r
 
         auto greedy_route_start = clock::now();
 
-		perfs[procid].num_heap_pushes = 0;
-		perfs[procid].num_heap_pops = 0;
-		perfs[procid].num_neighbor_visits = 0;
+		perf.num_heap_pushes = 0;
+		perf.num_heap_pops = 0;
+		perf.num_neighbor_visits = 0;
 
-		mpi_perfs[procid].total_broadcast_time = clock::duration::zero();
-		mpi_perfs[procid].total_sync_time = clock::duration::zero();
-		mpi_perfs[procid].total_probe_time = clock::duration::zero();
+		mpi_perf.total_broadcast_time = clock::duration::zero();
+		mpi_perf.total_sync_time = clock::duration::zero();
+		mpi_perf.total_probe_time = clock::duration::zero();
 
 		for (int i = procid*pow(2, current_level); i < nets_to_route.size(); i += initial_num_procs) {
 			for (int j = 0; j < pow(2, current_level) && i+j < nets_to_route.size(); ++j) {
@@ -377,8 +379,8 @@ bool mpi_spatial_route_flat(t_router_opts *opts, struct s_det_routing_arch det_r
 				route_tree_rip_up_marked_mpi_send_recv(route_trees[net->local_id], partitioner.orig_g, congestion, params.pres_fac, procid, num_procs, cur_comm, transactions);
 
 				auto sync_start	= clock::now();
-				sync(congestion, partitioner.orig_g, params.pres_fac, procid, num_procs, cur_comm, &mpi_perfs[procid]);
-				mpi_perfs[procid].total_sync_time += clock::now()-sync_start;
+				sync(congestion, partitioner.orig_g, params.pres_fac, procid, num_procs, cur_comm, &mpi_perf);
+				mpi_perf.total_sync_time += clock::now()-sync_start;
 
 				routed_sinks[net->local_id].clear();
 				for (auto &sink : net->sinks) {
@@ -399,7 +401,7 @@ bool mpi_spatial_route_flat(t_router_opts *opts, struct s_det_routing_arch det_r
 
 					int previous_num_routed_sinks = routed_sinks[net->local_id].size();
 
-					route_net_mpi_send_recv(partitioner.orig_g, procid, net->vpr_id, &net->source, sinks, params, states, congestion, num_procs, cur_comm, transactions, route_trees[net->local_id], net_timing[net->vpr_id], routed_sinks[net->local_id], unroutable_sinks[net->local_id], &perfs[procid], &mpi_perfs[procid]);
+					route_net_mpi_send_recv(partitioner.orig_g, procid, net->vpr_id, &net->source, sinks, params, states, congestion, num_procs, cur_comm, transactions, route_trees[net->local_id], net_timing[net->vpr_id], routed_sinks[net->local_id], unroutable_sinks[net->local_id], &perf, &mpi_perf);
 
 					assert(routed_sinks[net->local_id].size() + unroutable_sinks[net->local_id].size() == net->sinks.size());
 
@@ -411,11 +413,11 @@ bool mpi_spatial_route_flat(t_router_opts *opts, struct s_det_routing_arch det_r
 						has_unroutable_sinks = !unroutable_sinks[net->local_id].empty();
 					}
 
-					++thread_num_nets_routed[procid];
-					++thread_num_nets_to_route[procid];
+					++thread_num_nets_routed;
+					++thread_num_nets_to_route;
 
-					thread_num_sinks_to_route[procid] += sinks.size();
-					thread_num_sinks_routed[procid] += routed_sinks[net->local_id].size() - previous_num_routed_sinks;
+					thread_num_sinks_to_route += sinks.size();
+					thread_num_sinks_routed += routed_sinks[net->local_id].size() - previous_num_routed_sinks;
 				} else {
 					assert(routed_sinks[net->local_id].size() + unroutable_sinks[net->local_id].size() == net->sinks.size());
 					zlog_level(delta_log, ROUTER_V2, "Net %d has no sinks in the current iteration because there are %lu/%lu non-routable/all sinks\n", net->vpr_id, unroutable_sinks[net->local_id].size(), net->sinks.size());
@@ -430,8 +432,8 @@ bool mpi_spatial_route_flat(t_router_opts *opts, struct s_det_routing_arch det_r
 		wait_time = clock::now()-wait_start;
 
 		auto sync_start	= clock::now();
-		sync(congestion, partitioner.orig_g, params.pres_fac, procid, num_procs, cur_comm, &mpi_perfs[procid]);
-		mpi_perfs[procid].total_sync_time += clock::now()-sync_start;
+		sync(congestion, partitioner.orig_g, params.pres_fac, procid, num_procs, cur_comm, &mpi_perf);
+		mpi_perf.total_sync_time += clock::now()-sync_start;
 
 		MPI_Barrier(cur_comm);
 
@@ -466,85 +468,86 @@ bool mpi_spatial_route_flat(t_router_opts *opts, struct s_det_routing_arch det_r
 
 		int total_num_sinks_to_route;
 		if (procid == 0) {
-			int total_num_nets_to_route = thread_num_nets_to_route[0];
-			int total_num_nets_routed = thread_num_nets_routed[0];
-			int total_num_sinks_routed = thread_num_sinks_routed[0];
-			total_num_sinks_to_route = thread_num_sinks_to_route[0];
+			int total_num_nets_to_route = thread_num_nets_to_route;
+			int total_num_nets_routed = thread_num_nets_routed;
+			int total_num_sinks_routed = thread_num_sinks_routed;
+			int total_num_sinks_to_route = thread_num_sinks_to_route;
 
+			printf("num nets routed: %d/%d (%g) ", thread_num_nets_routed, thread_num_nets_to_route, thread_num_nets_routed*100.0/thread_num_nets_to_route);
 			for (int i = 1; i < num_procs; ++i) {
-				MPI_Recv(&thread_num_nets_to_route[i], 1, MPI_INT, i, i, cur_comm, MPI_STATUS_IGNORE);
-				MPI_Recv(&thread_num_nets_routed[i], 1, MPI_INT, i, i, cur_comm, MPI_STATUS_IGNORE);
-				MPI_Recv(&thread_num_sinks_to_route[i], 1, MPI_INT, i, i, cur_comm, MPI_STATUS_IGNORE);
-				MPI_Recv(&thread_num_sinks_routed[i], 1, MPI_INT, i, i, cur_comm, MPI_STATUS_IGNORE);
+				int tmp_thread_num_nets_to_route;
+				int tmp_thread_num_nets_routed;
+				MPI_Recv(&tmp_thread_num_nets_to_route, 1, MPI_INT, i, i, cur_comm, MPI_STATUS_IGNORE);
+				MPI_Recv(&tmp_thread_num_nets_routed, 1, MPI_INT, i, i, cur_comm, MPI_STATUS_IGNORE);
+				total_num_nets_to_route += tmp_thread_num_nets_to_route;
+				total_num_nets_routed += tmp_thread_num_nets_routed;
 
-				total_num_nets_to_route += thread_num_nets_to_route[i];
-				total_num_nets_routed += thread_num_nets_routed[i];
-				total_num_sinks_routed += thread_num_sinks_routed[i];
-				total_num_sinks_to_route += thread_num_sinks_to_route[i];
-			}
-			assert(total_num_nets_to_route == total_num_nets_routed);
-
-			printf("num nets routed: ");
-			for (int i = 0; i < num_procs; ++i) {
-				printf("%d/%d (%g), ", thread_num_nets_routed[i], thread_num_nets_to_route[i], thread_num_nets_routed[i]*100.0/thread_num_nets_to_route[i]);
+				printf("%d/%d (%g) ", tmp_thread_num_nets_routed, tmp_thread_num_nets_to_route, tmp_thread_num_nets_routed*100.0/tmp_thread_num_nets_to_route);
 			}
 			printf("\n");
 
-			printf("num sinks routed: ");
-			for (int i = 0; i < num_procs; ++i) {
-				printf("%d/%d (%g), ", thread_num_sinks_routed[i], thread_num_sinks_to_route[i], thread_num_sinks_routed[i]*100.0/thread_num_sinks_to_route[i]);
+			assert(total_num_nets_to_route == total_num_nets_routed);
+
+			printf("num sinks routed: %d/%d (%g) ", thread_num_sinks_routed, thread_num_sinks_to_route, thread_num_sinks_routed*100.0/thread_num_sinks_to_route);
+			for (int i = 1; i < num_procs; ++i) {
+				int tmp_thread_num_sinks_to_route;
+				int tmp_thread_num_sinks_routed;
+				MPI_Recv(&tmp_thread_num_sinks_to_route, 1, MPI_INT, i, i, cur_comm, MPI_STATUS_IGNORE);
+				MPI_Recv(&tmp_thread_num_sinks_routed, 1, MPI_INT, i, i, cur_comm, MPI_STATUS_IGNORE);
+
+				total_num_sinks_to_route += tmp_thread_num_sinks_to_route;
+				total_num_sinks_routed += tmp_thread_num_sinks_routed;
+
+				printf("%d/%d (%g) ", tmp_thread_num_sinks_routed, tmp_thread_num_sinks_to_route, tmp_thread_num_sinks_routed*100.0/tmp_thread_num_sinks_to_route);
 			}
 			printf("\n");
 
 			printf("Total num nets routed: %d/%d (%g)\n", total_num_nets_routed, total_num_nets_to_route, total_num_nets_routed*100.0/total_num_nets_to_route);
 			printf("Total num sinks routed: %d/%d (%g)\n", total_num_sinks_routed, total_num_sinks_to_route, (total_num_sinks_routed)*100.0/total_num_sinks_to_route);
 
+			unsigned long total_num_heap_pushes = perf.num_heap_pushes;
+			unsigned long total_num_heap_pops = perf.num_heap_pops;
+			unsigned long total_num_neighbor_visits = perf.num_neighbor_visits;
+
+			printf("num_heap_pushes: %lu ", perf.num_heap_pushes);
 			for (int i = 1; i < num_procs; ++i) {
-				MPI_Recv(&perfs[i].num_heap_pushes, 1, MPI_INT, i, i, cur_comm, MPI_STATUS_IGNORE);
-				MPI_Recv(&perfs[i].num_heap_pops, 1, MPI_INT, i, i, cur_comm, MPI_STATUS_IGNORE);
-				MPI_Recv(&perfs[i].num_neighbor_visits, 1, MPI_INT, i, i, cur_comm, MPI_STATUS_IGNORE);
-			}
-
-			printf("num_heap_pushes: ");
-			for (int i = 0; i < num_procs; ++i) {
-				printf("%lu ", perfs[i].num_heap_pushes);
+				unsigned long tmp_num_heap_pushes;
+				MPI_Recv(&tmp_num_heap_pushes, 1, MPI_UNSIGNED_LONG, i, i, cur_comm, MPI_STATUS_IGNORE);
+				total_num_heap_pushes += tmp_num_heap_pushes;
+				printf("%lu ", tmp_num_heap_pushes);
 			}
 			printf("\n");
 
-			printf("num_heap_pops: ");
-			for (int i = 0; i < num_procs; ++i) {
-				printf("%lu ", perfs[i].num_heap_pops);
+			printf("num_heap_pops: %lu ", perf.num_heap_pops);
+			for (int i = 1; i < num_procs; ++i) {
+				unsigned long tmp_num_heap_pops;
+				MPI_Recv(&tmp_num_heap_pops, 1, MPI_UNSIGNED_LONG, i, i, cur_comm, MPI_STATUS_IGNORE);
+				total_num_heap_pops += tmp_num_heap_pops;
+				printf("%lu ", tmp_num_heap_pops);
 			}
 			printf("\n");
 
-			printf("num_neighbor_visits: ");
-			for (int i = 0; i < num_procs; ++i) {
-				printf("%lu ", perfs[i].num_neighbor_visits);
+			printf("num_neighbor_visits: %lu ", perf.num_neighbor_visits);
+			for (int i = 1; i < num_procs; ++i) {
+				unsigned long tmp_num_neighbor_visits;
+				MPI_Recv(&tmp_num_neighbor_visits, 1, MPI_UNSIGNED_LONG, i, i, cur_comm, MPI_STATUS_IGNORE);
+				total_num_neighbor_visits += tmp_num_neighbor_visits;
+				printf("%lu ", tmp_num_neighbor_visits);
 			}
 			printf("\n");
-
-			unsigned long total_num_heap_pushes = 0;
-			unsigned long total_num_heap_pops = 0;
-			unsigned long total_num_neighbor_visits = 0;
-
-			for (int i = 0; i < num_procs; ++i) {
-				total_num_heap_pushes += perfs[i].num_heap_pushes;
-				total_num_heap_pops += perfs[i].num_heap_pops;
-				total_num_neighbor_visits += perfs[i].num_neighbor_visits;
-			}
 
 			printf("total_num_heap_pushes: %lu\n", total_num_heap_pushes);
 			printf("total_num_heap_pops: %lu\n", total_num_heap_pops); 
 			printf("total_num_neighbor_visits: %lu\n", total_num_neighbor_visits);
 		} else {
-			MPI_Send(&thread_num_nets_to_route[procid], 1, MPI_INT, 0, procid, cur_comm);
-			MPI_Send(&thread_num_nets_routed[procid], 1, MPI_INT, 0, procid, cur_comm);
-			MPI_Send(&thread_num_sinks_to_route[procid], 1, MPI_INT, 0, procid, cur_comm);
-			MPI_Send(&thread_num_sinks_routed[procid], 1, MPI_INT, 0, procid, cur_comm);
+			MPI_Send(&thread_num_nets_to_route, 1, MPI_INT, 0, procid, cur_comm);
+			MPI_Send(&thread_num_nets_routed, 1, MPI_INT, 0, procid, cur_comm);
+			MPI_Send(&thread_num_sinks_to_route, 1, MPI_INT, 0, procid, cur_comm);
+			MPI_Send(&thread_num_sinks_routed, 1, MPI_INT, 0, procid, cur_comm);
 
-			MPI_Send(&perfs[procid].num_heap_pushes, 1, MPI_INT, 0, procid, cur_comm);
-			MPI_Send(&perfs[procid].num_heap_pops, 1, MPI_INT, 0, procid, cur_comm);
-			MPI_Send(&perfs[procid].num_neighbor_visits, 1, MPI_INT, 0, procid, cur_comm);
+			MPI_Send(&perf.num_heap_pushes, 1, MPI_UNSIGNED_LONG, 0, procid, cur_comm);
+			MPI_Send(&perf.num_heap_pops, 1, MPI_UNSIGNED_LONG, 0, procid, cur_comm);
+			MPI_Send(&perf.num_neighbor_visits, 1, MPI_UNSIGNED_LONG, 0, procid, cur_comm);
 		}
 
 		/* checking */
@@ -694,6 +697,28 @@ bool mpi_spatial_route_flat(t_router_opts *opts, struct s_det_routing_arch det_r
 
         analyze_timing_time = clock::now()-analyze_timing_start;
 
+		auto update_cost_start = clock::now();
+
+		if (iter == 0) {
+			params.pres_fac = opts->initial_pres_fac;
+			//update_costs_mpi(partitioner.orig_g[0], partitioner.result_pid_by_level[current_level], procid, congestion, win, params.pres_fac, 0);
+			update_costs(partitioner.orig_g, congestion, params.pres_fac, 0);
+		} else {
+			params.pres_fac *= opts->pres_fac_mult;
+
+			/* Avoid overflow for high iteration counts, even if acc_cost is big */
+			params.pres_fac = std::min(params.pres_fac, static_cast<float>(HUGE_POSITIVE_FLOAT / 1e5));
+
+			//update_costs_mpi(partitioner.orig_g[0], partitioner.result_pid_by_level[current_level], procid, congestion, win, params.pres_fac, opts->acc_fac);
+			update_costs(partitioner.orig_g, congestion, params.pres_fac, opts->acc_fac);
+		}
+
+		update_cost_time = clock::now()-update_cost_start;
+
+        total_greedy_route_time += greedy_route_time;
+		total_wait_time += wait_time;
+        total_analyze_timing_time += analyze_timing_time;
+        total_update_cost_time += update_cost_time;
 
 		int m_routed = (feasible_routing(partitioner.orig_g, congestion) && !has_unroutable_sinks) ? 1 : 0;
 		int reduced_routed;
@@ -777,7 +802,7 @@ bool mpi_spatial_route_flat(t_router_opts *opts, struct s_det_routing_arch det_r
 
 							zlog_level(delta_log, ROUTER_V3, "Recving net index %d from %d\n", i+j, procid+1);
 
-							recv_route_tree(net, partitioner.orig_g, routed_sinks, states, congestion, params.pres_fac, route_trees, net_timing, procid+1, cur_comm);
+							recv_route_tree(net, partitioner.orig_g, routed_sinks, states, route_trees, net_timing, procid+1, cur_comm);
 						}
 					}
 				} else {
@@ -791,7 +816,6 @@ bool mpi_spatial_route_flat(t_router_opts *opts, struct s_det_routing_arch det_r
 							send_route_tree(net, partitioner.orig_g, routed_sinks, route_trees, procid-1, cur_comm);
 						}
 					}
-					
 				}
 
 				assert(num_procs % 2 == 0);
@@ -801,72 +825,71 @@ bool mpi_spatial_route_flat(t_router_opts *opts, struct s_det_routing_arch det_r
 
 				combine_time = clock::now()-combine_start;
 
-				if (procid % 2 == 1) {
-					/* early exit code */
-					goto done;
-				}
+				idling = procid % 2 == 1;
 
-				cur_comm = new_comm;
-				MPI_Comm_rank(cur_comm, &procid);
+				if (!idling) {
+					cur_comm = new_comm;
+					MPI_Comm_rank(cur_comm, &procid);
 
-				++current_level;
+					++current_level;
 
-				//assert(current_level < partitioner.result_pid_by_level.size());
+					//assert(current_level < partitioner.result_pid_by_level.size());
 
-				printf("[%d] Transitioned to level %d at iteration %d\n", procid, current_level, iter);
-				zlog_level(delta_log, ROUTER_V1, "Transitioned to level %d at iteration %d\n", current_level, iter);
-				zlog_level(delta_log, ROUTER_V1, "New pid %d for initial pid %d\n", procid, initial_procid);
+					printf("[%d] Transitioned to level %d at iteration %d\n", procid, current_level, iter);
+					zlog_level(delta_log, ROUTER_V1, "Transitioned to level %d at iteration %d\n", current_level, iter);
+					zlog_level(delta_log, ROUTER_V1, "New pid %d for initial pid %d\n", procid, initial_procid);
 
-				for (int i = procid*pow(2, current_level); i < nets_to_route.size(); i += initial_num_procs) {
-					for (int j = 0; j < pow(2, current_level) && i+j < nets_to_route.size(); ++j) {
-						net_t *net = nets_to_route[i+j].second;
+					for (int i = procid*pow(2, current_level); i < nets_to_route.size(); i += initial_num_procs) {
+						for (int j = 0; j < pow(2, current_level) && i+j < nets_to_route.size(); ++j) {
+							net_t *net = nets_to_route[i+j].second;
 
-						unroutable_sinks[net->local_id].clear();
+							unroutable_sinks[net->local_id].clear();
 
-						//for (const auto &rs : routed_sinks[net->local_id]) {
+							//for (const auto &rs : routed_sinks[net->local_id]) {
 							//assert(find(begin(fixed_sinks[net->local_id]), end(fixed_sinks[net->local_id]), rs) == end(fixed_sinks[net->local_id]));
 
 							//zlog_level(delta_log, ROUTER_V3, "Fixing net %d sink %d\n", net->vpr_id, rs->id);
 
 							//fixed_sinks[net->local_id].push_back(rs);
-						//}
-					}
-				}
-
-				prev_num_overused_nodes = std::numeric_limits<unsigned long>::max();
-				has_unroutable_sinks = false;
-
-				for (int i = 0; i < num_vertices(partitioner.orig_g); ++i) {
-					congestion[i].recalc_occ = 0; 
-				}
-
-				for (int i = procid*pow(2, current_level); i < nets_to_route.size(); i += initial_num_procs) {
-					for (int j = 0; j < pow(2, current_level) && i+j < nets_to_route.size(); ++j) {
-						net_t *net = nets_to_route[i+j].second;
-
-						if (!routed_sinks[net->local_id].empty()) {
-							zlog_level(delta_log, ROUTER_V3, "Checking net index %d\n", i+j);
-
-							check_route_tree(route_trees[net->local_id], *net, routed_sinks[net->local_id], partitioner.orig_g);
-							recalculate_occ(route_trees[net->local_id], partitioner.orig_g, congestion);
-						} else {
-							zlog_level(delta_log, ROUTER_V3, "Not checking net index %d because of empty route tree\n", i+j);
+							//}
 						}
 					}
-				}
 
-				sync_recalc_occ(congestion, num_vertices(partitioner.orig_g),  procid, num_procs, cur_comm);
+					prev_num_overused_nodes = std::numeric_limits<unsigned long>::max();
+					has_unroutable_sinks = false;
 
-				if (procid == 0) {
-					bool valid = true;
 					for (int i = 0; i < num_vertices(partitioner.orig_g); ++i) {
-						sprintf_rr_node_impl(i, buffer);
-						if (congestion[i].recalc_occ != congestion[i].occ) {
-							printf("Node %s occ mismatch, recalc: %d original: %d\n", buffer, congestion[i].recalc_occ, congestion[i].occ);
-							valid = false;
+						congestion[i].recalc_occ = 0; 
+					}
+
+					for (int i = procid*pow(2, current_level); i < nets_to_route.size(); i += initial_num_procs) {
+						for (int j = 0; j < pow(2, current_level) && i+j < nets_to_route.size(); ++j) {
+							net_t *net = nets_to_route[i+j].second;
+
+							if (!routed_sinks[net->local_id].empty()) {
+								zlog_level(delta_log, ROUTER_V3, "Checking net index %d\n", i+j);
+
+								check_route_tree(route_trees[net->local_id], *net, routed_sinks[net->local_id], partitioner.orig_g);
+								recalculate_occ(route_trees[net->local_id], partitioner.orig_g, congestion);
+							} else {
+								zlog_level(delta_log, ROUTER_V3, "Not checking net index %d because of empty route tree\n", i+j);
+							}
 						}
 					}
-					assert(valid);
+
+					sync_recalc_occ(congestion, num_vertices(partitioner.orig_g),  procid, num_procs, cur_comm);
+
+					if (procid == 0) {
+						bool valid = true;
+						for (int i = 0; i < num_vertices(partitioner.orig_g); ++i) {
+							sprintf_rr_node_impl(i, buffer);
+							if (congestion[i].recalc_occ != congestion[i].occ) {
+								printf("Node %s occ mismatch, recalc: %d original: %d\n", buffer, congestion[i].recalc_occ, congestion[i].occ);
+								valid = false;
+							}
+						}
+						assert(valid);
+					}
 				}
 			} 
 
@@ -875,66 +898,44 @@ bool mpi_spatial_route_flat(t_router_opts *opts, struct s_det_routing_arch det_r
 				//assert(current_level < partitioner.result_pid_by_level.size());
 			//}
 
-            auto update_cost_start = clock::now();
-
-            if (iter == 0) {
-                params.pres_fac = opts->initial_pres_fac;
-                //update_costs_mpi(partitioner.orig_g[0], partitioner.result_pid_by_level[current_level], procid, congestion, win, params.pres_fac, 0);
-				update_costs(partitioner.orig_g, congestion, params.pres_fac, 0);
-            } else {
-                params.pres_fac *= opts->pres_fac_mult;
-
-				/* Avoid overflow for high iteration counts, even if acc_cost is big */
-                params.pres_fac = std::min(params.pres_fac, static_cast<float>(HUGE_POSITIVE_FLOAT / 1e5));
-
-                //update_costs_mpi(partitioner.orig_g[0], partitioner.result_pid_by_level[current_level], procid, congestion, win, params.pres_fac, opts->acc_fac);
-				update_costs(partitioner.orig_g, congestion, params.pres_fac, opts->acc_fac);
-            }
-
-            update_cost_time = clock::now()-update_cost_start;
         }
 
         iter_time += clock::now()-iter_start;
 
-        //total_route_time += route_time;
-        total_greedy_route_time += greedy_route_time;
-        total_update_cost_time += update_cost_time;
-        total_analyze_timing_time += analyze_timing_time;
         total_iter_time += iter_time;
-		total_wait_time += wait_time;
 		total_combine_time += combine_time;
 
-		if (procid == 0) {
-			vector<clock::duration> all_wait_time(num_procs);
-
+		if (prev_procid == 0) {
 			printf("Iteration time: %g s.\n", duration_cast<nanoseconds>(iter_time).count() / 1e9);
 			printf("\tRoute time: %g s.\n", duration_cast<nanoseconds>(greedy_route_time).count() / 1e9);
-			float f_sync_time = duration_cast<nanoseconds>(mpi_perfs[procid].total_sync_time).count() / 1e9;
+			float f_sync_time = duration_cast<nanoseconds>(mpi_perf.total_sync_time).count() / 1e9;
 			printf("\t\tSync time: %g (%g) ", f_sync_time, f_sync_time * 100.0 / (duration_cast<nanoseconds>(greedy_route_time).count() / 1e9));
-			for (int i = 1; i < num_procs; ++i) {
-				MPI_Recv(&f_sync_time, 1, MPI_FLOAT, i, i, cur_comm, MPI_STATUS_IGNORE);
+			for (int i = 1; i < prev_num_procs; ++i) {
+				MPI_Recv(&f_sync_time, 1, MPI_FLOAT, i, i, prev_comm, MPI_STATUS_IGNORE);
 				printf("%g (%g) ", f_sync_time, f_sync_time * 100 / (duration_cast<nanoseconds>(greedy_route_time).count() / 1e9));
 			}
 			printf("\n");
-			float f_probe_time = duration_cast<nanoseconds>(mpi_perfs[procid].total_probe_time).count() / 1e9;
+
+			float f_probe_time = duration_cast<nanoseconds>(mpi_perf.total_probe_time).count() / 1e9;
 			printf("\t\t\tProbe time: %g (%g) ", f_probe_time, f_probe_time * 100.0 / (duration_cast<nanoseconds>(greedy_route_time).count() / 1e9));
-			for (int i = 1; i < num_procs; ++i) {
-				MPI_Recv(&f_probe_time, 1, MPI_FLOAT, i, i, cur_comm, MPI_STATUS_IGNORE);
+			for (int i = 1; i < prev_num_procs; ++i) {
+				MPI_Recv(&f_probe_time, 1, MPI_FLOAT, i, i, prev_comm, MPI_STATUS_IGNORE);
 				printf("%g (%g) ", f_probe_time, f_probe_time * 100 / (duration_cast<nanoseconds>(greedy_route_time).count() / 1e9));
 			}
 			printf("\n");
-			float f_broadcast_time = duration_cast<nanoseconds>(mpi_perfs[procid].total_broadcast_time).count() / 1e9;
+
+			float f_broadcast_time = duration_cast<nanoseconds>(mpi_perf.total_broadcast_time).count() / 1e9;
 			printf("\t\tBroadcast time: %g (%g) ", f_broadcast_time, f_broadcast_time * 100.0 / (duration_cast<nanoseconds>(greedy_route_time).count() / 1e9));
-			for (int i = 1; i < num_procs; ++i) {
-				MPI_Recv(&f_broadcast_time, 1, MPI_FLOAT, i, i, cur_comm, MPI_STATUS_IGNORE);
+			for (int i = 1; i < prev_num_procs; ++i) {
+				MPI_Recv(&f_broadcast_time, 1, MPI_FLOAT, i, i, prev_comm, MPI_STATUS_IGNORE);
 				printf("%g (%g) ", f_broadcast_time, f_broadcast_time * 100 / (duration_cast<nanoseconds>(greedy_route_time).count() / 1e9));
 			}
 			printf("\n");
 
 			printf("\tWait time: %g (%g) ", duration_cast<nanoseconds>(wait_time).count() / 1e9, duration_cast<nanoseconds>(wait_time).count() * 100.0 / duration_cast<nanoseconds>(greedy_route_time).count());
-			for (int i = 1; i < num_procs; ++i) {
+			for (int i = 1; i < prev_num_procs; ++i) {
 				float f_wait_time;
-				MPI_Recv(&f_wait_time, 1, MPI_FLOAT, i, i, cur_comm, MPI_STATUS_IGNORE);
+				MPI_Recv(&f_wait_time, 1, MPI_FLOAT, i, i, prev_comm, MPI_STATUS_IGNORE);
 				printf("%g (%g) ", f_wait_time, f_wait_time * 100 / (duration_cast<nanoseconds>(greedy_route_time).count() / 1e9));
 			}
 			printf("\n");
@@ -944,18 +945,24 @@ bool mpi_spatial_route_flat(t_router_opts *opts, struct s_det_routing_arch det_r
 			printf("\tCombine time: %g s.\n", duration_cast<nanoseconds>(combine_time).count() / 1e9);
 			printf("Critical path: %g ns\n", crit_path_delay);
 		} else {
-			float f_sync_time = duration_cast<nanoseconds>(mpi_perfs[procid].total_sync_time).count() / 1e9;
-			MPI_Send(&f_sync_time, 1, MPI_FLOAT, 0, procid, cur_comm);
+			float f_sync_time = duration_cast<nanoseconds>(mpi_perf.total_sync_time).count() / 1e9;
+			MPI_Send(&f_sync_time, 1, MPI_FLOAT, 0, prev_procid, prev_comm);
 
-			float f_probe_time = duration_cast<nanoseconds>(mpi_perfs[procid].total_probe_time).count() / 1e9;
-			MPI_Send(&f_probe_time, 1, MPI_FLOAT, 0, procid, cur_comm);
+			float f_probe_time = duration_cast<nanoseconds>(mpi_perf.total_probe_time).count() / 1e9;
+			MPI_Send(&f_probe_time, 1, MPI_FLOAT, 0, prev_procid, prev_comm);
 
-			float f_broadcast_time = duration_cast<nanoseconds>(mpi_perfs[procid].total_broadcast_time).count() / 1e9;
-			MPI_Send(&f_broadcast_time, 1, MPI_FLOAT, 0, procid, cur_comm);
+			float f_broadcast_time = duration_cast<nanoseconds>(mpi_perf.total_broadcast_time).count() / 1e9;
+			MPI_Send(&f_broadcast_time, 1, MPI_FLOAT, 0, prev_procid, prev_comm);
 
 			float f_wait_time = duration_cast<nanoseconds>(wait_time).count() / 1e9;
-			MPI_Send(&f_wait_time, 1, MPI_FLOAT, 0, procid, cur_comm);
+			MPI_Send(&f_wait_time, 1, MPI_FLOAT, 0, prev_procid, prev_comm);
 		}
+
+		MPI_Barrier(prev_comm);
+
+		prev_num_procs = num_procs;
+		prev_comm = cur_comm;
+		prev_procid = procid;
 
         //clock::time_point greedy_earliest_end_time = *std::min_element(begin(greedy_end_time), begin(greedy_end_time)+num_procs);
 
@@ -965,7 +972,7 @@ bool mpi_spatial_route_flat(t_router_opts *opts, struct s_det_routing_arch det_r
         //}
 		//printf("\n");
     }
-
+	
 done:
 	MPI_Barrier(MPI_COMM_WORLD);
     //sprintf(buffer, "%s_run_%d_rr_graph_occ.txt", s_circuit_name, run);
