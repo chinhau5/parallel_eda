@@ -152,7 +152,7 @@ void route_tree_rip_up_marked(route_tree_t &rt, const RRGraph &g, congestion_t *
 
 void route_tree_rip_up_marked_mpi_rma(route_tree_t &rt, const RRGraph &g, const vector<int> &pid, int this_pid, congestion_t *congestion, MPI_Win win, float pres_fac);
 
-void route_tree_rip_up_marked_mpi_send_recv(route_tree_t &rt, const RRGraph &g, congestion_t *congestion, float pres_fac, int this_pid, int num_procs, MPI_Comm comm, vector<ongoing_transaction_t> &transactions);
+void route_tree_rip_up_marked_mpi_send_recv(route_tree_t &rt, const RRGraph &g, congestion_t *congestion, float pres_fac, queue<RRNode> &cost_update_q);
 
 //void route_tree_rip_up_segment(route_tree_t &rt, int sink_rr_node, RRGraph &g, float pres_fac);
 

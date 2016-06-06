@@ -2304,7 +2304,7 @@ int delta_log_output(zlog_msg_t *msg)
 		return 0;
 	}
 
-	concurrent_log_impl(msg, delta_log_files, iter, tid);
+	//concurrent_log_impl(msg, delta_log_files, iter, tid);
 
 	return 0;
 }
@@ -2318,7 +2318,7 @@ int missing_edge_log_output(zlog_msg_t *msg)
 		return 0;
 	}
 
-	concurrent_log_impl(msg, missing_edge_log_files, iter, tid);
+	//concurrent_log_impl(msg, missing_edge_log_files, iter, tid);
 
 	return 0;
 }
@@ -3119,7 +3119,7 @@ void sync_nets(vector<net_t> &nets, vector<net_t> &global_nets, int procid, MPI_
 			nets[i].sinks.resize(num_sinks);
 			MPI_Bcast(nets[i].sinks.data(), num_sinks, net_sink_dt, 0, comm);
 
-			zlog_level("Net %d sink capacity %d\n", nets[i].vpr_id, nets[i].sinks.capacity()*sizeof(sink_t));
+			zlog_level(delta_log, ROUTER_V3, "Net %d sink capacity %d\n", nets[i].vpr_id, nets[i].sinks.capacity()*sizeof(sink_t));
 
 			for (int j = 0; j < num_sinks; ++j) {
 				zlog_level(delta_log, ROUTER_V3, "\tRecving net sink rr %d x %d y %d bb %d %d %d %d\n", nets[i].sinks[j].rr_node, nets[i].sinks[j].x, nets[i].sinks[j].y, nets[i].sinks[j].current_bounding_box.xmin, nets[i].sinks[j].current_bounding_box.xmax, nets[i].sinks[j].current_bounding_box.ymin, nets[i].sinks[j].current_bounding_box.ymax);

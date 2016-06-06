@@ -33,6 +33,8 @@ typedef struct mpi_perf_t {
 	std::chrono::high_resolution_clock::duration total_sync_time;
 	std::chrono::high_resolution_clock::duration total_broadcast_time;
 	std::chrono::high_resolution_clock::duration total_probe_time;
+	std::chrono::high_resolution_clock::duration total_testsome_time;
+	std::chrono::high_resolution_clock::duration total_irecv_time;
 } mpi_perf_t;
 
 typedef struct sched_perf_t {

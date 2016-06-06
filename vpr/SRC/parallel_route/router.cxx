@@ -1740,63 +1740,6 @@ void route_net_with_partitioned_fine_grain_lock(const RRGraph &g, const vector<i
 	/*check_route_tree(rt, net, g);*/
 }
 
-void sync(congestion_t *congestion, const RRGraph &g, float pres_fac, int this_pid, int num_procs, MPI_Comm comm, mpi_perf_t *mpi_perf)
-{
-	int flag = 0;
-
-    using clock = std::chrono::high_resolution_clock;
-
-	for (int pid = 0; pid < num_procs; ++pid) {
-		if (pid != this_pid) {
-			MPI_Status status;
-			auto probe_start = clock::now();
-			assert(MPI_Iprobe(pid, 0, comm, &flag, &status) == MPI_SUCCESS);
-			if (mpi_perf) {
-				mpi_perf->total_probe_time += clock::now()-probe_start;
-			}
-			//assert(MPI_Probe(pid, 0, comm, &status) == MPI_SUCCESS);
-
-			while (flag) {
-				int count = -1;
-				assert(MPI_Get_count(&status, MPI_INT, &count) == MPI_SUCCESS);
-
-				//if (count <= 0) {
-					//zlog_warn(delta_log, "MPI update count from %d is %d\n", status.MPI_SOURCE, count);
-					//break;
-				//}
-
-				//if (count > 0) {
-				
-				assert(count > 0 && count % 2 == 0);
-
-				send_data_t *d = new send_data_t[count/2];
-
-				assert(MPI_Recv(d, count, MPI_INT, status.MPI_SOURCE, status.MPI_TAG, comm, &status) == MPI_SUCCESS);
-
-				int new_count;
-				assert(MPI_Get_count(&status, MPI_INT, &new_count) == MPI_SUCCESS);
-				assert(count == new_count);
-
-				zlog_level(delta_log, ROUTER_V3, "Received a path of length %d from %d\n", count/2, status.MPI_SOURCE);
-
-				for (int i = 0; i < count/2; ++i) {
-					update_one_cost_internal(d[i].rr_node, g, congestion, d[i].delta, pres_fac);
-					zlog_level(delta_log, ROUTER_V3, "MPI update, source %d node %d delta %d\n", status.MPI_SOURCE, d[i].rr_node, d[i].delta);
-				}
-
-				delete [] d;
-				//}
-
-				probe_start = clock::now();
-				assert(MPI_Iprobe(pid, 0, comm, &flag, &status) == MPI_SUCCESS);
-				if (mpi_perf) {
-					mpi_perf->total_probe_time += clock::now()-probe_start;
-				}
-			}
-		}
-	}
-}
-
 void broadcast_costs(const vector<RRNode>::const_iterator &rr_nodes_begin, const vector<RRNode>::const_iterator &rr_nodes_end, int delta, int this_pid, int num_procs, MPI_Comm comm, vector<ongoing_transaction_t> &transactions)
 {
 	ongoing_transaction_t trans;
@@ -1822,35 +1765,6 @@ void broadcast_costs(const vector<RRNode>::const_iterator &rr_nodes_begin, const
 	}
 
 	transactions.push_back(trans);
-}
-
-void broadcast_pending_cost_updates(queue<RRNode> &cost_update_q, int delta, int this_pid, int num_procs, MPI_Comm comm, vector<ongoing_transaction_t> &transactions)
-{
-	ongoing_transaction_t trans;
-
-	trans.data = make_shared<vector<send_data_t>>();
-
-	while (!cost_update_q.empty()) {
-		send_data_t d;
-		d.rr_node = cost_update_q.front();
-		d.delta = delta;
-
-		trans.data->push_back(d);
-
-		cost_update_q.pop();
-	}
-
-	if (!trans.data->empty()) {
-		for (int i = 0; i < num_procs; ++i) {
-			if (i != this_pid) {
-				zlog_level(delta_log, ROUTER_V3, "MPI update from %d to %d\n", this_pid, i);
-				assert(MPI_Isend(trans.data->data(), trans.data->size()*2, MPI_INT, i, 0, comm, &trans.req) == MPI_SUCCESS);
-				//assert(MPI_ISend(trans.data->data(), trans.data->size()*2, MPI_INT, i, 0, comm) == MPI_SUCCESS);
-			}
-		}
-
-		transactions.push_back(trans);
-	}
 }
 
 void route_net_lockless(const RRGraph &g, const vector<int> &pid, int this_pid, int vpr_id, const source_t *source, const vector<sink_t *> &sinks, const route_parameters_t &params, route_state_t *state, congestion_t *congestion, route_tree_t &rt, t_net_timing &net_timing, vector<sink_t *> &routed_sinks, vector<sink_t *> &unrouted_sinks, perf_t *perf)

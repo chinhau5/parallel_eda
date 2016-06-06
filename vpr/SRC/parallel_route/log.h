@@ -33,7 +33,7 @@ extern zlog_category_t *ss_log;
 
 #define LOG_PATH_PREFIX "/Volumes/DATA/"
 
-void concurrent_log_impl(zlog_msg_t *msg, std::vector<std::vector<FILE *>> &log_files, int iter, int tid);
+int concurrent_log_impl(zlog_msg_t *msg);
 
 
 #endif

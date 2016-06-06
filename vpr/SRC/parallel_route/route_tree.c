@@ -622,7 +622,7 @@ void route_tree_rip_up_marked_mpi_rma(route_tree_t &rt, const RRGraph &g, const 
 	}
 }
 
-void route_tree_rip_up_marked_mpi_send_recv(route_tree_t &rt, const RRGraph &g, congestion_t *congestion, float pres_fac, int this_pid, int num_procs, MPI_Comm comm, vector<ongoing_transaction_t> &transactions)
+void route_tree_rip_up_marked_mpi_send_recv(route_tree_t &rt, const RRGraph &g, congestion_t *congestion, float pres_fac, queue<RRNode> &cost_update_q)
 {
 	char buffer[256];
 	ongoing_transaction_t trans;
@@ -657,10 +657,7 @@ void route_tree_rip_up_marked_mpi_send_recv(route_tree_t &rt, const RRGraph &g, 
 			/*}*/
 			update_one_cost_internal(rr_node, g, congestion, -1, pres_fac); 
 
-			send_data_t d;
-			d.rr_node = rr_node;
-			d.delta = -1;
-			trans.data->push_back(d);
+			cost_update_q.push(rr_node);
 
 			route_tree_remove_node(rt, rr_node, g);
 
@@ -694,14 +691,5 @@ void route_tree_rip_up_marked_mpi_send_recv(route_tree_t &rt, const RRGraph &g, 
 			/* invalid assertion because we might have ripped this up from another virtual net */
 			/*assert(rt_node_p.ripped_up == false);*/
 		}
-	}
-
-	if (!trans.data->empty()) {
-		for (int i = 0; i < num_procs; ++i) {
-			if (i != this_pid) {
-				assert(MPI_Isend(trans.data->data(), trans.data->size()*2, MPI_INT, i, 0, comm, &trans.req) == MPI_SUCCESS);
-			}
-		}
-		transactions.push_back(trans);
 	}
 }

@@ -43,6 +43,8 @@ void send_route_tree(net_t *net, const RRGraph &g, const vector<vector<sink_t *>
 void recv_route_tree(net_t *net, const RRGraph &g, vector<vector<sink_t *>> &routed_sinks, route_state_t *states, vector<route_tree_t> &route_trees, t_net_timing *net_timing, int from_procid, MPI_Comm comm);
 void init_route_structs(const RRGraph &g, const vector<net_t> &nets, const vector<net_t> &global_nets, route_state_t **states, congestion_t **congestion, vector<route_tree_t> &route_trees, t_net_timing **net_timing);
 
+void broadcast_pending_cost_updates(queue<RRNode> &cost_update_q, int delta, int this_pid, int num_procs, MPI_Comm comm, vector<ongoing_transaction_t> &transactions);
+
 extern vector<vector<FILE *>> delta_log_files;
 extern vector<vector<FILE *>> missing_edge_log_files;
 
@@ -71,17 +73,10 @@ bool mpi_spatial_route_flat(t_router_opts *opts, struct s_det_routing_arch det_r
 	init_datatypes();
 
     init_logging();
-    zlog_set_record("custom_output", delta_log_output);
-    zlog_set_record("missing_edge", missing_edge_log_output);
-    zlog_set_record("ss", ss_log_output);
-    delta_log_files.resize(opts->max_router_iterations);
-    for (int i = 0; i < opts->max_router_iterations; ++i) {
-        delta_log_files[i].resize(num_procs, nullptr);
-    }
-    missing_edge_log_files.resize(opts->max_router_iterations);
-    for (int i = 0; i < opts->max_router_iterations; ++i) {
-        missing_edge_log_files[i].resize(num_procs, nullptr);
-    }
+
+    zlog_set_record("custom_output", concurrent_log_impl);
+    //zlog_set_record("missing_edge", missing_edge_log_output);
+    //zlog_set_record("ss", ss_log_output);
 
     //fclose(fopen(LOG_PATH_PREFIX"iter__tid_.log", "w"));
 
@@ -376,7 +371,11 @@ bool mpi_spatial_route_flat(t_router_opts *opts, struct s_det_routing_arch det_r
 					route_tree_mark_congested_nodes_to_be_ripped(route_trees[net->local_id], partitioner.orig_g, congestion);
 				}
 
-				route_tree_rip_up_marked_mpi_send_recv(route_trees[net->local_id], partitioner.orig_g, congestion, params.pres_fac, procid, num_procs, cur_comm, transactions);
+				queue<RRNode> cost_update_q;
+
+				route_tree_rip_up_marked_mpi_send_recv(route_trees[net->local_id], partitioner.orig_g, congestion, params.pres_fac, cost_update_q);
+
+				broadcast_pending_cost_updates(cost_update_q, -1, procid, num_procs, cur_comm, transactions);
 
 				auto sync_start	= clock::now();
 				sync(congestion, partitioner.orig_g, params.pres_fac, procid, num_procs, cur_comm, &mpi_perf);

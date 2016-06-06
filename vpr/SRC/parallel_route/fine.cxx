@@ -42,7 +42,7 @@ static int delta_log_output(zlog_msg_t *msg)
 		return 0;
 	}
 
-	concurrent_log_impl(msg, delta_log_files, iter, tid);
+	//concurrent_log_impl(msg, delta_log_files, iter, tid);
 
 	return 0;
 }
