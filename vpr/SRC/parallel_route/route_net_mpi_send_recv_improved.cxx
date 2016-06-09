@@ -20,7 +20,7 @@ bool sync_improved(congestion_t *congestion, const RRGraph &g, float pres_fac, i
 {
     using clock = std::chrono::high_resolution_clock;
 
-	const int MAX_PENDING_RECVS = 4;
+	const int MAX_PENDING_RECVS = 8;
 
 	vector<vector<ongoing_transaction_t>> new_pending_recvs(num_procs);
 
@@ -331,8 +331,8 @@ void route_net_mpi_send_recv_improved(const RRGraph &g, int this_pid, int vpr_id
 			}
 		}
 
-		bool sync_costs = (isink % sync_freq) == 0;
-		//bool sync_costs = true;
+		//bool sync_costs = (isink % sync_freq) == 0;
+		bool sync_costs = true;
 
 		if (!found_sink) {
 			assert(heap.empty());
