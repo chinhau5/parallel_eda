@@ -17,32 +17,37 @@ float get_delay(const rr_edge_property_t &e, const rr_node_property_t &v, float 
 
 void broadcast_pending_cost_updates(queue<RRNode> &cost_update_q, int delta, int this_pid, int num_procs, MPI_Comm comm, vector<ongoing_transaction_t> &transactions)
 {
-	ongoing_transaction_t trans;
+	if (cost_update_q.empty()) {
+		return;
+	}
 
-	trans.data = make_shared<vector<send_data_t>>();
+	auto data = make_shared<vector<send_data_t>>();
 
 	while (!cost_update_q.empty()) {
 		send_data_t d;
+
 		d.rr_node = cost_update_q.front();
 		d.delta = delta;
 
-		trans.data->push_back(d);
+		data->push_back(d);
 
 		cost_update_q.pop();
 	}
 
-	if (!trans.data->empty()) {
-		for (int i = 0; i < num_procs; ++i) {
-			if (i != this_pid) {
-				zlog_level(delta_log, ROUTER_V3, "Sent a path of length %lu from %d to %d\n", trans.data->size(), this_pid, i);
-				assert(trans.data->size() < 4096);
-				assert(MPI_Isend(trans.data->data(), trans.data->size()*2, MPI_INT, i, 3399, comm, &trans.req) == MPI_SUCCESS);
-				assert(MPI_Request_free(&trans.req) == MPI_SUCCESS);
-				//assert(MPI_ISend(trans.data->data(), trans.data->size()*2, MPI_INT, i, 0, comm) == MPI_SUCCESS);
-			}
-		}
+	assert(data->size() > 0 && data->size() < 4096);
+	for (int i = 0; i < num_procs; ++i) {
+		if (i != this_pid) {
+			zlog_level(delta_log, ROUTER_V3, "Sent a path of length %lu from %d to %d\n", data->size(), this_pid, i);
 
-		transactions.push_back(trans);
+			ongoing_transaction_t trans;
+
+			trans.data = data;
+			assert(MPI_Isend(trans.data->data(), trans.data->size()*2, MPI_INT, i, 3399, comm, &trans.req) == MPI_SUCCESS);
+
+			transactions.push_back(trans);
+			assert(MPI_Request_free(&trans.req) == MPI_SUCCESS);
+			//assert(MPI_ISend(trans.data->data(), trans.data->size()*2, MPI_INT, i, 0, comm) == MPI_SUCCESS);
+		}
 	}
 }
 

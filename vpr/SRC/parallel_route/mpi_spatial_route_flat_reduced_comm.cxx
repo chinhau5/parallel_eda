@@ -26,10 +26,11 @@
 #include "partition.h"
 #include "fm.h"
 #include "rr_graph_partitioner.h"
+#include "route_net_mpi_send_recv_reduced_comm.h"
 
 void init_datatypes();
 
-bool sync_improved(congestion_t *congestion, const RRGraph &g, float pres_fac, bool blocking, mpi_context_t *mpi, mpi_perf_t *mpi_perf);
+void sync_iprobe(congestion_t *congestion, const RRGraph &g, float pres_fac, vector<vector<RRNode>> &net_route_trees, mpi_context_t *mpi, mpi_perf_t *mpi_perf);
 void sync_recalc_occ(congestion_t *congestion, int num_vertices, int procid, int num_procs, MPI_Comm comm);
 void sync_nets(vector<net_t> &nets, vector<net_t> &global_nets, int procid, MPI_Comm comm);
 void sync_net_delay(const vector<pair<box, net_t *>> &nets_to_route, int procid, int num_procs, int initial_num_procs, int *recvcounts, int *displs, int current_level, MPI_Comm comm, t_net_timing *net_timing);
@@ -39,10 +40,25 @@ void get_sinks_to_route(net_t *net, const route_tree_t &rt, const vector<sink_t 
 void send_route_tree(net_t *net, const RRGraph &g, const vector<vector<sink_t *>> &routed_sinks, const vector<route_tree_t> &route_trees, int to_procid, MPI_Comm comm);
 void recv_route_tree(net_t *net, const RRGraph &g, vector<vector<sink_t *>> &routed_sinks, route_state_t *states, vector<route_tree_t> &route_trees, t_net_timing *net_timing, int from_procid, MPI_Comm comm);
 void init_route_structs(const RRGraph &g, const vector<net_t> &nets, const vector<net_t> &global_nets, route_state_t **states, congestion_t **congestion, vector<route_tree_t> &route_trees, t_net_timing **net_timing);
-void broadcast_pending_cost_updates_improved(queue<RRNode> &cost_update_q, int delta, mpi_context_t *mpi);
+void broadcast_rip_up(int net_id, mpi_context_t *mpi);
+void broadcast_pending_cost_updates_reduced(const vector<RRNode> &added_nodes, int net_id, int delta, mpi_context_t *mpi);
 void progress_sends(vector<ongoing_transaction_t> &pending_sends);
+void route_net_mpi_send_recv_reduced_comm(const RRGraph &g, int vpr_id, int net_id, const source_t *source, const vector<sink_t *> &sinks, const route_parameters_t &params, route_state_t *state, congestion_t *congestion, route_tree_t &rt, t_net_timing &net_timing, vector<vector<RRNode>> &net_route_trees, vector<sink_t *> &routed_sinks, vector<sink_t *> &unrouted_sinks, mpi_context_t *mpi, perf_t *perf, mpi_perf_t *mpi_perf);
 
-bool mpi_spatial_route_flat_improved(t_router_opts *opts, struct s_det_routing_arch det_routing_arch, t_direct_inf *directs, int num_directs, t_segment_inf *segment_inf, t_timing_inf timing_inf)
+bool all_done(mpi_context_t *mpi)
+{
+	bool all_received_last_update = true;
+
+	for (int pid = 0; pid < mpi->comm_size && all_received_last_update; ++pid) {
+		if (pid != mpi->rank && !mpi->received_last_update[pid]) {
+			all_received_last_update = false;
+		}
+	}
+
+	return all_received_last_update;
+}
+
+bool mpi_spatial_route_flat_reduced_comm(t_router_opts *opts, struct s_det_routing_arch det_routing_arch, t_direct_inf *directs, int num_directs, t_segment_inf *segment_inf, t_timing_inf timing_inf)
 {
     using std::chrono::duration_cast;
     using std::chrono::nanoseconds;
@@ -284,6 +300,7 @@ bool mpi_spatial_route_flat_improved(t_router_opts *opts, struct s_det_routing_a
     float crit_path_delay;
 	int current_level = 0;
 
+	vector<vector<RRNode>> net_route_trees(nets.size());
 	vector<vector<sink_t *>> unroutable_sinks(nets.size());
 	//vector<vector<sink_t *>> fixed_sinks(nets.size());
 	vector<vector<sink_t *>> routed_sinks(nets.size());
@@ -298,10 +315,10 @@ bool mpi_spatial_route_flat_improved(t_router_opts *opts, struct s_det_routing_a
     clock::duration total_wait_time = clock::duration::zero();
     clock::duration total_combine_time = clock::duration::zero();
     clock::duration total_sync_time = clock::duration::zero();
-    clock::duration total_last_sync_time = clock::duration::zero();
+    clock::duration total_iprobe_time = clock::duration::zero();
+    clock::duration total_recv_time = clock::duration::zero();
     clock::duration total_broadcast_time = clock::duration::zero();
-    clock::duration total_testsome_time = clock::duration::zero();
-    clock::duration total_irecv_time = clock::duration::zero();
+    clock::duration total_last_sync_time = clock::duration::zero();
 
     for (iter = 0; iter < opts->max_router_iterations && !routed && !idling; ++iter) {
         clock::duration actual_route_time = clock::duration::zero();
@@ -355,8 +372,8 @@ bool mpi_spatial_route_flat_improved(t_router_opts *opts, struct s_det_routing_a
 		perf.num_neighbor_visits = 0;
 
 		mpi_perf.total_sync_time = clock::duration::zero();
-		mpi_perf.total_irecv_time = clock::duration::zero();
-		mpi_perf.total_testsome_time = clock::duration::zero();
+		mpi_perf.total_recv_time = clock::duration::zero();
+		mpi_perf.total_iprobe_time = clock::duration::zero();
 		mpi_perf.total_broadcast_time = clock::duration::zero();
 
 		//for (int i = 0; i < mpi.comm_size; ++i) {
@@ -397,14 +414,36 @@ bool mpi_spatial_route_flat_improved(t_router_opts *opts, struct s_det_routing_a
 					route_tree_mark_congested_nodes_to_be_ripped(route_trees[net->local_id], partitioner.orig_g, congestion);
 				}
 
+				int route_tree_size = 0;
+				for (const auto &n : route_tree_get_nodes(route_trees[net->local_id])) {
+					++route_tree_size;
+				}
+
 				queue<RRNode> cost_update_q;
 				route_tree_rip_up_marked_mpi_send_recv(route_trees[net->local_id], partitioner.orig_g, congestion, params.pres_fac, cost_update_q);
 
-				//broadcast_pending_cost_updates_improved(cost_update_q, -1, &mpi);
+				zlog_level(delta_log, ROUTER_V3, "Ripped up net %d route tree of size %lu\n", net->local_id, cost_update_q.size());
 
-				//auto sync_start	= clock::now();
-				//sync_improved(congestion, partitioner.orig_g, params.pres_fac, false, &mpi, &mpi_perf);
-				//mpi_perf.total_sync_time += clock::now()-sync_start;
+				if (iter > 0) {
+					if (cost_update_q.size() == route_tree_size) {
+						auto broadcast_start = clock::now();
+						broadcast_rip_up(net->local_id, &mpi);
+						mpi_perf.total_broadcast_time += clock::now()-broadcast_start;
+					} else if (!cost_update_q.empty()) {
+						vector<RRNode> removed_nodes;
+						while (!cost_update_q.empty()) {
+							removed_nodes.push_back(cost_update_q.front());
+							cost_update_q.pop();
+						}
+						auto broadcast_start = clock::now();
+						broadcast_pending_cost_updates_reduced(removed_nodes, net->local_id, -1, &mpi);
+						mpi_perf.total_broadcast_time += clock::now()-broadcast_start;
+					}
+				}
+
+				auto sync_start	= clock::now();
+				sync_iprobe(congestion, partitioner.orig_g, params.pres_fac, net_route_trees, &mpi, &mpi_perf);
+				mpi_perf.total_sync_time += clock::now()-sync_start;
 
 				routed_sinks[net->local_id].clear();
 				for (auto &sink : net->sinks) {
@@ -425,7 +464,7 @@ bool mpi_spatial_route_flat_improved(t_router_opts *opts, struct s_det_routing_a
 
 					int previous_num_routed_sinks = routed_sinks[net->local_id].size();
 
-					route_net_mpi_send_recv_improved(partitioner.orig_g, net->vpr_id, &net->source, sinks, params, states, congestion, route_trees[net->local_id], net_timing[net->vpr_id], routed_sinks[net->local_id], unroutable_sinks[net->local_id], &mpi, &perf, &mpi_perf);
+					route_net_mpi_send_recv_reduced_comm(partitioner.orig_g, net->vpr_id, net->local_id, &net->source, sinks, params, states, congestion, route_trees[net->local_id], net_timing[net->vpr_id], net_route_trees, routed_sinks[net->local_id], unroutable_sinks[net->local_id], &mpi, &perf, &mpi_perf);
 
 					assert(routed_sinks[net->local_id].size() + unroutable_sinks[net->local_id].size() == net->sinks.size());
 
@@ -456,14 +495,9 @@ bool mpi_spatial_route_flat_improved(t_router_opts *opts, struct s_det_routing_a
 				/* very hackish just to make sure we have persistent storage 
 				 * for the trailer INT */
 				ongoing_transaction_t trans;
-				trans.data = make_shared<vector<send_data_t>>();
-				send_data_t d;
-				d.rr_node = -1;
-				d.delta = -1;
-				trans.data->push_back(d);
 
 				zlog_level(delta_log, ROUTER_V2, "Sent trailer packet from %d to %d\n", mpi.rank, pid);
-				assert(MPI_Isend(trans.data->data(), 1, MPI_INT, pid, 3399, mpi.comm, &trans.req) == MPI_SUCCESS);
+				assert(MPI_Isend(nullptr, 0, MPI_INT, pid, LAST_TAG, mpi.comm, &trans.req) == MPI_SUCCESS);
 
 				mpi.pending_sends.push_back(trans);
 			}
@@ -475,7 +509,8 @@ bool mpi_spatial_route_flat_improved(t_router_opts *opts, struct s_det_routing_a
 
 		auto last_sync_start = clock::now();
 		int num_last_syncs = 0;
-		while (!sync_improved(congestion, partitioner.orig_g, params.pres_fac, false, &mpi, nullptr)) {
+		while (!all_done(&mpi)) {
+			sync_iprobe(congestion, partitioner.orig_g, params.pres_fac, net_route_trees, &mpi, nullptr);
 			++num_last_syncs;
 		}
 		last_sync_time += clock::now()-last_sync_start;
@@ -536,10 +571,10 @@ bool mpi_spatial_route_flat_improved(t_router_opts *opts, struct s_det_routing_a
         iter_time = clock::now()-iter_start;
 
 		total_sync_time += mpi_perf.total_sync_time;
-		total_last_sync_time += last_sync_time;
-		total_irecv_time += mpi_perf.total_irecv_time;
-		total_testsome_time += mpi_perf.total_testsome_time;
+		total_recv_time += mpi_perf.total_recv_time;
+		total_iprobe_time += mpi_perf.total_iprobe_time;
 		total_broadcast_time += mpi_perf.total_broadcast_time;
+		total_last_sync_time += last_sync_time;
 
 		int total_num_sinks_to_route;
 		if (mpi.rank == 0) {
@@ -666,17 +701,15 @@ bool mpi_spatial_route_flat_improved(t_router_opts *opts, struct s_det_routing_a
 
 		sync_recalc_occ(congestion, num_vertices(partitioner.orig_g), mpi.rank, mpi.comm_size, mpi.comm);
 
-		if (mpi.rank == 0) {
-			bool valid = true;
-			for (int i = 0; i < num_vertices(partitioner.orig_g); ++i) {
-				sprintf_rr_node_impl(i, buffer);
-				if (congestion[i].recalc_occ != congestion[i].occ) {
-					printf("Node %s occ mismatch, recalc: %d original: %d\n", buffer, congestion[i].recalc_occ, congestion[i].occ);
-					valid = false;
-				}
+		bool valid = true;
+		for (int i = 0; i < num_vertices(partitioner.orig_g); ++i) {
+			sprintf_rr_node_impl(i, buffer);
+			if (congestion[i].recalc_occ != congestion[i].occ) {
+				printf("[%d] Node %s occ mismatch, recalc: %d original: %d\n", mpi.rank, buffer, congestion[i].recalc_occ, congestion[i].occ);
+				valid = false;
 			}
-			assert(valid);
 		}
+		assert(valid);
 
         int overused_total_bb_rank = 0;
         int num_congested_nets = 0;
@@ -879,6 +912,9 @@ bool mpi_spatial_route_flat_improved(t_router_opts *opts, struct s_det_routing_a
 							zlog_level(delta_log, ROUTER_V3, "Recving net index %d from %d\n", i+j, mpi.rank+1);
 
 							recv_route_tree(net, partitioner.orig_g, routed_sinks, states, route_trees, net_timing, mpi.rank+1, mpi.comm);
+							assert(!net_route_trees[net->local_id].empty());
+
+							net_route_trees[net->local_id].clear();
 						}
 					}
 				} else {
@@ -1028,19 +1064,19 @@ bool mpi_spatial_route_flat_improved(t_router_opts *opts, struct s_det_routing_a
 			}
 			printf("\n");
 
-			float f_irecv_time = duration_cast<nanoseconds>(mpi_perf.total_irecv_time).count() / 1e9;
-			printf("\t\t\t\tIrecv time: %g (%g) ", f_irecv_time, f_irecv_time * 100.0 / (duration_cast<nanoseconds>(route_time).count() / 1e9));
+			float f_recv_time = duration_cast<nanoseconds>(mpi_perf.total_recv_time).count() / 1e9;
+			printf("\t\t\t\tRecv time: %g (%g) ", f_recv_time, f_recv_time * 100.0 / (duration_cast<nanoseconds>(route_time).count() / 1e9));
 			for (int i = 1; i < prev_comm_size; ++i) {
-				MPI_Recv(&f_irecv_time, 1, MPI_FLOAT, i, i, prev_comm, MPI_STATUS_IGNORE);
-				printf("%g (%g) ", f_irecv_time, f_irecv_time * 100 / (duration_cast<nanoseconds>(route_time).count() / 1e9));
+				MPI_Recv(&f_recv_time, 1, MPI_FLOAT, i, i, prev_comm, MPI_STATUS_IGNORE);
+				printf("%g (%g) ", f_recv_time, f_recv_time * 100 / (duration_cast<nanoseconds>(route_time).count() / 1e9));
 			}
 			printf("\n");
 
-			float f_testsome_time = duration_cast<nanoseconds>(mpi_perf.total_testsome_time).count() / 1e9;
-			printf("\t\t\t\tTestsome time: %g (%g) ", f_testsome_time, f_testsome_time * 100.0 / (duration_cast<nanoseconds>(route_time).count() / 1e9));
+			float f_iprobe_time = duration_cast<nanoseconds>(mpi_perf.total_iprobe_time).count() / 1e9;
+			printf("\t\t\t\tIprobe time: %g (%g) ", f_iprobe_time, f_iprobe_time * 100.0 / (duration_cast<nanoseconds>(route_time).count() / 1e9));
 			for (int i = 1; i < prev_comm_size; ++i) {
-				MPI_Recv(&f_testsome_time, 1, MPI_FLOAT, i, i, prev_comm, MPI_STATUS_IGNORE);
-				printf("%g (%g) ", f_testsome_time, f_testsome_time * 100 / (duration_cast<nanoseconds>(route_time).count() / 1e9));
+				MPI_Recv(&f_iprobe_time, 1, MPI_FLOAT, i, i, prev_comm, MPI_STATUS_IGNORE);
+				printf("%g (%g) ", f_iprobe_time, f_iprobe_time * 100 / (duration_cast<nanoseconds>(route_time).count() / 1e9));
 			}
 			printf("\n");
 
@@ -1090,11 +1126,11 @@ bool mpi_spatial_route_flat_improved(t_router_opts *opts, struct s_det_routing_a
 			float f_sync_time = duration_cast<nanoseconds>(mpi_perf.total_sync_time).count() / 1e9;
 			MPI_Send(&f_sync_time, 1, MPI_FLOAT, 0, prev_rank, prev_comm);
 
-			float f_irecv_time = duration_cast<nanoseconds>(mpi_perf.total_irecv_time).count() / 1e9;
-			MPI_Send(&f_irecv_time, 1, MPI_FLOAT, 0, prev_rank, prev_comm);
+			float f_recv_time = duration_cast<nanoseconds>(mpi_perf.total_recv_time).count() / 1e9;
+			MPI_Send(&f_recv_time, 1, MPI_FLOAT, 0, prev_rank, prev_comm);
 
-			float f_testsome_time = duration_cast<nanoseconds>(mpi_perf.total_testsome_time).count() / 1e9;
-			MPI_Send(&f_testsome_time, 1, MPI_FLOAT, 0, prev_rank, prev_comm);
+			float f_iprobe_time = duration_cast<nanoseconds>(mpi_perf.total_iprobe_time).count() / 1e9;
+			MPI_Send(&f_iprobe_time, 1, MPI_FLOAT, 0, prev_rank, prev_comm);
 
 			float f_broadcast_time = duration_cast<nanoseconds>(mpi_perf.total_broadcast_time).count() / 1e9;
 			MPI_Send(&f_broadcast_time, 1, MPI_FLOAT, 0, prev_rank, prev_comm);
@@ -1151,18 +1187,18 @@ done:
 				printf("%g (%g) ", f_total_sync_time, f_total_sync_time * 100.0 / (duration_cast<nanoseconds>(total_route_time).count() / 1e9));
 			}
 			printf("\n");
-			printf("\t\t\t\tTotal irecv time: %g (%g) ", duration_cast<nanoseconds>(total_irecv_time).count() / 1e9, duration_cast<nanoseconds>(total_irecv_time).count() * 100.0 / duration_cast<nanoseconds>(total_route_time).count());
+			printf("\t\t\t\tTotal recv time: %g (%g) ", duration_cast<nanoseconds>(total_recv_time).count() / 1e9, duration_cast<nanoseconds>(total_recv_time).count() * 100.0 / duration_cast<nanoseconds>(total_route_time).count());
 			for (int i = 1; i < initial_comm_size; ++i) {
-				float f_total_irecv_time;
-				MPI_Recv(&f_total_irecv_time, 1, MPI_FLOAT, i, i, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
-				printf("%g (%g) ", f_total_irecv_time, f_total_irecv_time * 100.0 / (duration_cast<nanoseconds>(total_route_time).count() / 1e9));
+				float f_total_recv_time;
+				MPI_Recv(&f_total_recv_time, 1, MPI_FLOAT, i, i, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+				printf("%g (%g) ", f_total_recv_time, f_total_recv_time * 100.0 / (duration_cast<nanoseconds>(total_route_time).count() / 1e9));
 			}
 			printf("\n");
-			printf("\t\t\t\tTotal testsome time: %g (%g) ", duration_cast<nanoseconds>(total_testsome_time).count() / 1e9, duration_cast<nanoseconds>(total_testsome_time).count() * 100.0 / duration_cast<nanoseconds>(total_route_time).count());
+			printf("\t\t\t\tTotal probe time: %g (%g) ", duration_cast<nanoseconds>(total_iprobe_time).count() / 1e9, duration_cast<nanoseconds>(total_iprobe_time).count() * 100.0 / duration_cast<nanoseconds>(total_route_time).count());
 			for (int i = 1; i < initial_comm_size; ++i) {
-				float f_total_testsome_time;
-				MPI_Recv(&f_total_testsome_time, 1, MPI_FLOAT, i, i, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
-				printf("%g (%g) ", f_total_testsome_time, f_total_testsome_time * 100.0 / (duration_cast<nanoseconds>(total_route_time).count() / 1e9));
+				float f_total_iprobe_time;
+				MPI_Recv(&f_total_iprobe_time, 1, MPI_FLOAT, i, i, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+				printf("%g (%g) ", f_total_iprobe_time, f_total_iprobe_time * 100.0 / (duration_cast<nanoseconds>(total_route_time).count() / 1e9));
 			}
 			printf("\n");
 			printf("\t\t\tTotal broadcast time: %g (%g) ", duration_cast<nanoseconds>(total_broadcast_time).count() / 1e9, duration_cast<nanoseconds>(total_broadcast_time).count() * 100.0 / duration_cast<nanoseconds>(total_route_time).count());
@@ -1214,18 +1250,18 @@ done:
 				printf("%g (%g) ", f_total_sync_time, f_total_sync_time * 100.0 / (duration_cast<nanoseconds>(total_route_time).count() / 1e9));
 			}
 			printf("\n");
-			printf("\t\t\t\tTotal irecv time: %g (%g) \n", duration_cast<nanoseconds>(total_irecv_time).count() / 1e9, duration_cast<nanoseconds>(total_irecv_time).count() * 100.0 / duration_cast<nanoseconds>(total_route_time).count());
+			printf("\t\t\t\tTotal recv time: %g (%g) \n", duration_cast<nanoseconds>(total_recv_time).count() / 1e9, duration_cast<nanoseconds>(total_recv_time).count() * 100.0 / duration_cast<nanoseconds>(total_route_time).count());
 			for (int i = 1; i < initial_comm_size; ++i) {
-				float f_total_irecv_time;
-				MPI_Recv(&f_total_irecv_time, 1, MPI_FLOAT, i, i, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
-				printf("%g (%g) ", f_total_irecv_time, f_total_irecv_time * 100.0 / (duration_cast<nanoseconds>(total_route_time).count() / 1e9));
+				float f_total_recv_time;
+				MPI_Recv(&f_total_recv_time, 1, MPI_FLOAT, i, i, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+				printf("%g (%g) ", f_total_recv_time, f_total_recv_time * 100.0 / (duration_cast<nanoseconds>(total_route_time).count() / 1e9));
 			}
 			printf("\n");
-			printf("\t\t\t\tTotal testsome time: %g (%g) \n", duration_cast<nanoseconds>(total_testsome_time).count() / 1e9, duration_cast<nanoseconds>(total_testsome_time).count() * 100.0 / duration_cast<nanoseconds>(total_route_time).count());
+			printf("\t\t\t\tTotal probe time: %g (%g) \n", duration_cast<nanoseconds>(total_iprobe_time).count() / 1e9, duration_cast<nanoseconds>(total_iprobe_time).count() * 100.0 / duration_cast<nanoseconds>(total_route_time).count());
 			for (int i = 1; i < initial_comm_size; ++i) {
-				float f_total_testsome_time;
-				MPI_Recv(&f_total_testsome_time, 1, MPI_FLOAT, i, i, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
-				printf("%g (%g) ", f_total_testsome_time, f_total_testsome_time * 100.0 / (duration_cast<nanoseconds>(total_route_time).count() / 1e9));
+				float f_total_iprobe_time;
+				MPI_Recv(&f_total_iprobe_time, 1, MPI_FLOAT, i, i, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+				printf("%g (%g) ", f_total_iprobe_time, f_total_iprobe_time * 100.0 / (duration_cast<nanoseconds>(total_route_time).count() / 1e9));
 			}
 			printf("\n");
 			printf("\t\t\tTotal broadcast time: %g (%g) \n", duration_cast<nanoseconds>(total_broadcast_time).count() / 1e9, duration_cast<nanoseconds>(total_broadcast_time).count() * 100.0 / duration_cast<nanoseconds>(total_route_time).count());
@@ -1263,11 +1299,11 @@ done:
 		float f_total_sync_time = duration_cast<nanoseconds>(total_sync_time).count() / 1e9;
 		MPI_Send(&f_total_sync_time, 1, MPI_FLOAT, 0, initial_rank, MPI_COMM_WORLD);
 
-		float f_total_irecv_time = duration_cast<nanoseconds>(total_irecv_time).count() / 1e9;
-		MPI_Send(&f_total_irecv_time, 1, MPI_FLOAT, 0, initial_rank, MPI_COMM_WORLD);
+		float f_total_recv_time = duration_cast<nanoseconds>(total_recv_time).count() / 1e9;
+		MPI_Send(&f_total_recv_time, 1, MPI_FLOAT, 0, initial_rank, MPI_COMM_WORLD);
 
-		float f_total_testsome_time = duration_cast<nanoseconds>(total_testsome_time).count() / 1e9;
-		MPI_Send(&f_total_testsome_time, 1, MPI_FLOAT, 0, initial_rank, MPI_COMM_WORLD);
+		float f_total_iprobe_time = duration_cast<nanoseconds>(total_iprobe_time).count() / 1e9;
+		MPI_Send(&f_total_iprobe_time, 1, MPI_FLOAT, 0, initial_rank, MPI_COMM_WORLD);
 
 		float f_total_broadcast_time = duration_cast<nanoseconds>(total_broadcast_time).count() / 1e9;
 		MPI_Send(&f_total_broadcast_time, 1, MPI_FLOAT, 0, initial_rank, MPI_COMM_WORLD);

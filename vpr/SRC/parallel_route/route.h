@@ -32,9 +32,11 @@ typedef struct perf_t {
 typedef struct mpi_perf_t {
 	std::chrono::high_resolution_clock::duration total_sync_time;
 	std::chrono::high_resolution_clock::duration total_broadcast_time;
+	std::chrono::high_resolution_clock::duration total_iprobe_time;
 	std::chrono::high_resolution_clock::duration total_probe_time;
 	std::chrono::high_resolution_clock::duration total_testsome_time;
 	std::chrono::high_resolution_clock::duration total_irecv_time;
+	std::chrono::high_resolution_clock::duration total_recv_time;
 } mpi_perf_t;
 
 typedef struct sched_perf_t {
@@ -176,7 +178,6 @@ typedef struct route_state_t {
 typedef struct path_node_t {
 	RRNode rr_node_id;
 	RREdge prev_edge;
-	bool update_cost;
 } path_node_t;
 
 typedef struct path_node_send_t {
@@ -200,6 +201,15 @@ typedef struct ongoing_transaction_t {
 	std::shared_ptr<vector<send_data_t>> data;
 	MPI_Request req;
 } ongoing_transaction_t;
+
+typedef struct mpi_context_t {
+	MPI_Comm comm;
+	int rank;
+	int comm_size;
+	vector<ongoing_transaction_t> pending_sends;
+	vector<vector<ongoing_transaction_t>> pending_recvs; 
+	vector<bool> received_last_update; 
+} mpi_context_t;
 
 //typedef struct unrouted_sink_t {
 	//sink_t *sink;

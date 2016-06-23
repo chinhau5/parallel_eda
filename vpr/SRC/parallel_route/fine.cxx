@@ -166,6 +166,8 @@ bool locking_route(t_router_opts *opts, int run)
 	RRGraph g;
 	init_graph(g);
 
+	init_sprintf_rr_node(&g);
+
 	vector<net_t> nets;
 	vector<net_t> global_nets;
 	init_nets(nets, global_nets, opts->bb_factor, opts->large_bb);
@@ -550,14 +552,14 @@ bool locking_route(t_router_opts *opts, int run)
 
 		for (const auto &net : nets) {
 			check_route_tree(route_trees[net.local_id], net, g);
-			recalculate_occ(route_trees[net.local_id], g, congestion);
+			recalculate_occ_locking_route(route_trees[net.local_id], g, congestion);
 		}
 
 		bool valid = true;
 		for (int i = 0; i < num_vertices(g); ++i) {
-			sprintf_rr_node(i, buffer);
+			sprintf_rr_node_impl(i, buffer);
 			if (congestion[i].cong.recalc_occ != congestion[i].cong.occ) {
-				zlog_error(delta_log, "Node %s occ mismatch, recalc: %d original: %d\n", buffer, congestion[i].cong.recalc_occ, congestion[i].cong.occ);
+				printf("Node %s occ mismatch, recalc: %d original: %d\n", buffer, congestion[i].cong.recalc_occ, congestion[i].cong.occ);
 				valid = false;
 			}
 		}

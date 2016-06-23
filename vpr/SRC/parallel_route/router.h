@@ -45,6 +45,36 @@ void recalculate_occ(const route_tree_t &rt, const RRGraph &g, Congestion *conge
 	}
 }
 
+template<typename Congestion>
+void recalculate_occ_internal_locking_route(const route_tree_t &rt, RouteTreeNode rt_node, const RRGraph &g, Congestion *congestion)
+{
+	const auto &rt_node_p = get_vertex_props(rt.graph, rt_node);
+
+	assert(rt_node_p.valid);
+
+	int rr_node = rt_node_p.rr_node;
+	auto &rr_node_p = get_vertex_props(g, rr_node);
+	if (rr_node_p.type == SOURCE) {
+		get_recalc_occ(congestion[rr_node]) += num_out_edges(rt.graph, rt_node);
+	} else {
+		++get_recalc_occ(congestion[rr_node]);
+	}
+
+	for (const auto &branch : route_tree_get_branches(rt, rt_node)) {
+		/*for_all_out_edges(rt.graph, node, [&rt, &g, &visited_sinks, &visited_nodes] (const RouteTreeEdge &e) -> void {*/
+		const auto &child = get_target(rt.graph, branch);
+		recalculate_occ_internal_locking_route(rt, child, g, congestion);
+	}
+}
+
+template<typename Congestion>
+void recalculate_occ_locking_route(const route_tree_t &rt, const RRGraph &g, Congestion *congestion)
+{
+	for (const auto &root : rt.root_rt_nodes) {
+		recalculate_occ_internal_locking_route(rt, root, g, congestion);
+	}
+}
+
 void check_route_tree(const route_tree_t &rt, const net_t &net, RRGraph &g);
 void check_route_tree(const route_tree_t &rt, const net_t &net, const vector<sink_t *> &routed_sinks, RRGraph &g);
 
@@ -93,7 +123,7 @@ void route_net_one_pass(const RRGraph &g, int vpr_id, const source_t *source, co
 
 void route_net_with_partitioned_fine_grain_lock(const RRGraph &g, const vector<int> &pid, int this_pid, int vpr_id, const source_t *source, const vector<sink_t *> &sinks, const route_parameters_t &params, route_state_t *state, congestion_locked_t *congestion, route_tree_t &rt, t_net_timing &net_timing, vector<sink_t *> &routed_sinks, vector<sink_t *> &unrouted_sinks, bool lock, perf_t *perf, lock_perf_t *lock_perf);
 
-void route_net_mpi_send_recv_improved(const RRGraph &g, int this_pid, int vpr_id, const source_t *source, const vector<sink_t *> &sinks, const route_parameters_t &params, route_state_t *state, congestion_t *congestion, int num_procs, MPI_Comm comm, vector<ongoing_transaction_t> &transactions, vector<vector<ongoing_transaction_t>> &pending_recvs, vector<bool> &received_last_update, route_tree_t &rt, t_net_timing &net_timing, vector<sink_t *> &routed_sinks, vector<sink_t *> &unrouted_sinks, perf_t *perf, mpi_perf_t *mpi_perf);
+void route_net_mpi_send_recv_improved(const RRGraph &g, int vpr_id, const source_t *source, const vector<sink_t *> &sinks, const route_parameters_t &params, route_state_t *state, congestion_t *congestion, route_tree_t &rt, t_net_timing &net_timing, vector<sink_t *> &routed_sinks, vector<sink_t *> &unrouted_sinks, mpi_context_t *mpi, perf_t *perf, mpi_perf_t *mpi_perf);
 
 void route_net_mpi_send_recv(const RRGraph &g, int this_pid, int vpr_id, const source_t *source, const vector<sink_t *> &sinks, const route_parameters_t &params, route_state_t *state, congestion_t *congestion, int num_procs, MPI_Comm comm, vector<ongoing_transaction_t> &transactions, route_tree_t &rt, t_net_timing &net_timing, vector<sink_t *> &routed_sinks, vector<sink_t *> &unrouted_sinks, perf_t *perf, mpi_perf_t *mpi_perf);
 

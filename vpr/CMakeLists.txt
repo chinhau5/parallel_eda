@@ -87,6 +87,7 @@ set(srcs
 	SRC/parallel_route/router.cxx
 	SRC/parallel_route/route_net_mpi_send_recv.cxx
 	SRC/parallel_route/route_net_mpi_send_recv_improved.cxx
+	SRC/parallel_route/route_net_mpi_send_recv_reduced_comm.cxx
 	SRC/parallel_route/init.cxx
 	SRC/parallel_route/log.cxx
 	SRC/parallel_route/spatial.cxx
@@ -96,10 +97,11 @@ set(srcs
 	SRC/parallel_route/mpi_spatial_route_flat_with_net_partitioning.cxx
 	SRC/parallel_route/mpi_spatial_route_flat.cxx
 	SRC/parallel_route/mpi_spatial_route_flat_improved.cxx
+	SRC/parallel_route/mpi_spatial_route_flat_reduced_comm.cxx
 	SRC/parallel_route/mpi_spatial_route_partitioned.cxx
 	SRC/parallel_route/mpi_spatial_route_rma.cxx
 	SRC/parallel_route/mpi_spatial_route_simulated.cxx
-	SRC/parallel_route/astar.cxx
+	#SRC/parallel_route/astar.cxx
 	#SRC/parallel_route/partitioning_route.c
 	SRC/parallel_route/route_tree.c
 	#SRC/parallel_route/trace.c

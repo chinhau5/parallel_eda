@@ -23,6 +23,10 @@
 /*#include "tbb/task_scheduler_init.h"*/
 #include "vpr_api.h"
 
+#include "route.h"
+
+/*#include "vt_user.h"*/
+
 /**
  * VPR program
  * Generate FPGA architecture given architecture description
@@ -50,13 +54,37 @@ int main(int argc, char **argv) {
 	t_vpr_setup vpr_setup;
 	clock_t entire_flow_begin,entire_flow_end;
 
+	/*int net_disp[] = {*/
+		/*offsetof(net_t, vpr_id),*/
+
+		/*[> source <]*/
+		/*offsetof(net_t, source)+offsetof(source_t, rr_node),*/
+		/*offsetof(net_t, source)+offsetof(source_t, x),*/
+		/*offsetof(net_t, source)+offsetof(source_t, y),*/
+		
+		/*[> bounding box <]*/
+		/*offsetof(net_t, bounding_box)+offsetof(bounding_box_t, xmin),*/
+		/*offsetof(net_t, bounding_box)+offsetof(bounding_box_t, xmax),*/
+		/*offsetof(net_t, bounding_box)+offsetof(bounding_box_t, ymin),*/
+		/*offsetof(net_t, bounding_box)+offsetof(bounding_box_t, ymax)*/
+	/*};*/
+
+	/*for (int i = 0; i < 7; ++i) {*/
+		/*printf("Offset is %X\n", net_disp[i]);*/
+	/*}*/
+	/*return 0;*/
+
 	MPI_Init(&argc, &argv);
 
 	/*mtrace();*/
 
+	/*VT_USER_START("test");*/
+
 	program_start = std::chrono::high_resolution_clock::now(); 
 
 	entire_flow_begin = clock();
+
+	/*VT_USER_END("test");*/
 
 	if (dzlog_init("log.conf", "default") == -1) {
 		printf("failed to init zlog\n");

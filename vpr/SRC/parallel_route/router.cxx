@@ -1180,7 +1180,7 @@ std::shared_ptr<vector<path_node_t>> get_path(int sink_rr_node_id, const route_s
 		path_node_t node;
 		node.rr_node_id = current_rr_node_id;
 		node.prev_edge = previous_edge;
-		node.update_cost = true;
+		//node.update_cost = true;
 
 		path->emplace_back(node);
 
@@ -1198,7 +1198,7 @@ std::shared_ptr<vector<path_node_t>> get_path(int sink_rr_node_id, const route_s
 	node.rr_node_id = current_rr_node_id;
 	node.prev_edge = RRGraph::null_edge();
 	//node.update_cost = get_vertex_props(g, current_rr_node_id).type == SOURCE;
-	node.update_cost = false;
+	//node.update_cost = false;
 
 	path->emplace_back(node);
 
@@ -1544,9 +1544,9 @@ void route_net_one_pass(const RRGraph &g, int vpr_id, const source_t *source, co
 
 			vector<RRNode> added_nodes;
 			for (const auto &n : *path) {
-				if (n.update_cost) {
+				if (valid(n.prev_edge) || get_vertex_props(g, n.rr_node_id).type == SOURCE) {
 					added_nodes.push_back(n.rr_node_id);
-				}
+				} 
 			}
 
 			update_one_cost(g, congestion, added_nodes.begin(), added_nodes.end(), 1, params.pres_fac);
@@ -1711,9 +1711,9 @@ void route_net_with_partitioned_fine_grain_lock(const RRGraph &g, const vector<i
 
 			vector<RRNode> added_nodes;
 			for (const auto &n : *path) {
-				if (n.update_cost) {
+				if (valid(n.prev_edge) || get_vertex_props(g, n.rr_node_id).type == SOURCE) {
 					added_nodes.push_back(n.rr_node_id);
-				}
+				} 
 			}
 
 			update_one_cost(g, congestion, added_nodes.begin(), added_nodes.end(), 1, params.pres_fac, lock, lock_perf);
@@ -1904,9 +1904,9 @@ void route_net_lockless(const RRGraph &g, const vector<int> &pid, int this_pid, 
 
 			vector<RRNode> added_nodes;
 			for (const auto &n : *path) {
-				if (n.update_cost) {
+				if (valid(n.prev_edge) || get_vertex_props(g, n.rr_node_id).type == SOURCE) {
 					added_nodes.push_back(n.rr_node_id);
-				}
+				} 
 			}
 
 			update_one_cost(g, congestion, added_nodes.begin(), added_nodes.end(), 1, params.pres_fac);
@@ -2101,9 +2101,9 @@ void route_net_mpi_rma(const RRGraph &g, const vector<int> &pid, int this_pid, M
 
 			vector<RRNode> added_nodes;
 			for (const auto &n : *path) {
-				if (n.update_cost) {
+				if (valid(n.prev_edge) || get_vertex_props(g, n.rr_node_id).type == SOURCE) {
 					added_nodes.push_back(n.rr_node_id);
-				}
+				} 
 			}
 
 			update_one_cost_mpi_rma(added_nodes.begin(), added_nodes.end(), g, pid, this_pid, congestion, win, 1, params.pres_fac);
@@ -2308,9 +2308,9 @@ void route_net_with_high_interpartition_cost(const RRGraph &g, const vector<int>
 
 			vector<RRNode> added_nodes;
 			for (const auto &n : *path) {
-				if (n.update_cost) {
+				if (valid(n.prev_edge) || get_vertex_props(g, n.rr_node_id).type == SOURCE) {
 					added_nodes.push_back(n.rr_node_id);
-				}
+				} 
 			}
 
 			update_one_cost(g, congestion, added_nodes.begin(), added_nodes.end(), 1, params.pres_fac, lock, lock_perf);
@@ -2480,9 +2480,9 @@ void route_net_with_partition_hopping(const RRGraph &g, const vector<int> &pid, 
 
 			vector<RRNode> added_nodes;
 			for (const auto &n : *path) {
-				if (n.update_cost) {
+				if (valid(n.prev_edge) || get_vertex_props(g, n.rr_node_id).type == SOURCE) {
 					added_nodes.push_back(n.rr_node_id);
-				}
+				} 
 			}
 
 			update_one_cost(g, congestion, added_nodes.begin(), added_nodes.end(), 1, params.pres_fac, lock, lock_perf);
@@ -2677,9 +2677,9 @@ vector<sink_t *> route_net_with_fine_grain_lock(const RRGraph &g, int vpr_id, co
 
 			vector<RRNode> added_nodes;
 			for (const auto &n : *path) {
-				if (n.update_cost) {
+				if (valid(n.prev_edge) || get_vertex_props(g, n.rr_node_id).type == SOURCE) {
 					added_nodes.push_back(n.rr_node_id);
-				}
+				} 
 			}
 
 			update_one_cost(g, congestion, added_nodes.begin(), added_nodes.end(), 1, params.pres_fac, lock, lock_perf);

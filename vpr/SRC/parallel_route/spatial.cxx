@@ -3135,56 +3135,15 @@ void sync_nets(vector<net_t> &nets, vector<net_t> &global_nets, int procid, MPI_
 
 void sync_recalc_occ(congestion_t *congestion, int num_vertices, int procid, int num_procs, MPI_Comm comm)
 {
-	if (procid == 0) {
-		int num_recvs = 0;
-		//int rr_node_pid = partitioner.result_pid_by_level[current_level][i];
-		//int from_pid = rr_node_pid == -1 ? 0 : rr_node_pid;
+	vector<int> all_recalc_occ(num_vertices);
+	for (int i = 0; i < num_vertices; ++i) {
+		all_recalc_occ[i] = congestion[i].recalc_occ;
+	}
 
-		//if (from_pid != procid) {
-		int *all_recalc_occ = new int[num_vertices];
+	assert(MPI_Allreduce(MPI_IN_PLACE, all_recalc_occ.data(), num_vertices, MPI_INT, MPI_SUM, comm) == MPI_SUCCESS);
 
-		for (int from_pid = 1; from_pid < num_procs; ++from_pid) {
-			int count;
-
-			//do { 
-			//MPI_Status status;
-
-			//MPI_Recv(all_recalc_occ, num_vertices, MPI_INT, from_pid, from_pid, cur_comm, &status);
-			//MPI_Get_count(&status, MPI_INT, &count);
-			//} while (count <= 0);
-
-			MPI_Status status;
-			assert(MPI_Recv(all_recalc_occ, num_vertices, MPI_INT, from_pid, from_pid, comm, &status) == MPI_SUCCESS);
-			MPI_Get_count(&status, MPI_INT, &count);
-
-			assert(count == num_vertices);
-
-			for (int i = 0; i < num_vertices; ++i) {
-				//zlog_level(delta_log, ROUTER_V3, "%d Recvd %d recalc_occ %d\n", from_pid, i, recalc_occ);
-				congestion[i].recalc_occ += all_recalc_occ[i];
-			}
-		}
-
-		delete [] all_recalc_occ;
-	} else {
-		int num_sends = 0;
-
-		int *all_recalc_occ = new int[num_vertices];
-
-		for (int i = 0; i < num_vertices; ++i) {
-			//int pid = partitioner.result_pid_by_level[current_level][i];
-			//if (pid == procid) {
-			zlog_level(delta_log, ROUTER_V3, "Sending %d recalc_occ %d\n", i, congestion[i].recalc_occ);
-			all_recalc_occ[i] = congestion[i].recalc_occ;
-			++num_sends;
-			//}
-		}
-
-		assert(MPI_Send(all_recalc_occ, num_vertices, MPI_INT, 0, procid, comm) == MPI_SUCCESS);
-
-		delete [] all_recalc_occ;
-
-		printf("[%d] Num sends: %d\n", procid, num_sends);
+	for (int i = 0; i < num_vertices; ++i) {
+		congestion[i].recalc_occ = all_recalc_occ[i];
 	}
 }
 
