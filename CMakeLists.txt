@@ -15,6 +15,7 @@ if (CMAKE_SYSTEM_NAME STREQUAL "Linux")
 		/home/chinhau/zlog/lib
 		/home/akkumar/Downloads/metis-5.1.0/build/Linux-x86_64/libmetis
 		/home/akkumar/Downloads/tbb44_20160526oss/lib/intel64/gcc4.4
+		/home/akkumar/Downloads/boost_1_60_0/stage/lib
 		/home/akkumar/zlog/lib
 		)
 else()

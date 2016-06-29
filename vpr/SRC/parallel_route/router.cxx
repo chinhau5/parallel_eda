@@ -1711,7 +1711,9 @@ void route_net_with_partitioned_fine_grain_lock(const RRGraph &g, const vector<i
 
 			vector<RRNode> added_nodes;
 			for (const auto &n : *path) {
-				if (valid(n.prev_edge) || get_vertex_props(g, n.rr_node_id).type == SOURCE) {
+				const auto &prop = get_vertex_props(g, n.rr_node_id);
+
+				if (valid(n.prev_edge) || prop.type == SOURCE) {
 					added_nodes.push_back(n.rr_node_id);
 				} 
 			}
@@ -2594,6 +2596,7 @@ vector<const sink_t *> route_net_with_fine_grain_lock(const RRGraph &g, int vpr_
 	int isink = 0;
 	int num_routed_sinks = 0;
 	vector<const sink_t *> unrouted_sinks;
+	RRNode existing_opin = RRGraph::null_vertex();
 	for (const auto &sink : sorted_sinks) {
 		sprintf_rr_node(sink->rr_node, buffer);
 		zlog_level(delta_log, ROUTER_V1, "Net %d Sink %d: %s criticality: %g BB: %d-%d %d-%d Prev BB: %d-%d %d-%d\n", vpr_id, sink->id, buffer, sink->criticality_fac, sink->current_bounding_box.xmin, sink->current_bounding_box.xmax, sink->current_bounding_box.ymin, sink->current_bounding_box.ymax, sink->previous_bounding_box.xmin, sink->previous_bounding_box.xmax, sink->previous_bounding_box.ymin, sink->previous_bounding_box.ymax);
@@ -2629,12 +2632,16 @@ vector<const sink_t *> route_net_with_fine_grain_lock(const RRGraph &g, int vpr_
 				state[item.rr_node] = item;
 				modified.push_back(item.rr_node);
 
-				expand_neighbors_with_fine_grain_lock(g, item.rr_node, state, congestion, sink_rr_node, sink->criticality_fac, params.astar_fac, heap, [&g, &sink, &sink_rr_node] (const RRNode &v) -> bool {
+				expand_neighbors_with_fine_grain_lock(g, item.rr_node, state, congestion, sink_rr_node, sink->criticality_fac, params.astar_fac, heap, [&g, &sink, &sink_rr_node, &existing_opin] (const RRNode &v) -> bool {
 
 					/*if (trace_has_node(prev_trace, id(v))) {*/
 						/*zlog_level(delta_log, ROUTER_V3, " existing node route tree ");*/
 					/*}*/
 					const auto &prop = get_vertex_props(g, v);
+
+					if (existing_opin != RRGraph::null_vertex() && prop.type == OPIN && v != existing_opin) {
+					return false;
+					}
 
 					if (prop.xhigh < sink->current_bounding_box.xmin
 							|| prop.xlow > sink->current_bounding_box.xmax
@@ -2677,9 +2684,15 @@ vector<const sink_t *> route_net_with_fine_grain_lock(const RRGraph &g, int vpr_
 
 			vector<RRNode> added_nodes;
 			for (const auto &n : *path) {
-				if (valid(n.prev_edge) || get_vertex_props(g, n.rr_node_id).type == SOURCE) {
+				const auto &prop = get_vertex_props(g, n.rr_node_id);
+
+				if (valid(n.prev_edge) || prop.type == SOURCE) {
 					added_nodes.push_back(n.rr_node_id);
 				} 
+
+				if (prop.type == OPIN && existing_opin == RRGraph::null_vertex()) {
+					existing_opin = n.rr_node_id;
+				}
 			}
 
 			update_one_cost(g, congestion, added_nodes.begin(), added_nodes.end(), 1, params.pres_fac, lock, lock_perf);

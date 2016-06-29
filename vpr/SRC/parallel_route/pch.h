@@ -2,6 +2,7 @@
 #define PCH_H
 
 #include <stdio.h>
+#include <stdlib.h>
 #include <assert.h>
 
 #include <fcntl.h>

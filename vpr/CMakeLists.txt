@@ -82,6 +82,7 @@ set(srcs
 	SRC/parallel_route/route_tree_timing_local.c
 	SRC/parallel_route/route_common_local.c
 	SRC/parallel_route/fine.cxx
+	SRC/parallel_route/locking_route.cxx
 	#SRC/parallel_route/phased.cxx
 	SRC/parallel_route/congestion.cxx
 	SRC/parallel_route/router.cxx
@@ -106,7 +107,7 @@ set(srcs
 	SRC/parallel_route/route_tree.c
 	#SRC/parallel_route/trace.c
 	SRC/parallel_route/utility.c
-	SRC/parallel_route/net_cluster.cxx
+	#SRC/parallel_route/net_cluster.cxx
 	SRC/parallel_route/scheduler.c
 	SRC/parallel_route/bounding_boxes.cxx
 	#SRC/parallel_route/advanced_parallel_route_timing.c
