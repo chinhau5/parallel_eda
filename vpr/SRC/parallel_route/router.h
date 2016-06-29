@@ -135,7 +135,7 @@ void route_net_with_high_interpartition_cost(const RRGraph &g, const vector<int>
 
 void route_net_with_partition_hopping(const RRGraph &g, const vector<int> &pid, int this_pid, int vpr_id, const source_t *source, const vector<sink_t *> &sinks, const route_parameters_t &params, route_state_t *state, congestion_locked_t *congestion, route_tree_t &rt, t_net_timing &net_timing, unrouted_t &unrouted, int num_partitions, bool lock, perf_t *perf, lock_perf_t *lock_perf);
 
-vector<sink_t *> route_net_with_fine_grain_lock(const RRGraph &g, int vpr_id, const source_t *source, const vector<sink_t *> &sinks, const route_parameters_t &params, route_state_t *state, congestion_locked_t *congestion, route_tree_t &rt, t_net_timing &net_timing, bool lock, perf_t *perf, lock_perf_t *lock_perf);
+vector<const sink_t *> route_net_with_fine_grain_lock(const RRGraph &g, int vpr_id, const source_t *source, const vector<const sink_t *> &sinks, const route_parameters_t &params, route_state_t *state, congestion_locked_t *congestion, route_tree_t &rt, t_net_timing &net_timing, bool lock, perf_t *perf, lock_perf_t *lock_perf);
 
 
 #endif

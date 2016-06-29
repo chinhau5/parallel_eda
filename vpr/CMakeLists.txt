@@ -139,12 +139,19 @@ if (CMAKE_SYSTEM_NAME STREQUAL "Linux")
 		/home/chinhau5/Downloads/mlpack-1.0.12/build/include
 		/home/chinhau5/Downloads/armadillo-6.400.3/include
 		/home/chinhau5/Downloads/metis-5.1.0/include/
+		/home/chinhau5/zlog/include
 		/home/chinhau/Downloads/boost_1_60_0/
 		/home/chinhau/Downloads/tbb44_20160128oss/include
 		/home/chinhau/Downloads/mlpack-1.0.12/build/include
 		/home/chinhau/Downloads/armadillo-6.400.3/include
 		/home/chinhau/Downloads/metis-5.1.0/include/
 		/home/chinhau/zlog/include
+		/home/akkumar/Downloads/boost_1_60_0/
+		/home/akkumar/Downloads/tbb44_20160526oss/include
+		/home/akkumar/Downloads/mlpack-1.0.12/build/include
+		/home/akkumar/Downloads/armadillo-6.400.3/include
+		/home/akkumar/Downloads/metis-5.1.0/include/
+		/home/akkumar/zlog/include
 		)
 else()
 	set(external_includes 

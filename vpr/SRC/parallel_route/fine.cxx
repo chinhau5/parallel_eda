@@ -130,6 +130,8 @@ bool locking_route(t_router_opts *opts, int run)
 
 	using clock = std::chrono::high_resolution_clock;
 
+	printf("sizeof congestion_locked_t: %lu\n", sizeof(congestion_locked_t));
+
 	//extern clock::time_point start_time;
 
 	//start_time = clock::now();
@@ -229,7 +231,8 @@ bool locking_route(t_router_opts *opts, int run)
 
 	//vector<vector<virtual_net_t>> virtual_nets_by_net;
 	//create_clustered_virtual_nets(nets, 5, opts->max_sink_bb_area, virtual_nets_by_net);
-	congestion_locked_t *congestion = new congestion_locked_t[num_vertices(g)];
+	congestion_locked_t *congestion_aligned = (congestion_locked_t *)aligned_alloc(64, sizeof(congestion_locked_t)*num_vertices(g));
+	congestion_locked_t *congestion = new(congestion_aligned) congestion_locked_t[num_vertices(g)];
 	for (int i = 0; i < num_vertices(g); ++i) {
 		congestion[i].cong.acc_cost = 1;
 		congestion[i].cong.pres_cost = 1;
@@ -313,8 +316,11 @@ bool locking_route(t_router_opts *opts, int run)
 		//tbb::enumerable_thread_specific<state_t *> state_tls;
 		//
 		tbb::atomic<int> net_index = 0;
-		vector<tbb::spin_mutex> debug_lock(opts->num_threads);
-		tbb::atomic<int> num_nets_routed = 0;
+		//vector<tbb::spin_mutex> debug_lock(opts->num_threads);
+		tbb::atomic<int> total_num_nets_routed = 0;
+		vector<int> num_nets_routed(opts->num_threads, 0);
+		tbb::atomic<unsigned long> total_num_sinks_routed = 0;
+		vector<unsigned long> num_sinks_routed(opts->num_threads, 0);
 
 		/*std::shuffle(begin(virtual_nets), end(virtual_nets), mt);*/
 		if (!use_partitioned) {
@@ -346,86 +352,60 @@ bool locking_route(t_router_opts *opts, int run)
 					local_lock_perf.num_lock_waits = 0;
 					local_lock_perf.total_wait_time = clock::duration::zero();
 
+					int local_num_nets_routed = 0;
+					unsigned long local_num_sinks_routed = 0;
+
+					int i;
 					if (opts->work_conserving) {
-						int i;
-						while ((i = net_index++) < nets_to_route.size()) {
-							net_t *net = nets_to_route[i].second;
-
-							update_sink_criticalities(*net, net_timing[net->vpr_id], params);
-
-							//auto rip_up_start = clock::now();
-							zlog_level(delta_log, ROUTER_V1, "Ripping up net %d\n", net->vpr_id);
-							if (greedy_rip_up_all) {
-								route_tree_mark_all_nodes_to_be_ripped(route_trees[net->local_id], g);
-							} else {
-								route_tree_mark_congested_nodes_to_be_ripped(route_trees[net->local_id], g, congestion);
-							}
-							route_tree_rip_up_marked(route_trees[net->local_id], g, congestion, params.pres_fac, true, &local_lock_perf);
-
-							//local_perf.total_rip_up_time += clock::now()-rip_up_start;
-
-							//auto route_start = clock::now();
-
-							vector<sink_t *> sinks;	
-							sinks.reserve(net->sinks.size());
-							for (auto &sink : net->sinks) {
-								RouteTreeNode sink_rt_node = route_tree_get_rt_node(route_trees[net->local_id], sink.rr_node);
-								if (sink_rt_node == RouteTree::null_vertex())  {
-									sinks.push_back(&sink);
-								} else {
-									const auto &sink_rt_node_p = get_vertex_props(route_trees[net->local_id].graph, sink_rt_node);
-									assert(!sink_rt_node_p.pending_rip_up);
-								}
-							}
-
-							if (!sinks.empty()) {
-								route_net_with_fine_grain_lock(g, net->vpr_id, &net->source, sinks, params, states[tid], congestion, route_trees[net->local_id], net_timing[net->vpr_id], true, &local_perf, &local_lock_perf);
-
-								++num_nets_routed;
-							}
-
-							//local_perf.total_route_time += clock::now()-rip_up_start;
-						}
+						i = net_index++;
 					} else {
-						int i = tid;
-						while (i < nets_to_route.size()) {
-							//while ((i = net_index++) < nets_to_route.size()) {
-							net_t *net = nets_to_route[i].second;
+						i = tid;
+					}
+					while (i < nets_to_route.size()) {
+						//while ((i = net_index++) < nets_to_route.size()) {
+						net_t *net = nets_to_route[i].second;
 
-							update_sink_criticalities(*net, net_timing[net->vpr_id], params);
+						update_sink_criticalities(*net, net_timing[net->vpr_id], params);
 
-							//auto rip_up_start = clock::now();
-							zlog_level(delta_log, ROUTER_V1, "Ripping up net %d\n", net->vpr_id);
-							if (greedy_rip_up_all) {
-								route_tree_mark_all_nodes_to_be_ripped(route_trees[net->local_id], g);
+						//auto rip_up_start = clock::now();
+						zlog_level(delta_log, ROUTER_V1, "Ripping up net %d\n", net->vpr_id);
+						if (greedy_rip_up_all) {
+							route_tree_mark_all_nodes_to_be_ripped(route_trees[net->local_id], g);
+						} else {
+							route_tree_mark_congested_nodes_to_be_ripped(route_trees[net->local_id], g, congestion);
+						}
+						route_tree_rip_up_marked(route_trees[net->local_id], g, congestion, params.pres_fac, true, &local_lock_perf);
+
+						//local_perf.total_rip_up_time += clock::now()-rip_up_start;
+
+						//auto route_start = clock::now();
+
+						vector<const sink_t *> sinks;	
+						sinks.reserve(net->sinks.size());
+						for (const auto &sink : net->sinks) {
+							RouteTreeNode sink_rt_node = route_tree_get_rt_node(route_trees[net->local_id], sink.rr_node);
+							if (sink_rt_node == RouteTree::null_vertex())  {
+								sinks.push_back(&sink);
 							} else {
-								route_tree_mark_congested_nodes_to_be_ripped(route_trees[net->local_id], g, congestion);
+								const auto &sink_rt_node_p = get_vertex_props(route_trees[net->local_id].graph, sink_rt_node);
+								assert(!sink_rt_node_p.pending_rip_up);
 							}
-							route_tree_rip_up_marked(route_trees[net->local_id], g, congestion, params.pres_fac, true, &local_lock_perf);
+						}
 
-							//local_perf.total_rip_up_time += clock::now()-rip_up_start;
+						if (!sinks.empty()) {
+							route_net_with_fine_grain_lock(g, net->vpr_id, &net->source, sinks, params, states[tid], congestion, route_trees[net->local_id], net_timing[net->vpr_id], true, &local_perf, &local_lock_perf);
 
-							//auto route_start = clock::now();
+							++total_num_nets_routed;
+							++local_num_nets_routed;
 
-							vector<sink_t *> sinks;	
-							sinks.reserve(net->sinks.size());
-							for (auto &sink : net->sinks) {
-								RouteTreeNode sink_rt_node = route_tree_get_rt_node(route_trees[net->local_id], sink.rr_node);
-								if (sink_rt_node == RouteTree::null_vertex())  {
-									sinks.push_back(&sink);
-								} else {
-									const auto &sink_rt_node_p = get_vertex_props(route_trees[net->local_id].graph, sink_rt_node);
-									assert(!sink_rt_node_p.pending_rip_up);
-								}
-							}
+							total_num_sinks_routed += sinks.size();
+							local_num_sinks_routed += sinks.size();
+						}
 
-							if (!sinks.empty()) {
-								route_net_with_fine_grain_lock(g, net->vpr_id, &net->source, sinks, params, states[tid], congestion, route_trees[net->local_id], net_timing[net->vpr_id], true, &local_perf, &local_lock_perf);
-
-								++num_nets_routed;
-							}
-
-							//local_perf.total_route_time += clock::now()-rip_up_start;
+						//local_perf.total_route_time += clock::now()-rip_up_start;
+						if (opts->work_conserving) {
+							i = net_index++;
+						} else {
 							i += opts->num_threads;
 						}
 					}
@@ -434,6 +414,9 @@ bool locking_route(t_router_opts *opts, int run)
 
 					perfs[tid] = local_perf;
 					lock_perfs[tid] = local_lock_perf; 
+
+					num_nets_routed[tid] = local_num_nets_routed;
+					num_sinks_routed[tid] = local_num_sinks_routed;
 
 					//debug_lock[tid].unlock();
 					});
@@ -452,7 +435,7 @@ bool locking_route(t_router_opts *opts, int run)
 					}
 					route_tree_rip_up_marked(route_trees[net->local_id], g, congestion, params.pres_fac, true, nullptr);
 
-					vector<sink_t *> sinks;	
+					vector<const sink_t *> sinks;	
 					sinks.reserve(net->sinks.size());
 					for (auto &sink : net->sinks) {
 						RouteTreeNode sink_rt_node = route_tree_get_rt_node(route_trees[net->local_id], sink.rr_node);
@@ -485,6 +468,9 @@ bool locking_route(t_router_opts *opts, int run)
 						local_lock_perf.num_lock_waits = 0;
 						local_lock_perf.total_wait_time = clock::duration::zero();
 
+						int local_num_nets_routed = 0;
+						unsigned long local_num_sinks_routed = 0;
+
 						//assert(debug_lock[tid].try_lock());
 
 						for (int i = 0; i < partitions[tid].size(); ++i) {
@@ -499,7 +485,7 @@ bool locking_route(t_router_opts *opts, int run)
 							}
 							route_tree_rip_up_marked(route_trees[net->local_id], g, congestion, params.pres_fac, true, &local_lock_perf);
 
-							vector<sink_t *> sinks;	
+							vector<const sink_t *> sinks;	
 							sinks.reserve(net->sinks.size());
 							for (auto &sink : net->sinks) {
 								RouteTreeNode sink_rt_node = route_tree_get_rt_node(route_trees[net->local_id], sink.rr_node);
@@ -513,7 +499,11 @@ bool locking_route(t_router_opts *opts, int run)
 							if (!sinks.empty()) {
 								route_net_with_fine_grain_lock(g, net->vpr_id, &net->source, sinks, params, states[tid], congestion, route_trees[net->local_id], net_timing[net->vpr_id], true, &local_perf, &local_lock_perf);
 
-								++num_nets_routed;
+								++total_num_nets_routed;
+								++local_num_nets_routed;
+
+								total_num_sinks_routed += sinks.size();
+								local_num_sinks_routed += sinks.size();
 							}
 						}
 
@@ -521,6 +511,9 @@ bool locking_route(t_router_opts *opts, int run)
 
 						perfs[tid] = local_perf;
 						lock_perfs[tid] = local_lock_perf; 
+
+						num_nets_routed[tid] = local_num_nets_routed;
+						num_sinks_routed[tid] = local_num_sinks_routed;
 
 						//debug_lock[tid].unlock();
 					});
@@ -580,18 +573,20 @@ bool locking_route(t_router_opts *opts, int run)
 
 		iter_start = clock::now();
 
+		unsigned long num_overused_nodes = 0;
+		vector<int> overused_nodes_by_type(NUM_RR_TYPES, 0);
+
 		if (feasible_routing(g, congestion)) {
 			//dump_route(*current_traces_ptr, "route.txt");
 			routed = true;
 		} else {
-			unsigned long num_overused_nodes = 0;
 			for (int i = 0; i < num_vertices(g); ++i) {
 				if (congestion[i].cong.occ > get_vertex_props(g, i).capacity) {
 					++num_overused_nodes;
+					const auto &v_p = get_vertex_props(g, i);
+					++overused_nodes_by_type[v_p.type];
 				}
 			}
-			zlog_info(delta_log, "Num overused nodes: %lu/%d (%.2f)\n", num_overused_nodes, num_vertices(g), num_overused_nodes*100.0/num_vertices(g));
-			printf("Num overused nodes: %lu/%d (%.2f)\n", num_overused_nodes, num_vertices(g), num_overused_nodes*100.0/num_vertices(g));
 
 			if (iter == 0) {
 				initial_num_overused_nodes = num_overused_nodes;
@@ -625,10 +620,8 @@ bool locking_route(t_router_opts *opts, int run)
 				int num_partitions = opts->num_threads;
 				//int num_partitions = std::min((unsigned long)opts->num_threads, nets_to_partition.size());
 				partition_nets_overlap_area_metric(nets_to_partition, num_partitions, 1000000, overlaps, partitions, has_interpartition_overlap);
+
 				use_partitioned = true;
-				for (int i = 0; i < opts->num_threads; ++i) {
-					printf("Partition %d size %lu\n", i, partitions[i].size());
-				}
 
 				partitioned_iter = 0;
 
@@ -673,6 +666,22 @@ bool locking_route(t_router_opts *opts, int run)
 		total_analyze_timing_time += analyze_timing_time;
 		total_iter_time += iter_time;
 
+		zlog_info(delta_log, "Num overused nodes: %lu/%d (%.2f)\n", num_overused_nodes, num_vertices(g), num_overused_nodes*100.0/num_vertices(g));
+		printf("Num overused nodes: %lu/%d (%.2f)\n", num_overused_nodes, num_vertices(g), num_overused_nodes*100.0/num_vertices(g));
+		static const char *name_type[] = { "SOURCE", "SINK", "IPIN", "OPIN",
+			"CHANX", "CHANY", "INTRA_CLUSTER_EDGE" };
+		for (int i = 0; i < overused_nodes_by_type.size(); ++i) {
+			printf("\t%s: %d (%g)\n", name_type[i], overused_nodes_by_type[i], overused_nodes_by_type[i]*100.0/num_overused_nodes);
+		}
+
+		if (partitioned_iter == 0) {
+			printf("Partition sizes: ");
+			for (int i = 0; i < partitions.size(); ++i) {
+				printf("%lu ", partitions[i].size());
+			}
+			printf("\n");
+		}
+
 		printf("Iteration time: %g s.\n", duration_cast<nanoseconds>(iter_time).count() / 1e9);
 			printf("\tRoute time: %g s.\n", duration_cast<nanoseconds>(greedy_route_time+partitioned_route_time).count() / 1e9);
 				printf("\t\tGreedy route time: %g s.\n", duration_cast<nanoseconds>(greedy_route_time).count() / 1e9);
@@ -682,7 +691,23 @@ bool locking_route(t_router_opts *opts, int run)
 			printf("\tAnalyze timing time: %g s.\n", duration_cast<nanoseconds>(analyze_timing_time).count() / 1e9);
 		printf("Critical path: %g ns\n", crit_path_delay);
 
-		printf("Num nets routed: %d\n", num_nets_routed);
+		int check_total_num_nets_routed = 0;
+		for (int i = 0; i < num_nets_routed.size(); ++i) {
+			check_total_num_nets_routed += num_nets_routed[i];
+		}
+		assert(check_total_num_nets_routed == total_num_nets_routed);
+		printf("Total num nets routed: %d\n", (int)total_num_nets_routed);
+		printf("Num nets routed: ");
+		for (int i = 0; i < num_nets_routed.size(); ++i) {
+			printf("%d (%g) ", num_nets_routed[i], num_nets_routed[i]*100.0/total_num_nets_routed);
+		}
+		printf("\n");
+		printf("Total num sinks routed: %lu\n", (unsigned long)total_num_sinks_routed);
+		printf("Num sinks routed: ");
+		for (int i = 0; i < num_sinks_routed.size(); ++i) {
+			printf("%lu (%g) ", num_sinks_routed[i], num_sinks_routed[i]*100.0/total_num_sinks_routed);
+		}
+		printf("\n");
 
 		unsigned long total_num_heap_pushes = 0;
 		unsigned long total_num_heap_pops = 0;
@@ -694,13 +719,31 @@ bool locking_route(t_router_opts *opts, int run)
 			total_num_neighbor_visits += perfs[i].num_neighbor_visits;
 		}
 
+		printf("num lock waits/tries: ");
 		for (int i = 0; i < opts->num_threads; ++i) {
-			printf("Thread %d num lock waits/tries: %lu/%lu (%g)\n", i, lock_perfs[i].num_lock_waits, lock_perfs[i].num_lock_tries, (float)lock_perfs[i].num_lock_waits*100/lock_perfs[i].num_lock_tries);
-			printf("Thread %d total wait time: %g (%g)\n", i, duration_cast<nanoseconds>(lock_perfs[i].total_wait_time).count() / 1e9, 100.0*lock_perfs[i].total_wait_time/(greedy_route_time+partitioned_route_time));
-			printf("Thread %d num_heap_pushes: %lu\n", i, perfs[i].num_heap_pushes);
-			printf("Thread %d num_heap_pops: %lu\n", i, perfs[i].num_heap_pops);
-			printf("Thread %d num_neighbor_visits: %lu\n", i, perfs[i].num_neighbor_visits);
+			printf("%lu/%lu (%g) ", lock_perfs[i].num_lock_waits, lock_perfs[i].num_lock_tries, (float)lock_perfs[i].num_lock_waits*100/lock_perfs[i].num_lock_tries);
 		}
+		printf("\n");
+		printf("total wait time: ");
+		for (int i = 0; i < opts->num_threads; ++i) {
+			printf("%g (%g) ", duration_cast<nanoseconds>(lock_perfs[i].total_wait_time).count() / 1e9, 100.0*lock_perfs[i].total_wait_time/(greedy_route_time+partitioned_route_time));
+		}
+		printf("\n");
+		printf("num_heap_pushes: ");
+		for (int i = 0; i < opts->num_threads; ++i) {
+			printf("%lu (%g) ", perfs[i].num_heap_pushes, perfs[i].num_heap_pushes*100.0/total_num_heap_pushes);
+		}
+		printf("\n");
+		printf("num_heap_pops: ");
+		for (int i = 0; i < opts->num_threads; ++i) {
+			printf("%lu (%g) ", perfs[i].num_heap_pops, perfs[i].num_heap_pops*100.0/total_num_heap_pops);
+		}
+		printf("\n");
+		printf("num_neighbor_visits: ");
+		for (int i = 0; i < opts->num_threads; ++i) {
+			printf("%lu (%g) ", perfs[i].num_neighbor_visits, perfs[i].num_neighbor_visits*100.0/total_num_neighbor_visits);
+		}
+		printf("\n");
 
 		printf("total_num_heap_pushes: %lu\n", total_num_heap_pushes);
 		printf("total_num_heap_pops: %lu\n", total_num_heap_pops); 
@@ -709,13 +752,17 @@ bool locking_route(t_router_opts *opts, int run)
 		clock::time_point greedy_earliest_end_time = *std::min_element(begin(greedy_end_time), end(greedy_end_time));
 		clock::time_point partitioned_earliest_end_time = *std::min_element(begin(partitioned_end_time), end(partitioned_end_time));
 
+		printf("greedy wait time: ");
 		for (int i = 0; i < opts->num_threads; ++i) {
-			printf("Thread %d greedy wait time %g (%g)\n", i, duration_cast<nanoseconds>(greedy_end_time[i]-greedy_earliest_end_time).count() / 1e9, 100.0*(greedy_end_time[i]-greedy_earliest_end_time)/greedy_route_time);
+			printf("%g (%g) ", duration_cast<nanoseconds>(greedy_end_time[i]-greedy_earliest_end_time).count() / 1e9, 100.0*(greedy_end_time[i]-greedy_earliest_end_time)/greedy_route_time);
 		}
-		for (int i = 0; i < opts->num_threads; ++i) {
-			if (partitioned_route_time > clock::duration::zero()) {
-				printf("Thread %d partitioned wait time %g (%g)\n", i, duration_cast<nanoseconds>(partitioned_end_time[i]-partitioned_earliest_end_time).count() / 1e9, 100.0*(partitioned_end_time[i]-partitioned_earliest_end_time)/partitioned_route_time);
+		printf("\n");
+		if (partitioned_route_time > clock::duration::zero()) {
+			printf("partitioned wait time: ");
+			for (int i = 0; i < opts->num_threads; ++i) {
+				printf("%g (%g) ", duration_cast<nanoseconds>(partitioned_end_time[i]-partitioned_earliest_end_time).count() / 1e9, 100.0*(partitioned_end_time[i]-partitioned_earliest_end_time)/partitioned_route_time);
 			}
+			printf("\n");
 		}
 	}
 

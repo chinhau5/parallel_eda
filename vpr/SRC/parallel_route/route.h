@@ -161,7 +161,7 @@ typedef struct congestion_t {
 	int recalc_occ;
 } congestion_t;
 
-typedef struct congestion_locked_t {
+typedef struct alignas(64) congestion_locked_t {
 	tbb::spin_mutex lock;
 	congestion_t cong;
 } congestion_locked_t;

@@ -52,5 +52,7 @@ int concurrent_log_impl(zlog_msg_t *msg)
 	}
 	fprintf(iter->second, "%s", msg->buf);
 	fflush(iter->second);
+
+	return 0;
 }
 

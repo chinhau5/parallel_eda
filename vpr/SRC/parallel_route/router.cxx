@@ -2549,7 +2549,7 @@ void route_net_with_partition_hopping(const RRGraph &g, const vector<int> &pid, 
 	/*check_route_tree(rt, net, g);*/
 }
 
-vector<sink_t *> route_net_with_fine_grain_lock(const RRGraph &g, int vpr_id, const source_t *source, const vector<sink_t *> &sinks, const route_parameters_t &params, route_state_t *state, congestion_locked_t *congestion, route_tree_t &rt, t_net_timing &net_timing, bool lock, perf_t *perf, lock_perf_t *lock_perf)
+vector<const sink_t *> route_net_with_fine_grain_lock(const RRGraph &g, int vpr_id, const source_t *source, const vector<const sink_t *> &sinks, const route_parameters_t &params, route_state_t *state, congestion_locked_t *congestion, route_tree_t &rt, t_net_timing &net_timing, bool lock, perf_t *perf, lock_perf_t *lock_perf)
 {
 	std::priority_queue<route_state_t> heap;
 
@@ -2557,7 +2557,7 @@ vector<sink_t *> route_net_with_fine_grain_lock(const RRGraph &g, int vpr_id, co
 
 	zlog_level(delta_log, ROUTER_V1, "Routing net %d (%lu sinks)\n", vpr_id, sinks.size());
 
-	vector<sink_t *> sorted_sinks = sinks;
+	vector<const sink_t *> sorted_sinks = sinks;
 	std::sort(begin(sorted_sinks), end(sorted_sinks), [] (const sink_t *a, const sink_t *b) -> bool {
 			return a->criticality_fac > b->criticality_fac;
 			});
@@ -2593,7 +2593,7 @@ vector<sink_t *> route_net_with_fine_grain_lock(const RRGraph &g, int vpr_id, co
 
 	int isink = 0;
 	int num_routed_sinks = 0;
-	vector<sink_t *> unrouted_sinks;
+	vector<const sink_t *> unrouted_sinks;
 	for (const auto &sink : sorted_sinks) {
 		sprintf_rr_node(sink->rr_node, buffer);
 		zlog_level(delta_log, ROUTER_V1, "Net %d Sink %d: %s criticality: %g BB: %d-%d %d-%d Prev BB: %d-%d %d-%d\n", vpr_id, sink->id, buffer, sink->criticality_fac, sink->current_bounding_box.xmin, sink->current_bounding_box.xmax, sink->current_bounding_box.ymin, sink->current_bounding_box.ymax, sink->previous_bounding_box.xmin, sink->previous_bounding_box.xmax, sink->previous_bounding_box.ymin, sink->previous_bounding_box.ymax);

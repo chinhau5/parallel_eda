@@ -372,21 +372,21 @@ void route_tree_mark_paths_to_be_ripped(route_tree_t &rt, const RRGraph &g, cons
 
 		if (iter != rt.rr_node_to_path.end()) {
 			for (const auto path_node : *(iter->second)) {
-				if (path_node.update_cost) {
-					assert(pid[path_node.rr_node_id] == -1 || pid[path_node.rr_node_id] == this_pid);
+				/*if (path_node.update_cost) {*/
+					/*assert(pid[path_node.rr_node_id] == -1 || pid[path_node.rr_node_id] == this_pid);*/
 
-					const auto &rt_node = route_tree_get_rt_node(rt, path_node.rr_node_id);
+					/*const auto &rt_node = route_tree_get_rt_node(rt, path_node.rr_node_id);*/
 
-					assert(rt_node != RouteTree::null_vertex());
+					/*assert(rt_node != RouteTree::null_vertex());*/
 
-					auto &rt_node_p = get_vertex_props(rt.graph, rt_node);
-					rt_node_p.pending_rip_up = true;
-					rt_node_p.ripped_up = false;
+					/*auto &rt_node_p = get_vertex_props(rt.graph, rt_node);*/
+					/*rt_node_p.pending_rip_up = true;*/
+					/*rt_node_p.ripped_up = false;*/
 
-					sprintf_rr_node(path_node.rr_node_id, buffer);
+					/*sprintf_rr_node(path_node.rr_node_id, buffer);*/
 
-					zlog_level(delta_log, ROUTER_V2, "Marking %s to be ripped up\n", buffer);
-				}
+					/*zlog_level(delta_log, ROUTER_V2, "Marking %s to be ripped up\n", buffer);*/
+				/*}*/
 			}
 
 			rt.rr_node_to_path.erase(iter);

@@ -395,15 +395,19 @@ void route_net_mpi_send_recv_reduced_comm(const RRGraph &g, int vpr_id, int net_
 
 			route_tree_add_path(rt, path, g, state);
 
+			bool update_source_cost = false;
 			if (empty_route_tree) {
 				assert(path->back().rr_node_id == source->rr_node);
-				path->back().update_cost = true;
+				update_source_cost = true;
 				empty_route_tree = false;
 			}
 
 			vector<RRNode> added_nodes;
 			for (const auto &n : *path) {
-				if (n.update_cost) {
+				if (valid(n.prev_edge) || update_source_cost) {
+					if (update_source_cost) {
+						assert(n.rr_node_id == source->rr_node);
+					}
 					added_nodes.push_back(n.rr_node_id);
 				}
 			}
