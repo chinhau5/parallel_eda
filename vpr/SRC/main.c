@@ -25,6 +25,8 @@
 
 #include "route.h"
 
+#include <sched.h>
+
 /*#include "vt_user.h"*/
 
 /**
@@ -75,6 +77,9 @@ int main(int argc, char **argv) {
 	/*return 0;*/
 
 	MPI_Init(&argc, &argv);
+
+	cpu_set_t mask;
+	sched_getaffinity(0, sizeof(cpu_set_t), &mask);
 
 	/*mtrace();*/
 

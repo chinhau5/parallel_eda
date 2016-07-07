@@ -166,6 +166,7 @@ bool locking_route(t_router_opts *opts, int run)
 			});
 
 	bool routed = false;
+	int num_non_monotonic_iters = 0;
 	unsigned long prev_num_overused_nodes = std::numeric_limits<unsigned long>::max();
 	bool initialized_initial_num_overused_nodes = false;
 	unsigned long initial_num_overused_nodes = 0;
@@ -188,7 +189,7 @@ bool locking_route(t_router_opts *opts, int run)
 	int next_greedy_rip_up_iter = 0;
 	float crit_path_delay;
 
-	for (iter = 0; iter < opts->max_router_iterations && !routed; ++iter) {
+	for (iter = 0; iter < opts->max_router_iterations && !routed && duration_cast<nanoseconds>(total_iter_time).count() / 1e9 < 7200; ++iter) {
 		clock::duration greedy_route_time = clock::duration::zero();
 		clock::duration partitioned_route_time = clock::duration::zero();
 		clock::duration update_cost_time = clock::duration::zero();
@@ -199,7 +200,7 @@ bool locking_route(t_router_opts *opts, int run)
 		zlog_info(delta_log, "Routing iteration: %d\n", iter);
 		bool partitioned_rip_up_all = opts->rip_up_always || ((partitioned_iter % opts->rip_up_period) == 0);
 		bool greedy_rip_up_all = opts->rip_up_always;//(next_greedy_rip_up_iter == iter);
-		printf("Routing iteration: %d Use partitioned: %d Greedy rip up all: %d Partitioned rip up all: %d\n", iter, use_partitioned ? 1 : 0, greedy_rip_up_all ? 1 : 0, partitioned_rip_up_all ? 1 : 0);
+		printf("Routing iteration: %d Num non-monotonic iters: %d Use partitioned: %d Greedy rip up all: %d Partitioned rip up all: %d\n", iter, num_non_monotonic_iters, use_partitioned ? 1 : 0, greedy_rip_up_all ? 1 : 0, partitioned_rip_up_all ? 1 : 0);
 
 		for (auto &net : nets) {
 			net.num_bounding_box_updates = 0;
@@ -494,6 +495,10 @@ bool locking_route(t_router_opts *opts, int run)
 			}
 
 			if (!use_partitioned && num_overused_nodes >= prev_num_overused_nodes && iter > 5 && opts->num_threads > 1) {
+				++num_non_monotonic_iters;
+			}
+
+			if (!use_partitioned && num_non_monotonic_iters >= 3) {
 			//if (!use_partitioned && iter > 0 && (float)num_overused_nodes/initial_num_overused_nodes < opts->transition_threshold && opts->num_threads > 1) {
 				auto partitioning_start = clock::now();
 
@@ -650,18 +655,18 @@ bool locking_route(t_router_opts *opts, int run)
 		printf("total_num_heap_pops: %lu\n", total_num_heap_pops); 
 		printf("total_num_neighbor_visits: %lu\n", total_num_neighbor_visits);
 
-		clock::time_point greedy_earliest_end_time = *std::min_element(begin(greedy_end_time), end(greedy_end_time));
-		clock::time_point partitioned_earliest_end_time = *std::min_element(begin(partitioned_end_time), end(partitioned_end_time));
+		clock::time_point greedy_latest_end_time = *std::max_element(begin(greedy_end_time), end(greedy_end_time));
+		clock::time_point partitioned_latest_end_time = *std::max_element(begin(partitioned_end_time), end(partitioned_end_time));
 
 		printf("greedy wait time: ");
 		for (int i = 0; i < opts->num_threads; ++i) {
-			printf("%g (%g) ", duration_cast<nanoseconds>(greedy_end_time[i]-greedy_earliest_end_time).count() / 1e9, 100.0*(greedy_end_time[i]-greedy_earliest_end_time)/greedy_route_time);
+			printf("%g (%g) ", duration_cast<nanoseconds>(greedy_latest_end_time-greedy_end_time[i]).count() / 1e9, 100.0*(greedy_latest_end_time-greedy_end_time[i])/greedy_route_time);
 		}
 		printf("\n");
 		if (partitioned_route_time > clock::duration::zero()) {
 			printf("partitioned wait time: ");
 			for (int i = 0; i < opts->num_threads; ++i) {
-				printf("%g (%g) ", duration_cast<nanoseconds>(partitioned_end_time[i]-partitioned_earliest_end_time).count() / 1e9, 100.0*(partitioned_end_time[i]-partitioned_earliest_end_time)/partitioned_route_time);
+				printf("%g (%g) ", duration_cast<nanoseconds>(partitioned_latest_end_time-partitioned_end_time[i]).count() / 1e9, 100.0*(partitioned_latest_end_time-partitioned_end_time[i])/partitioned_route_time);
 			}
 			printf("\n");
 		}
