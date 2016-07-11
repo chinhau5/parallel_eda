@@ -83,6 +83,7 @@ set(srcs
 	SRC/parallel_route/route_common_local.c
 	SRC/parallel_route/fine.cxx
 	SRC/parallel_route/locking_route.cxx
+	#SRC/parallel_route/locking_route_optimized.cxx
 	#SRC/parallel_route/phased.cxx
 	SRC/parallel_route/congestion.cxx
 	SRC/parallel_route/router.cxx

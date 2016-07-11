@@ -26,6 +26,9 @@
 #include "route.h"
 
 #include <sched.h>
+#include <numaif.h>
+#include <numa.h>
+#include <unistd.h>
 
 /*#include "vt_user.h"*/
 
@@ -50,11 +53,129 @@ std::chrono::time_point<std::chrono::high_resolution_clock> program_start;
 
 char *s_circuit_name = nullptr;
 
+void print_mem_bind()
+{
+	int num_possible_nodes = numa_num_possible_nodes();
+
+	assert(num_possible_nodes % sizeof(unsigned long) == 0);
+
+	int nodemask_size = num_possible_nodes / sizeof(unsigned long);
+
+	printf("nodemask size %d\n", nodemask_size);
+
+	int mode;
+	unsigned long *nodemask = (unsigned long *)malloc(nodemask_size);
+	if (get_mempolicy(&mode, nodemask, num_possible_nodes, 0, 0) != 0) {
+		perror("get_mempolicy error");
+		exit(-1);
+	}
+
+	printf("mempolicy mode: ");
+	switch (mode) {
+		case MPOL_DEFAULT:
+			printf("default\n");
+			break;
+		case MPOL_BIND:
+			printf("bind\n");
+			break;
+		case MPOL_INTERLEAVE:
+			printf("interleave\n");
+			break;
+		case MPOL_PREFERRED:
+			printf("preferred\n");
+			break;
+		default:
+			printf("unknown\n");
+			break;
+	}
+
+	printf("mem_bind: ");
+	int curnode = 0;
+	for (int i = 0; i < 1 && curnode < num_possible_nodes; ++i) {
+		unsigned long val = nodemask[i];
+		for (int j = 0; j < sizeof(unsigned long)*8 && curnode < num_possible_nodes; ++j) {	
+			if (val & 1) {
+				printf("%d ", curnode);
+			}
+			val >>= 1;
+			++curnode;
+		}
+	}
+	printf("\n");
+}
+
+void print_mems_allowed()
+{
+	struct bitmask *bm = numa_get_mems_allowed();
+	printf("mems_allowed: \n");
+	int i;
+	for (i = 0; i < numa_num_possible_nodes(); ++i) {
+		if (numa_bitmask_isbitset(bm, i)) {
+			printf("%d ");
+		}
+	}
+	printf("\n");
+}
+
+void get_sched_bind(vector<int> &cpuset, set<int> &nodeset)
+{
+	int num_cpus = numa_num_configured_cpus();
+	printf("num cpus: %d\n", num_cpus);
+	cpu_set_t *cpumask = CPU_ALLOC(num_cpus);
+	printf("cpu_set_t alloc size: %d\n", CPU_ALLOC_SIZE(num_cpus));
+	if (sched_getaffinity(0, CPU_ALLOC_SIZE(num_cpus), cpumask)) {
+		perror("Error getting affinity\n");
+		exit(-1);
+	}
+
+	for (int i = 0; i < num_cpus; ++i) {
+		if (CPU_ISSET(i, cpumask)) {
+			cpuset.push_back(i);
+			nodeset.insert(numa_node_of_cpu(i));
+		}
+	}
+}
+
+void print_sched_bind(const vector<int> &cpuset, const set<int> &nodeset)
+{
+	printf("cpu affinity: ");
+	for (const auto &cpu : cpuset) {
+		printf("%d ", cpu);
+	}
+	printf("\n");
+
+	printf("node affinity: ");
+	for (const auto &n : nodeset) {
+		printf("%d ", n);
+	}
+	printf("\n");
+}
+
 int main(int argc, char **argv) {
 	t_options Options;
 	t_arch Arch;
 	t_vpr_setup vpr_setup;
 	clock_t entire_flow_begin,entire_flow_end;
+
+	vector<int> cpuset;
+	set<int> nodeset;
+
+	get_sched_bind(cpuset, nodeset);
+
+	print_sched_bind(cpuset, nodeset);
+	print_mem_bind();
+
+	bitmask *bind_to = numa_allocate_nodemask();
+	numa_bitmask_clearall(bind_to);
+	for (const auto &n: nodeset) {
+		numa_bitmask_setbit(bind_to, n);
+	}
+	numa_bind(bind_to);
+
+	bitmask *from = numa_allocate_nodemask();
+	numa_bitmask_setall(from);
+
+	numa_migrate_pages(0, from, bind_to);
 
 	/*int net_disp[] = {*/
 		/*offsetof(net_t, vpr_id),*/
@@ -76,10 +197,7 @@ int main(int argc, char **argv) {
 	/*}*/
 	/*return 0;*/
 
-	MPI_Init(&argc, &argv);
-
-	cpu_set_t mask;
-	sched_getaffinity(0, sizeof(cpu_set_t), &mask);
+	/*MPI_Init(&argc, &argv);*/
 
 	/*mtrace();*/
 

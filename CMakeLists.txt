@@ -74,6 +74,7 @@ if (CMAKE_SYSTEM_NAME STREQUAL "Linux")
 		boost_system
 		tbb
 		metis
+		numa
 		)
 else()
 	set(link_libs
