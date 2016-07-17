@@ -25,10 +25,13 @@
 
 #include "route.h"
 
+#ifdef __linux__
 #include <sched.h>
 #include <numaif.h>
 #include <numa.h>
 #include <unistd.h>
+#include <malloc.h>
+#endif
 
 /*#include "vt_user.h"*/
 
@@ -52,6 +55,8 @@ void init_advanced_parallel_route_logging();
 std::chrono::time_point<std::chrono::high_resolution_clock> program_start;
 
 char *s_circuit_name = nullptr;
+
+#ifdef __linux__
 
 void print_mem_bind()
 {
@@ -151,12 +156,103 @@ void print_sched_bind(const vector<int> &cpuset, const set<int> &nodeset)
 	printf("\n");
 }
 
+void print_mem_map()
+{
+	int pid = getpid();
+	char buffer[512];
+	sprintf(buffer,"/proc/%d/maps", pid);
+	FILE *fd = fopen(buffer, "r");
+	while (!feof(fd)) {
+
+		fgets(buffer, 512, fd);
+		printf(buffer);
+	}
+	fclose(fd);
+}
+
+void print_env()
+{
+	extern char **environ;
+		
+	printf("Environment start\n");
+	for (char **cur = environ; *cur != 0; ++cur) {
+		printf("%s\n", *cur);
+	}
+	printf("Environment end\n");
+}
+
+typedef struct mem_map_entry_t {
+	unsigned long start;
+	unsigned long end;
+	unsigned long file_offset;
+	char image_name[256];
+} mem_map_entry_t;
+
+void parse_mem_map(int pid, vector<mem_map_entry_t> &entries)
+{
+	char buffer[512];
+
+	sprintf(buffer,"/proc/%d/maps", pid);
+
+	FILE *fd = fopen(buffer, "r");
+
+	while (!feof(fd)) {
+		fgets(buffer, 512, fd);
+
+		mem_map_entry_t entry;
+		sscanf(buffer, "%lX-%lX %*s %lX %*s %*s %s", &entry.start, &entry.end, &entry.file_offset, entry.image_name);
+		/*printf("%lX-%lX %lX %s\n", entry.start, entry.end, entry.file_offset, entry.image_name);*/
+
+		entries.push_back(entry);
+	}
+
+	fclose(fd);
+}
+
+const mem_map_entry_t *find_sym(const vector<mem_map_entry_t> &entries, unsigned long addr)
+{
+	for (const auto &entry : entries) {
+		if (addr >= entry.start && addr <= entry.end) {
+			return &entry;
+		}
+	}
+	return nullptr;
+}
+
+string find_func_name(const mem_map_entry_t *entry, unsigned long addr)
+{
+	assert(entry->file_offset == 0);
+	unsigned long offset = addr-entry->start;
+	char cmd[256];
+	sprintf(cmd, "addr2line -e %s -f 0x%lX", entry->image_name, offset);
+	FILE *pipe = popen(cmd, "r");
+	int num_lines = 0;
+	string func_name = "";
+	while (!feof(pipe)) {
+		char buffer[256];
+		fgets(buffer, 256, pipe);
+		printf("addr2line %d: %s\n", num_lines, buffer);
+		if (num_lines == 0) {
+			func_name = buffer;	
+		}
+		++num_lines;
+	}
+	pclose(pipe);
+
+	return func_name;
+}
+
+#endif
+
+/*extern void *(*__malloc_hook)(size_t size, const void *caller);*/
+
 int main(int argc, char **argv) {
 	t_options Options;
 	t_arch Arch;
 	t_vpr_setup vpr_setup;
 	clock_t entire_flow_begin,entire_flow_end;
 
+#ifdef __linux__
 	vector<int> cpuset;
 	set<int> nodeset;
 
@@ -197,7 +293,35 @@ int main(int argc, char **argv) {
 	/*}*/
 	/*return 0;*/
 
-	/*MPI_Init(&argc, &argv);*/
+	vector<mem_map_entry_t> entries_before_init;
+	parse_mem_map(getpid(), entries_before_init);
+	unsigned long malloc_hook_addr = (unsigned long)__malloc_hook;
+	const mem_map_entry_t *entry = find_sym(entries_before_init, malloc_hook_addr);
+	if (entry) {
+		string func_name = find_func_name(entry, malloc_hook_addr);
+		printf("malloc_hook before mpi_init: %s (%lX)\n", func_name.c_str(), __malloc_hook);
+	} else {
+		printf("malloc_hook before mpi_init not found: %lX\n", __malloc_hook);
+	}
+#endif
+
+	MPI_Init(&argc, &argv);
+
+#ifdef __linux__
+	print_mem_map();
+	print_env();
+
+	vector<mem_map_entry_t> entries_after_init;
+	parse_mem_map(getpid(), entries_after_init);
+	malloc_hook_addr = (unsigned long)__malloc_hook;
+	entry = find_sym(entries_after_init, malloc_hook_addr);
+	if (entry) {
+		string func_name = find_func_name(entry, malloc_hook_addr);
+		printf("malloc_hook after mpi_init: %s (%lX)\n", func_name.c_str(), __malloc_hook);
+	} else {
+		printf("malloc_hook after mpi_init not found: %lX\n", __malloc_hook);
+	}
+#endif
 
 	/*mtrace();*/
 

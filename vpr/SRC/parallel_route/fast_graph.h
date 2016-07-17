@@ -13,13 +13,15 @@ struct fast_edge_t {
 	int a;
 	int b;
 	Properties *properties;	
+
 	bool operator==(const fast_edge_t &other) const
 	{
-		return a == other.a && b == other.b && properties == properties;
+		return properties == properties;
 	}
+
 	bool operator<(const fast_edge_t &other) const
 	{
-		return make_tuple(a, b, properties) < make_tuple(other.a, other.b, other.properties);
+		return properties < other.properties;
 	}
 };
 

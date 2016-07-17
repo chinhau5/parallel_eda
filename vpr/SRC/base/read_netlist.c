@@ -148,8 +148,8 @@ void read_netlist(INP const char *net_file, INP const t_arch *arch,
 	}
 	
 	/* Prcoess netlist */
-	int procid;
-	MPI_Comm_rank(MPI_COMM_WORLD, &procid);
+	int procid = 0;
+	//MPI_Comm_rank(MPI_COMM_WORLD, &procid);
 
 	Cur = Top->child;
 	i = 0;
@@ -286,8 +286,8 @@ static void processComplexBlock(INOUTP ezxml_t Parent, INOUTP t_block *cb,
 		exit(1);
 	}
 
-	int procid;
-	MPI_Comm_rank(MPI_COMM_WORLD, &procid);
+	int procid = 0;
+	//MPI_Comm_rank(MPI_COMM_WORLD, &procid);
 
 	/* Parse all pbs and CB internal nets*/
 	cb[index].pb->logical_block = OPEN;

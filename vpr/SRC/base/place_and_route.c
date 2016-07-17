@@ -97,8 +97,8 @@ void place_and_route_new(enum e_operation operation,
 	}
 	begin = clock();
 
-	int procid;
-	MPI_Comm_rank(MPI_COMM_WORLD, &procid);
+	int procid = 0;
+	//MPI_Comm_rank(MPI_COMM_WORLD, &procid);
 
 	if (procid == 0) {
 		post_place_sync(num_blocks, block);

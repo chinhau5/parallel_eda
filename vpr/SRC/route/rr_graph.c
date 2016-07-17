@@ -698,8 +698,8 @@ static void rr_graph_externals(t_timing_inf timing_inf,
 	alloc_and_load_rr_indexed_data(segment_inf, num_seg_types, rr_node_indices,
 			nodes_per_chan, wire_to_ipin_switch, base_cost_type);
 
-	int procid;
-	MPI_Comm_rank(MPI_COMM_WORLD, &procid);
+	int procid = 0;
+	//MPI_Comm_rank(MPI_COMM_WORLD, &procid);
 
 	if (procid == 0) {
 		alloc_net_rr_terminals();

@@ -30,11 +30,10 @@ typedef struct rt_node_property_t {
 
 	/* public properties */
 	bool reexpand;
-	RREdge rr_edge_to_parent;
+	//RREdge rr_edge_to_parent;
 	float upstream_R;	
+	float downstream_C;
 	float delay;
-
-	//float downstream_C;
 	/*float upstream_R_from_route_state;*/
 } rt_node_property_t;
 

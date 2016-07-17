@@ -90,6 +90,7 @@ set(srcs
 	SRC/parallel_route/route_net_mpi_send_recv.cxx
 	SRC/parallel_route/route_net_mpi_send_recv_improved.cxx
 	SRC/parallel_route/route_net_mpi_send_recv_reduced_comm.cxx
+	SRC/parallel_route/route_net_with_fine_grain_lock.cxx
 	SRC/parallel_route/init.cxx
 	SRC/parallel_route/log.cxx
 	SRC/parallel_route/spatial.cxx

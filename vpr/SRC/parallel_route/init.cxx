@@ -120,6 +120,7 @@ void init_graph(RRGraph &g)
 
 			auto &e_p = get_edge_props(g, e);
 			
+			e_p.index = si;
 			e_p.buffered = switch_inf[si].buffered; 
 			e_p.switch_delay = switch_inf[si].Tdel; 
 			e_p.R = switch_inf[si].R; 

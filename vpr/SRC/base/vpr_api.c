@@ -243,8 +243,8 @@ void vpr_init_pre_place_and_route(INP t_vpr_setup vpr_setup, INP t_arch Arch) {
 	int current, high, low;
 	boolean fit;
 
-	int procid;
-	MPI_Comm_rank(MPI_COMM_WORLD, &procid);
+	int procid = 0;
+	//MPI_Comm_rank(MPI_COMM_WORLD, &procid);
 
 	/* Read in netlist file for placement and routing */
 	if (vpr_setup.FileNameOpts.NetFile) {

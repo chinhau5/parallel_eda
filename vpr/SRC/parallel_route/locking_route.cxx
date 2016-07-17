@@ -23,6 +23,8 @@
 using std::chrono::duration_cast;
 using std::chrono::nanoseconds;
 
+void timing_driven_check_net_delays(float **net_delay);
+
 bool locking_route(t_router_opts *opts, int run)
 {
 	tbb::task_scheduler_init init(opts->num_threads);
@@ -68,6 +70,13 @@ bool locking_route(t_router_opts *opts, int run)
 	vector<net_t> nets;
 	vector<net_t> global_nets;
 	init_nets(nets, global_nets, opts->bb_factor, opts->large_bb);
+
+	extern int num_nets;
+	extern struct s_trace **trace_head; /* [0..(num_nets-1)] */
+	extern struct s_trace **trace_tail; /* [0..(num_nets-1)] */
+
+	trace_head = (s_trace **)calloc(num_nets, sizeof(s_trace *));
+	trace_tail = (s_trace **)calloc(num_nets, sizeof(s_trace *));
 
 	printf("Num nets: %lu\n", nets.size());
 	extern char *s_circuit_name;
@@ -471,6 +480,40 @@ bool locking_route(t_router_opts *opts, int run)
 				}
 				zlog_level(delta_log, ROUTER_V1, "\n");
 			}
+		}
+
+		float **net_delay = new float *[num_nets];
+		for (const auto &net : nets) {
+			net_delay[net.vpr_id] = new float[net.sinks.size()+1];
+			for (const auto &sink : net.sinks) {
+				net_delay[net.vpr_id][sink.id+1] = net_timing[net.vpr_id].delay[sink.id+1];
+			}
+		}
+		for (const auto &global_net : global_nets) {
+			net_delay[global_net.vpr_id] = new float[global_net.sinks.size()+1];
+			for (const auto &sink : global_net.sinks) {
+				net_delay[global_net.vpr_id][sink.id+1] = 0;
+			}
+		}
+		timing_driven_check_net_delays(net_delay);
+
+		for (int i = 0; i < num_nets; ++i) {
+			delete [] net_delay[i];
+		}
+		delete [] net_delay;
+
+		for (int i = 0; i < num_nets; ++i) {
+			s_trace *tptr = trace_head[i];
+			s_trace *tempptr;
+
+			while (tptr != NULL) {
+				tempptr = tptr->next;
+				delete tptr;
+				tptr = tempptr;
+			}
+
+			trace_head[i] = nullptr;
+			trace_tail[i] = nullptr;
 		}
 
 		iter_start = clock::now();

@@ -39,7 +39,7 @@ static int get_expected_segs_to_target(int inode, int target_node,
 
 static void update_rr_base_costs(int inet, float largest_criticality);
 
-static void timing_driven_check_net_delays(float **net_delay);
+void timing_driven_check_net_delays(float **net_delay);
 
 static int mark_node_expansion_by_bin(int inet, int target_node,
 		t_rt_node * rt_node);
@@ -939,7 +939,7 @@ static int mark_node_expansion_by_bin(int inet, int target_node,
 
 #define ERROR_TOL 0.0001
 
-static void timing_driven_check_net_delays(float **net_delay) {
+void timing_driven_check_net_delays(float **net_delay) {
 
 	/* Checks that the net delays computed incrementally during timing driven    *
 	 * routing match those computed from scratch by the net_delay.c module.      */

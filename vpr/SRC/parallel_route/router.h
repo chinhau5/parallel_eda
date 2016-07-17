@@ -113,6 +113,13 @@ bool feasible_routing(const RRGraph &g, const Congestion *congestion)
 	return feasible;
 }
 
+template<typename Congestion>
+float get_congestion_cost(const Congestion &congestion, int cost_index)
+{
+	extern t_rr_indexed_data *rr_indexed_data;
+	/*zlog_level(delta_log, ROUTER_V3, " [pres: %g acc: %g] ", v.pres_cost, v.acc_cost);*/
+	return rr_indexed_data[cost_index].base_cost * congestion.acc_cost * congestion.pres_cost;
+}
 
 //void route_net(RRGraph &g, const net_t &net, const route_parameters_t &params, route_state_t *state, route_tree_t &rt, trace_t &trace, t_net_timing &net_timing, perf_t *perf);
 

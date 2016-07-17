@@ -806,8 +806,8 @@ alloc_route_structs(void) {
 
 	alloc_route_static_structs();
 
-	int procid;
-	MPI_Comm_rank(MPI_COMM_WORLD, &procid);
+	int procid = 0;
+	//MPI_Comm_rank(MPI_COMM_WORLD, &procid);
 	if (procid == 0) {
 		clb_opins_used_locally = alloc_and_load_clb_opins_used_locally();
 	} else {
