@@ -27,7 +27,7 @@ void recalculate_occ_internal(const route_tree_t &rt, RouteTreeNode rt_node, con
 	//if (rr_node_p.type == SOURCE) {
 		//get_recalc_occ(congestion[rr_node]) += num_out_edges(rt.graph, rt_node);
 	//} else {
-		++get_recalc_occ(congestion[rr_node]);
+		add_recalc_occ(congestion, rr_node, 1);
 	//}
 
 	for (const auto &branch : route_tree_get_branches(rt, rt_node)) {
@@ -55,9 +55,9 @@ void recalculate_occ_internal_locking_route(const route_tree_t &rt, RouteTreeNod
 	int rr_node = rt_node_p.rr_node;
 	auto &rr_node_p = get_vertex_props(g, rr_node);
 	if (rr_node_p.type == SOURCE) {
-		get_recalc_occ(congestion[rr_node]) += num_out_edges(rt.graph, rt_node);
+		add_recalc_occ(congestion, rr_node, num_out_edges(rt.graph, rt_node));
 	} else {
-		++get_recalc_occ(congestion[rr_node]);
+		add_recalc_occ(congestion, rr_node, 1);
 	}
 
 	for (const auto &branch : route_tree_get_branches(rt, rt_node)) {
@@ -88,7 +88,7 @@ void get_overused_nodes(const route_tree_t &rt, RouteTreeNode rt_node, const RRG
 	int rr_node = rt_node_p.rr_node;
 	const auto &rr_node_p = get_vertex_props(g, rr_node);
 
-	if (get_occ(congestion[rr_node]) > rr_node_p.capacity) {
+	if (get_occ(congestion, rr_node) > rr_node_p.capacity) {
 		overused_rr_node.push_back(rr_node);
 	}
 	
@@ -105,7 +105,7 @@ bool feasible_routing(const RRGraph &g, const Congestion *congestion)
 	bool feasible = true;
 
 	for (int i = 0; i < num_vertices(g) && feasible; ++i) {
-		if (get_occ(congestion[i]) > get_vertex_props(g, i).capacity) {
+		if (get_occ(congestion, i) > get_vertex_props(g, i).capacity) {
 			feasible = false;
 		}
 	}

@@ -24,6 +24,7 @@
 #include "place_macro.h"
 #include "verilog_writer.h"
 #include "power.h"
+#include "config.h"
 
 /******************* Subroutines local to this module ************************/
 
@@ -98,7 +99,9 @@ void place_and_route_new(enum e_operation operation,
 	begin = clock();
 
 	int procid = 0;
-	//MPI_Comm_rank(MPI_COMM_WORLD, &procid);
+#ifdef VPR_MPI
+	MPI_Comm_rank(MPI_COMM_WORLD, &procid);
+#endif
 
 	if (procid == 0) {
 		post_place_sync(num_blocks, block);

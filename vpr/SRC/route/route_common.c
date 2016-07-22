@@ -21,12 +21,14 @@
 #include "parallel_route_timing.h"
 #include "advanced_parallel_route_timing.h"
 #include "route.h"
+#include "config.h"
 
 bool partitioning_route(t_router_opts *opts);
 bool tbb_greedy_route(t_router_opts *opts);
 bool phased_greedy_route(t_router_opts *opts);
 bool locking_route(t_router_opts *opts);
 bool locking_route_driver(t_router_opts *opts);
+bool locking_route_deterministic(t_router_opts *opts, int run);
 bool greedy_route(t_router_opts *opts);
 bool greedy_route_4(t_router_opts *opts);
 bool spatial_route(t_router_opts *opts, struct s_det_routing_arch det_routing_arch, t_direct_inf *directs, int num_directs, t_segment_inf *segment_inf, t_timing_inf timing_inf);
@@ -379,7 +381,8 @@ boolean try_route_new(int width_fac, struct s_router_opts router_opts,
 		case HYBRID:
 			vpr_printf(TIO_MESSAGE_INFO, "Confirming Router Algorithm: HYBRID.\n");
 			assert(router_opts.route_type != GLOBAL);
-			success = locking_route_driver(&router_opts);
+			/*success = locking_route_deterministic(&router_opts, 0);*/
+			success = mpi_spatial_route_flat_reduced_comm(&router_opts, det_routing_arch, directs, num_directs, segment_inf, timing_inf);
 			/*success = new_astar_route(&router_opts);*/
 			break;
 		default:
@@ -807,7 +810,9 @@ alloc_route_structs(void) {
 	alloc_route_static_structs();
 
 	int procid = 0;
-	//MPI_Comm_rank(MPI_COMM_WORLD, &procid);
+#ifdef VPR_MPI
+	MPI_Comm_rank(MPI_COMM_WORLD, &procid);
+#endif
 	if (procid == 0) {
 		clb_opins_used_locally = alloc_and_load_clb_opins_used_locally();
 	} else {

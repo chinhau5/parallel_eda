@@ -210,6 +210,13 @@ void partition_nets_overlap_area_metric(vector<pair<box, Net>> &virtual_nets, in
 		assert(part[i] >= 0 && part[i] < partitions.size());
 		partitions[part[i]].push_back(i);
 	}
+	vector<int> partition_total_weight(num_partitions, 0);
+	for (int i = 0; i < virtual_nets.size(); ++i) {
+		partition_total_weight[part[i]] += vwgt[i];
+	}
+	for (int i = 0; i < num_partitions; ++i) {
+		printf("partition %d total weight %d\n", i, partition_total_weight[i]);
+	}
 
 	has_interpartition_overlap.resize(virtual_nets.size());
 

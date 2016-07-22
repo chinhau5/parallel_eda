@@ -22,6 +22,7 @@
 #include "cluster_legality.h"
 #include "token.h"
 #include "rr_graph.h"
+#include "config.h"
 
 static void processPorts(INOUTP ezxml_t Parent, INOUTP t_pb* pb,
 		INOUTP t_rr_node *rr_graph, INOUTP t_pb** rr_node_to_pb_mapping, INP struct s_hash **vpack_net_hash);
@@ -149,7 +150,9 @@ void read_netlist(INP const char *net_file, INP const t_arch *arch,
 	
 	/* Prcoess netlist */
 	int procid = 0;
-	//MPI_Comm_rank(MPI_COMM_WORLD, &procid);
+#ifdef VPR_MPI
+	MPI_Comm_rank(MPI_COMM_WORLD, &procid);
+#endif
 
 	Cur = Top->child;
 	i = 0;
@@ -287,7 +290,9 @@ static void processComplexBlock(INOUTP ezxml_t Parent, INOUTP t_block *cb,
 	}
 
 	int procid = 0;
-	//MPI_Comm_rank(MPI_COMM_WORLD, &procid);
+#ifdef VPR_MPI	
+	MPI_Comm_rank(MPI_COMM_WORLD, &procid);
+#endif
 
 	/* Parse all pbs and CB internal nets*/
 	cb[index].pb->logical_block = OPEN;

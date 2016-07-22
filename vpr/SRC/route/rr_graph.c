@@ -19,6 +19,7 @@
 #include "read_xml_arch_file.h"
 #include "ReadOptions.h"
 #include "utility.h"
+#include "config.h"
 
 /* #define ENABLE_DUMP */
 /* #define MUX_SIZE_DIST_DISPLAY */
@@ -699,7 +700,9 @@ static void rr_graph_externals(t_timing_inf timing_inf,
 			nodes_per_chan, wire_to_ipin_switch, base_cost_type);
 
 	int procid = 0;
-	//MPI_Comm_rank(MPI_COMM_WORLD, &procid);
+#ifdef VPR_MPI
+	MPI_Comm_rank(MPI_COMM_WORLD, &procid);
+#endif
 
 	if (procid == 0) {
 		alloc_net_rr_terminals();

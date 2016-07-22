@@ -53,7 +53,7 @@ route_tree_get_branches(const route_tree_t &rt, int rt_node)
 
 RouteTreeNode route_tree_add_rr_node(route_tree_t &rt, RRNode rr_node, const RRGraph &g)
 {
-	auto iter = rt.rr_node_to_rt_node.find(rr_node);
+	const auto &iter = rt.rr_node_to_rt_node.find(rr_node);
 
 	RouteTreeNode rt_node;
 	rt_node_property_t *rt_node_p;
@@ -83,7 +83,7 @@ RouteTreeNode route_tree_add_rr_node(route_tree_t &rt, RRNode rr_node, const RRG
 		/*rt_node_p->branch_point = false;*/
 		rt_node_p->num_iterations_fixed = 0;
 
-		auto &rr_node_p = get_vertex_props(g, rr_node);
+		const auto &rr_node_p = get_vertex_props(g, rr_node);
 
 		segment seg(point(rr_node_p.xlow, rr_node_p.ylow), point(rr_node_p.xhigh, rr_node_p.yhigh));
 
@@ -136,12 +136,12 @@ RouteTreeNode route_tree_get_rt_node(const route_tree_t &rt, RRNode rr_node)
 {
 	RouteTreeNode res;
 
-	auto iter = rt.rr_node_to_rt_node.find(rr_node);
+	const auto &iter = rt.rr_node_to_rt_node.find(rr_node);
 
 	if (iter == rt.rr_node_to_rt_node.end()) {
 		res = RouteTree::null_vertex();
 	} else {
-		auto &v = get_vertex_props(rt.graph, iter->second);
+		const auto &v = get_vertex_props(rt.graph, iter->second);
 		if (v.valid) {
 			res = iter->second;
 		} else {
@@ -245,7 +245,7 @@ void route_tree_add_to_heap(const route_tree_t &rt, const RRGraph &g, RRNode tar
 
 std::shared_ptr<vector<path_node_t>> route_tree_get_path(const route_tree_t &rt, RRNode to_node)
 {
-	auto iter = rt.rr_node_to_path.find(to_node);
+	const auto &iter = rt.rr_node_to_path.find(to_node);
 	assert(iter != rt.rr_node_to_path.end());
 	return iter->second;
 }
@@ -400,7 +400,7 @@ void route_tree_mark_all_nodes_to_be_ripped(route_tree_t &rt, const RRGraph &g)
 {
 	/*rt.scheduler_bounding_box = bg::make_inverse<box>();*/
 
-	for (auto rt_node : route_tree_get_nodes(rt)) {
+	for (const auto &rt_node : route_tree_get_nodes(rt)) {
 		auto &rt_node_p = get_vertex_props(rt.graph, rt_node);
 		rt_node_p.pending_rip_up = true;
 		rt_node_p.ripped_up = false;
@@ -466,7 +466,7 @@ void route_tree_remove_node(route_tree_t &rt, RRNode rr_node, const RRGraph &g)
 void route_tree_rip_up_marked(route_tree_t &rt, const RRGraph &g, congestion_t *congestion, float pres_fac)
 {
 	char buffer[256];
-	for (auto rt_node : route_tree_get_nodes(rt)) {
+	for (const auto &rt_node : route_tree_get_nodes(rt)) {
 		auto &rt_node_p = get_vertex_props(rt.graph, rt_node);
 
 		RRNode rr_node = rt_node_p.rr_node;
@@ -521,7 +521,7 @@ void route_tree_rip_up_marked(route_tree_t &rt, const RRGraph &g, congestion_t *
 void route_tree_rip_up_marked(route_tree_t &rt, const RRGraph &g, congestion_locked_t *congestion, float pres_fac, bool lock, lock_perf_t *lock_perf)
 {
 	char buffer[256];
-	for (auto rt_node : route_tree_get_nodes(rt)) {
+	for (const auto &rt_node : route_tree_get_nodes(rt)) {
 		auto &rt_node_p = get_vertex_props(rt.graph, rt_node);
 
 		RRNode rr_node = rt_node_p.rr_node;
@@ -534,7 +534,7 @@ void route_tree_rip_up_marked(route_tree_t &rt, const RRGraph &g, congestion_loc
 		/*}*/
 
 		if (rt_node_p.pending_rip_up) {
-			zlog_level(delta_log, ROUTER_V2, "Ripping up node %s from route tree. Occ: %d Cap: %d\n", buffer, congestion[rt_node_p.rr_node].cong.occ, rr_node_p.capacity);
+			zlog_level(delta_log, ROUTER_V2, "Ripping up node %s from route tree. Occ: %d Cap: %d\n", buffer, get_occ(congestion, rt_node_p.rr_node), rr_node_p.capacity);
 
 			if (rr_node_p.type == SOURCE) {
 				/*assert(rt_node.saved_num_out_edges > 0);*/
@@ -570,10 +570,62 @@ void route_tree_rip_up_marked(route_tree_t &rt, const RRGraph &g, congestion_loc
 	}
 }
 
+void route_tree_rip_up_marked(route_tree_t &rt, const RRGraph &g, congestion_local_t *congestion, float pres_fac)
+{
+	char buffer[256];
+	for (const auto &rt_node : route_tree_get_nodes(rt)) {
+		auto &rt_node_p = get_vertex_props(rt.graph, rt_node);
+
+		RRNode rr_node = rt_node_p.rr_node;
+		const auto &rr_node_p = get_vertex_props(g, rr_node);
+		sprintf_rr_node(rt_node_p.rr_node, buffer);
+
+		/*const auto &bp = rt.path_branch_point.find(rr_node);*/
+		/*if (bp != rt.path_branch_point.end()) {*/
+			/*rt.path_branch_point.erase(bp);*/
+		/*}*/
+
+		if (rt_node_p.pending_rip_up) {
+			zlog_level(delta_log, ROUTER_V2, "Ripping up node %s from route tree. Occ: %d Cap: %d\n", buffer, get_occ(congestion, rt_node_p.rr_node), rr_node_p.capacity);
+
+			if (rr_node_p.type == SOURCE) {
+				/*assert(rt_node.saved_num_out_edges > 0);*/
+				update_one_cost_internal(rr_node, g, congestion, -num_out_edges(rt.graph, rt_node), pres_fac); 
+			} else {
+				update_one_cost_internal(rr_node, g, congestion, -1, pres_fac); 
+			}
+			route_tree_remove_node(rt, rr_node, g);
+			rt_node_p.pending_rip_up = false;
+			rt_node_p.ripped_up = true;
+
+			const auto &edge = rt_node_p.rt_edge_to_parent;
+			if (valid(edge)) {
+				RouteTreeNode parent_rt_node = get_source(rt.graph, edge);
+				const auto &parent_rt_node_p = get_vertex_props(rt.graph, parent_rt_node);
+				const auto &parent_rr_node_p = get_vertex_props(g, parent_rt_node_p.rr_node);
+				/* since reconnection back to SOURCE always causes cost to be updated, we need to
+				 * update the cost when ripping up also.
+				 * if parent is pending rip up, cost will be updated that time. so dont handle it here */
+				if (parent_rr_node_p.type == SOURCE && !parent_rt_node_p.pending_rip_up && !parent_rt_node_p.ripped_up) {
+					update_one_cost_internal(parent_rt_node_p.rr_node, g, congestion, -1, pres_fac); 
+				}
+
+				route_tree_remove_edge(rt, edge, g);
+
+				assert(!valid(edge));
+			} 
+		} else {
+			zlog_level(delta_log, ROUTER_V2, "NOT ripping up node %s from route tree\n", buffer);
+			/* invalid assertion because we might have ripped this up from another virtual net */
+			/*assert(rt_node_p.ripped_up == false);*/
+		}
+	}
+}
+
 void route_tree_rip_up_marked_mpi_rma(route_tree_t &rt, const RRGraph &g, const vector<int> &pid, int this_pid, congestion_t *congestion, MPI_Win win, float pres_fac)
 {
 	char buffer[256];
-	for (auto rt_node : route_tree_get_nodes(rt)) {
+	for (const auto &rt_node : route_tree_get_nodes(rt)) {
 		auto &rt_node_p = get_vertex_props(rt.graph, rt_node);
 
 		RRNode rr_node = rt_node_p.rr_node;
@@ -628,7 +680,7 @@ void route_tree_rip_up_marked_mpi_send_recv(route_tree_t &rt, const RRGraph &g, 
 	ongoing_transaction_t trans;
 	trans.data = make_shared<vector<send_data_t>>();
 
-	for (auto rt_node : route_tree_get_nodes(rt)) {
+	for (const auto &rt_node : route_tree_get_nodes(rt)) {
 		auto &rt_node_p = get_vertex_props(rt.graph, rt_node);
 
 		RRNode rr_node = rt_node_p.rr_node;

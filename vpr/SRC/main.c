@@ -24,6 +24,7 @@
 #include "vpr_api.h"
 
 #include "route.h"
+#include "config.h"
 
 #ifdef __linux__
 #include <sched.h>
@@ -305,7 +306,9 @@ int main(int argc, char **argv) {
 	}
 #endif
 
+#ifdef VPR_MPI
 	MPI_Init(&argc, &argv);
+#endif
 
 #ifdef __linux__
 	print_mem_map();

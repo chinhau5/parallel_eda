@@ -2869,12 +2869,11 @@ void send_route_tree(net_t *net, const RRGraph &g, const vector<vector<sink_t *>
 		const auto &rt_node_p = get_vertex_props(route_trees[net->local_id].graph, rt_node);
 
 		send[i].rr_node_id = rt_node_p.rr_node;
-		assert(false);
-		//if (valid(rt_node_p.rr_edge_to_parent)) {
-			//send[i].parent_rr_node = get_source(g, rt_node_p.rr_edge_to_parent);
-		//} else {
-			//send[i].parent_rr_node = RRGraph::null_vertex();
-		//}
+		if (valid(rt_node_p.rt_edge_to_parent)) {
+			send[i].parent_rr_node = get_vertex_props(route_trees[net->local_id].graph, get_source(route_trees[net->local_id].graph, rt_node_p.rt_edge_to_parent)).rr_node;
+		} else {
+			send[i].parent_rr_node = RRGraph::null_vertex();
+		}
 		send[i].delay = rt_node_p.delay;
 		send[i].upstream_R = rt_node_p.upstream_R;
 

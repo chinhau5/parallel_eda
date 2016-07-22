@@ -25,7 +25,9 @@ using std::chrono::nanoseconds;
 
 void timing_driven_check_net_delays(float **net_delay);
 
-bool locking_route(t_router_opts *opts, int run)
+vector<const sink_t *> route_net_deterministic(const RRGraph &g, int vpr_id, const source_t *source, const vector<const sink_t *> &sinks, const route_parameters_t &params, route_state_t *state, congestion_local_t *congestion, route_tree_t &rt, t_net_timing &net_timing, perf_t *perf);
+
+bool locking_route_deterministic(t_router_opts *opts, int run)
 {
 	tbb::task_scheduler_init init(opts->num_threads);
 
@@ -81,6 +83,8 @@ bool locking_route(t_router_opts *opts, int run)
 	printf("Num nets: %lu\n", nets.size());
 	extern char *s_circuit_name;
 	printf("Circuit name: %s\n", s_circuit_name);
+
+	printf("Num rr nodes: %lu\n", num_vertices(g));
 	//dump_all_net_bounding_boxes(s_circuit_name, nets);
 	//dump_all_net_bounding_boxes_area(s_circuit_name, nets);
 	//bounding_box_overlap_stats(nets);
@@ -146,18 +150,14 @@ bool locking_route(t_router_opts *opts, int run)
 
 	//vector<vector<virtual_net_t>> virtual_nets_by_net;
 	//create_clustered_virtual_nets(nets, 5, opts->max_sink_bb_area, virtual_nets_by_net);
-#ifdef __linux__
-	congestion_locked_t *congestion_aligned;
-	assert(!posix_memalign((void **)&congestion_aligned, 64, sizeof(congestion_locked_t)*num_vertices(g)));
-#else
-	congestion_locked_t *congestion_aligned = (congestion_locked_t *)malloc(sizeof(congestion_locked_t)*num_vertices(g));
-#endif
 
-	congestion_locked_t *congestion = new(congestion_aligned) congestion_locked_t[num_vertices(g)];
-	for (int i = 0; i < num_vertices(g); ++i) {
-		congestion[i].cong.acc_cost = 1;
-		congestion[i].cong.pres_cost = 1;
-		congestion[i].cong.occ = 0;
+	vector<congestion_t> global(num_vertices(g), { 0, 1, 1, 0 });
+
+	vector<congestion_local_t> congestion(opts->num_threads);
+	for (int i = 0; i < opts->num_threads; ++i) {
+		congestion[i].tid = i;
+		congestion[i].global = global.data();
+		congestion[i].local.resize(num_vertices(g), { 0, 1 });
 	}
 
 	char buffer[256];
@@ -203,6 +203,13 @@ bool locking_route(t_router_opts *opts, int run)
 	clock::duration total_analyze_timing_time = clock::duration::zero();
 	clock::duration total_iter_time = clock::duration::zero();
 
+#ifdef __linux__
+	pthread_barrier_t barrier;
+	pthread_barrier_init(&barrier, nullptr, opts->num_threads);
+#endif
+
+	int num_rounds = (int)ceil((float)nets.size() / opts->num_threads);
+
 	//int greedy_rip_up_all_period = 3;
 	int partitioned_iter = -1;
 	int iter;
@@ -237,7 +244,7 @@ bool locking_route(t_router_opts *opts, int run)
 #endif
 		//tbb::enumerable_thread_specific<state_t *> state_tls;
 		//
-		tbb::atomic<int> net_index = 0;
+		//tbb::atomic<int> net_index = 0;
 		//vector<tbb::spin_mutex> debug_lock(opts->num_threads);
 		tbb::atomic<int> total_num_nets_routed = 0;
 		vector<int> num_nets_routed(opts->num_threads, 0);
@@ -276,13 +283,9 @@ bool locking_route(t_router_opts *opts, int run)
 
 					int local_num_nets_routed = 0;
 					unsigned long local_num_sinks_routed = 0;
+					int rounds = 0;
 
-					int i;
-					if (opts->work_conserving) {
-						i = net_index++;
-					} else {
-						i = tid;
-					}
+					int i = tid;
 					while (i < nets_to_route.size()) {
 						//while ((i = net_index++) < nets_to_route.size()) {
 						net_t *net = nets_to_route[i].second;
@@ -294,9 +297,9 @@ bool locking_route(t_router_opts *opts, int run)
 						if (greedy_rip_up_all) {
 							route_tree_mark_all_nodes_to_be_ripped(route_trees[net->local_id], g);
 						} else {
-							route_tree_mark_congested_nodes_to_be_ripped(route_trees[net->local_id], g, congestion);
+							route_tree_mark_congested_nodes_to_be_ripped(route_trees[net->local_id], g, &congestion[tid]);
 						}
-						route_tree_rip_up_marked(route_trees[net->local_id], g, congestion, params.pres_fac, true, &local_lock_perf);
+						route_tree_rip_up_marked(route_trees[net->local_id], g, &congestion[tid], params.pres_fac);
 
 						//local_perf.total_rip_up_time += clock::now()-rip_up_start;
 
@@ -315,7 +318,7 @@ bool locking_route(t_router_opts *opts, int run)
 						}
 
 						if (!sinks.empty()) {
-							route_net_with_fine_grain_lock(g, net->vpr_id, &net->source, sinks, params, states[tid], congestion, route_trees[net->local_id], net_timing[net->vpr_id], true, &local_perf, &local_lock_perf);
+							route_net_deterministic(g, net->vpr_id, &net->source, sinks, params, states[tid], &congestion[tid], route_trees[net->local_id], net_timing[net->vpr_id], &local_perf);
 
 							++total_num_nets_routed;
 							++local_num_nets_routed;
@@ -325,12 +328,38 @@ bool locking_route(t_router_opts *opts, int run)
 						}
 
 						//local_perf.total_route_time += clock::now()-rip_up_start;
-						if (opts->work_conserving) {
-							i = net_index++;
-						} else {
-							i += opts->num_threads;
+						i += opts->num_threads;
+						++rounds;
+
+#ifdef __linux__
+						pthread_barrier_wait(&barrier);
+#endif
+						if (tid == 0) {
+							/* only one thread can do this to prevent race condition */
+							set<int> all_dirty_nodes;
+							for (int i = 0; i < opts->num_threads; ++i) {
+								commit(&congestion[i], all_dirty_nodes);
+							}
+							/* need to update pres cost of local here */
+							for (const auto &dirty_node : all_dirty_nodes) {
+								update_one_cost_internal(dirty_node, g, global.data(), 0, params.pres_fac);
+								for (int i = 0; i < opts->num_threads; ++i) {
+									congestion[i].local[dirty_node].pres_cost = global[dirty_node].pres_cost;
+								}
+							}
 						}
+
+#ifdef __linux__
+						pthread_barrier_wait(&barrier);
+#endif
 					}
+
+#ifdef __linux__
+					for (; rounds < num_rounds; ++rounds) {
+						pthread_barrier_wait(&barrier);
+						pthread_barrier_wait(&barrier);
+					}
+#endif
 
 					greedy_end_time[tid] = clock::now();
 
@@ -347,6 +376,7 @@ bool locking_route(t_router_opts *opts, int run)
 		} else {
 			auto partitioned_route_start = clock::now();
 
+#if 0
 			if (false) {
 				for (const auto &n : nets_to_partition) {
 					net_t *net = n.second;
@@ -373,6 +403,7 @@ bool locking_route(t_router_opts *opts, int run)
 					}
 				}
 			} else {
+#endif
 				tbb::parallel_for(tbb::blocked_range<int>(0, opts->num_threads, 1),
 						[&] (const tbb::blocked_range<int> &range) {
 
@@ -403,9 +434,9 @@ bool locking_route(t_router_opts *opts, int run)
 							if (partitioned_rip_up_all) {
 								route_tree_mark_all_nodes_to_be_ripped(route_trees[net->local_id], g);
 							} else {
-								route_tree_mark_congested_nodes_to_be_ripped(route_trees[net->local_id], g, congestion);
+								route_tree_mark_congested_nodes_to_be_ripped(route_trees[net->local_id], g, &congestion[tid]);
 							}
-							route_tree_rip_up_marked(route_trees[net->local_id], g, congestion, params.pres_fac, true, &local_lock_perf);
+							route_tree_rip_up_marked(route_trees[net->local_id], g, &congestion[tid], params.pres_fac);
 
 							vector<const sink_t *> sinks;	
 							sinks.reserve(net->sinks.size());
@@ -419,7 +450,7 @@ bool locking_route(t_router_opts *opts, int run)
 								}
 							}
 							if (!sinks.empty()) {
-								route_net_with_fine_grain_lock(g, net->vpr_id, &net->source, sinks, params, states[tid], congestion, route_trees[net->local_id], net_timing[net->vpr_id], true, &local_perf, &local_lock_perf);
+								route_net_deterministic(g, net->vpr_id, &net->source, sinks, params, states[tid], &congestion[tid], route_trees[net->local_id], net_timing[net->vpr_id], &local_perf);
 
 								++total_num_nets_routed;
 								++local_num_nets_routed;
@@ -439,7 +470,9 @@ bool locking_route(t_router_opts *opts, int run)
 
 						//debug_lock[tid].unlock();
 					});
+#if 0
 			}
+#endif
 
 			++partitioned_iter;
 
@@ -462,19 +495,19 @@ bool locking_route(t_router_opts *opts, int run)
 
 		/* checking */
 		for (int i = 0; i < num_vertices(g); ++i) {
-			congestion[i].cong.recalc_occ = 0; 
+			global[i].recalc_occ = 0; 
 		}
 
 		for (const auto &net : nets) {
 			check_route_tree(route_trees[net.local_id], net, g);
-			recalculate_occ_locking_route(route_trees[net.local_id], g, congestion);
+			recalculate_occ_locking_route(route_trees[net.local_id], g, global.data());
 		}
 
 		bool valid = true;
 		for (int i = 0; i < num_vertices(g); ++i) {
 			sprintf_rr_node_impl(i, buffer);
-			if (congestion[i].cong.recalc_occ != congestion[i].cong.occ) {
-				printf("Node %s occ mismatch, recalc: %d original: %d\n", buffer, congestion[i].cong.recalc_occ, congestion[i].cong.occ);
+			if (get_recalc_occ(global.data(), i) != get_occ(global.data(), i)) {
+				printf("Node %s occ mismatch, recalc: %d original: %d\n", buffer, get_recalc_occ(global.data(), i), get_occ(global.data(), i));
 				valid = false;
 			}
 		}
@@ -483,7 +516,7 @@ bool locking_route(t_router_opts *opts, int run)
 		for (const auto &net : nets) {
 			vector<int> overused_rr_node;
 			assert(route_trees[net.local_id].root_rt_nodes.size() == 1);
-			get_overused_nodes(route_trees[net.local_id], route_trees[net.local_id].root_rt_nodes[0], g, congestion, overused_rr_node);
+			get_overused_nodes(route_trees[net.local_id], route_trees[net.local_id].root_rt_nodes[0], g, global.data(), overused_rr_node);
 			if (!overused_rr_node.empty()) {
 				zlog_level(delta_log, ROUTER_V1, "Net %d bb_rank %d overused nodes:\n", net.vpr_id, net.bb_area_rank);
 				for (const auto &item : overused_rr_node) {
@@ -532,12 +565,12 @@ bool locking_route(t_router_opts *opts, int run)
 		unsigned long num_overused_nodes = 0;
 		vector<int> overused_nodes_by_type(NUM_RR_TYPES, 0);
 
-		if (feasible_routing(g, congestion)) {
+		if (feasible_routing(g, global.data())) {
 			//dump_route(*current_traces_ptr, "route.txt");
 			routed = true;
 		} else {
 			for (int i = 0; i < num_vertices(g); ++i) {
-				if (congestion[i].cong.occ > get_vertex_props(g, i).capacity) {
+				if (get_occ(global.data(), i) > get_vertex_props(g, i).capacity) {
 					++num_overused_nodes;
 					const auto &v_p = get_vertex_props(g, i);
 					++overused_nodes_by_type[v_p.type];
@@ -564,7 +597,7 @@ bool locking_route(t_router_opts *opts, int run)
 						for (int i = range.begin(); i != range.end(); ++i) {
 							net_t *net = nets_to_route[i].second;
 
-							bool marked = route_tree_mark_congested_nodes_to_be_ripped(route_trees[net->local_id], g, congestion);
+							bool marked = route_tree_mark_congested_nodes_to_be_ripped(route_trees[net->local_id], g, global.data());
 							if (marked) {
 								lock.lock();
 								nets_to_partition.push_back(nets_to_route[i]);
@@ -597,14 +630,14 @@ bool locking_route(t_router_opts *opts, int run)
 
 			if (iter == 0) {
 				params.pres_fac = opts->initial_pres_fac;
-				update_costs(g, congestion, params.pres_fac, 0);
+				update_costs(g, global.data(), params.pres_fac, 0);
 			} else {
 				params.pres_fac *= opts->pres_fac_mult;
 
 				/* Avoid overflow for high iteration counts, even if acc_cost is big */
 				params.pres_fac = std::min(params.pres_fac, static_cast<float>(HUGE_POSITIVE_FLOAT / 1e5));
 
-				update_costs(g, congestion, params.pres_fac, opts->acc_fac);
+				update_costs(g, global.data(), params.pres_fac, opts->acc_fac);
 			}
 
 			update_cost_time = clock::now()-update_cost_start;

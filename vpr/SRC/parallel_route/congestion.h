@@ -3,85 +3,138 @@
 
 #include <mpi.h>
 
-inline int &get_occ(congestion_locked_t &congestion)
+inline int get_occ(const congestion_local_t *local, int node)
 {
-	return congestion.cong.occ;
+	return local->global[node].occ + local->local[node].occ_delta;
 }
 
-inline const int &get_occ(const congestion_locked_t &congestion)
+inline void add_occ(congestion_local_t *local, int node, int delta)
 {
-	return congestion.cong.occ;
+	local->local[node].occ_delta += delta;
+	local->dirty_nodes.insert(node);
 }
 
-inline int &get_occ(congestion_t &congestion)
+inline float get_pres_cost(const congestion_local_t *local, int node)
 {
-	return congestion.occ;
+	return local->local[node].pres_cost;
 }
 
-inline const int &get_occ(const congestion_t &congestion)
+inline void set_pres_cost(congestion_local_t *local, int node, float pres_cost)
 {
-	return congestion.occ;
+	local->local[node].pres_cost = pres_cost;
+	assert(local->dirty_nodes.find(node) != end(local->dirty_nodes));
 }
 
-inline float &get_pres_cost(congestion_locked_t &congestion)
+inline float get_acc_cost(const congestion_local_t *local, int node)
 {
-	return congestion.cong.pres_cost;
+	return local->global[node].pres_cost;
 }
 
-inline const float &get_pres_cost(const congestion_locked_t &congestion)
+inline void commit(congestion_local_t *local, set<int> &all_dirty_nodes)
 {
-	return congestion.cong.pres_cost;
+	for (const auto &dirty_node : local->dirty_nodes) {
+		local->global[dirty_node].occ += local->local[dirty_node].occ_delta;
+		local->local[dirty_node].occ_delta = 0;
+		all_dirty_nodes.insert(dirty_node);
+	}
+	local->dirty_nodes.clear();
 }
 
+//inline int get_occ(const congestion_global_t *global, int node)
+//{
+	//return global->current[node].occ;
+//}
 
-inline float &get_pres_cost(congestion_t &congestion)
+//inline int get_recalc_occ(const congestion_global_t *global, int node)
+//{
+	//return global->current[node].recalc_occ;
+//}
+
+//inline void add_recalc_occ(congestion_global_t *global, int node, int delta)
+//{
+	//global->current[node].recalc_occ += delta;
+//}
+
+//------
+
+inline int get_occ(const congestion_locked_t *congestion, int node)
 {
-	return congestion.pres_cost;
+	return congestion[node].cong.occ;
 }
 
-inline const float &get_pres_cost(const congestion_t &congestion)
+inline void add_occ(congestion_locked_t *congestion, int node, int delta)
 {
-	return congestion.pres_cost;
+	congestion[node].cong.occ += delta;
 }
 
-inline float &get_acc_cost(congestion_locked_t &congestion)
+inline int get_occ(const congestion_t *congestion, int node)
 {
-	return congestion.cong.acc_cost;
+	return congestion[node].occ;
 }
 
-inline const float &get_acc_cost(const congestion_locked_t &congestion)
+inline void add_occ(congestion_t *congestion, int node, int delta)
 {
-	return congestion.cong.acc_cost;
+	congestion[node].occ += delta;
 }
 
-inline float &get_acc_cost(congestion_t &congestion)
+inline float get_pres_cost(const congestion_locked_t *congestion, int node)
 {
-	return congestion.acc_cost;
+	return congestion[node].cong.pres_cost;
 }
 
-inline const float &get_acc_cost(const congestion_t &congestion)
+inline void set_pres_cost(congestion_locked_t *congestion, int node, float pres_cost)
 {
-	return congestion.acc_cost;
+	congestion[node].cong.pres_cost = pres_cost;
 }
 
-inline int &get_recalc_occ(congestion_locked_t &congestion)
+inline float get_pres_cost(const congestion_t *congestion, int node)
 {
-	return congestion.cong.recalc_occ;
+	return congestion[node].pres_cost;
 }
 
-inline const int &get_recalc_occ(const congestion_locked_t &congestion)
+inline void set_pres_cost(congestion_t *congestion, int node, float pres_cost)
 {
-	return congestion.cong.recalc_occ;
+	congestion[node].pres_cost = pres_cost;
 }
 
-inline int &get_recalc_occ(congestion_t &congestion)
+inline float get_acc_cost(const congestion_locked_t *congestion, int node)
 {
-	return congestion.recalc_occ;
+	return congestion[node].cong.acc_cost;
 }
 
-inline const int &get_recalc_occ(const congestion_t &congestion)
+inline void add_acc_cost(congestion_locked_t *congestion, int node, float delta)
 {
-	return congestion.recalc_occ;
+	congestion[node].cong.acc_cost += delta;
+}
+
+inline float get_acc_cost(const congestion_t *congestion, int node)
+{
+	return congestion[node].acc_cost;
+}
+
+inline void add_acc_cost(congestion_t *congestion, int node, float delta)
+{
+	congestion[node].acc_cost += delta;
+}
+
+inline int get_recalc_occ(const congestion_locked_t *congestion, int node)
+{
+	return congestion[node].cong.recalc_occ;
+}
+
+inline void add_recalc_occ(congestion_locked_t *congestion, int node, int delta)
+{
+	congestion[node].cong.recalc_occ += delta;
+}
+
+inline int get_recalc_occ(const congestion_t *congestion, int node)
+{
+	return congestion[node].recalc_occ;
+}
+
+inline void add_recalc_occ(congestion_t *congestion, int node, int delta)
+{
+	congestion[node].recalc_occ += delta;
 }
 
 void update_one_cost(const RRGraph &g, congestion_locked_t *congestion, const vector<RRNode>::const_iterator &rr_nodes_begin, const vector<RRNode>::const_iterator &rr_nodes_end, /*int net_id,*/ int delta, float pres_fac, bool lock, lock_perf_t *lock_perf);
@@ -96,6 +149,8 @@ void update_one_cost_internal(RRNode rr_node, const RRGraph &g, congestion_locke
 
 void update_one_cost_internal(RRNode rr_node, const RRGraph &g, congestion_t *congestion, /*int net_id, */int delta, float pres_fac);
 
+void update_one_cost_internal(RRNode rr_node, const RRGraph &g, congestion_local_t *congestion, int delta, float pres_fac);
+
 //void update_one_cost(const RRGraph &g, congestion_t *congestion, route_tree_t &rt, const RouteTreeNode &node, int delta, float pres_fac, bool lock);
 
 void update_one_cost_internal_mpi_rma(RRNode rr_node, const RRGraph &g, const vector<int> &pid, int this_pid, congestion_t *congestion, MPI_Win win, /*int net_id, */int delta, float pres_fac);
@@ -106,15 +161,15 @@ template<typename Congestion>
 void update_costs(const RRGraph &g, Congestion *congestion, float pres_fac, float acc_fac)
 {
 	for (const auto &rr_node : get_vertices(g)) {
-		int occ = get_occ(congestion[rr_node]);
+		int occ = get_occ(congestion, rr_node);
 		int capacity = get_vertex_props(g, rr_node).capacity;
 		if (occ > capacity) {
-			get_acc_cost(congestion[rr_node]) += (occ - capacity) * acc_fac;
-			get_pres_cost(congestion[rr_node]) = 1. + (occ + 1 - capacity) * pres_fac;
+			add_acc_cost(congestion, rr_node, (occ - capacity) * acc_fac);
+			set_pres_cost(congestion, rr_node, 1. + (occ + 1 - capacity) * pres_fac);
 		} else if (occ == capacity) {
 			/* If occ == capacity, we don't need to increase acc_cost, but a change    *
 			 * in pres_fac could have made it necessary to recompute the cost anyway.  */
-			get_pres_cost(congestion[rr_node]) = 1. + pres_fac;
+			set_pres_cost(congestion, rr_node, 1. + pres_fac);
 		}
 	}
 }

@@ -33,8 +33,6 @@ set(srcs
 	SRC/base/stats.c
 	SRC/base/verilog_writer.c
 	SRC/base/vpr_api.c
-	SRC/base/barrier.c
-	SRC/base/bounding_box.c
 	SRC/pack/cluster.c
 	SRC/pack/cluster_feasibility_filter.c
 	SRC/pack/cluster_legality.c
@@ -83,6 +81,7 @@ set(srcs
 	SRC/parallel_route/route_common_local.c
 	SRC/parallel_route/fine.cxx
 	SRC/parallel_route/locking_route.cxx
+	SRC/parallel_route/locking_route_deterministic.cxx
 	#SRC/parallel_route/locking_route_optimized.cxx
 	#SRC/parallel_route/phased.cxx
 	SRC/parallel_route/congestion.cxx
@@ -91,6 +90,7 @@ set(srcs
 	SRC/parallel_route/route_net_mpi_send_recv_improved.cxx
 	SRC/parallel_route/route_net_mpi_send_recv_reduced_comm.cxx
 	SRC/parallel_route/route_net_with_fine_grain_lock.cxx
+	SRC/parallel_route/route_net_deterministic.cxx
 	SRC/parallel_route/init.cxx
 	SRC/parallel_route/log.cxx
 	SRC/parallel_route/spatial.cxx
@@ -112,6 +112,8 @@ set(srcs
 	#SRC/parallel_route/net_cluster.cxx
 	SRC/parallel_route/scheduler.c
 	SRC/parallel_route/bounding_boxes.cxx
+	SRC/parallel_route/barrier.c
+	SRC/parallel_route/bounding_box.c
 	#SRC/parallel_route/advanced_parallel_route_timing.c
 	SRC/timing/net_delay.c
 	SRC/timing/path_delay2.c

@@ -113,7 +113,7 @@ class rr_graph_partitioner {
 
 			init_sprintf_rr_node(&orig_g);
 
-			dump_rr_graph(orig_g, "rr_graph.txt");
+			//dump_rr_graph(orig_g, "rr_graph.txt");
 
 			//undirected_orig_g = orig_g;
 

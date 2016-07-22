@@ -404,10 +404,7 @@ void route_net_mpi_send_recv_reduced_comm(const RRGraph &g, int vpr_id, int net_
 
 			vector<RRNode> added_nodes;
 			for (const auto &n : *path) {
-				if (valid(n.prev_edge) || update_source_cost) {
-					if (update_source_cost) {
-						assert(n.rr_node_id == source->rr_node);
-					}
+				if (valid(n.prev_edge) || n.rr_node_id == source->rr_node) {
 					added_nodes.push_back(n.rr_node_id);
 				}
 			}

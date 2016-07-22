@@ -1076,7 +1076,7 @@ RREdge get_previous_edge(int rr_node_id, const route_state_t *state, const route
 			char s_rt[256];
 			sprintf_rr_node(get_source(g, state[rr_node_id].prev_edge), s_state);
 			sprintf_rr_node(get_vertex_props(rt.graph, get_source(rt.graph, get_vertex_props(rt.graph, rt_node).rt_edge_to_parent)).rr_node, s_rt);
-			zlog_warn(delta_log, "Warning: Existing route tree node %s does not have a matching route state. (state.prev_edge: %s rt_node.rr_edge_to_parent: %s) because we have found a shorter path to that node\n", buffer, s_state, s_rt);
+			printf("Warning: Existing route tree node %s does not have a matching route state. (state.prev_edge: %s rt_node.rr_edge_to_parent: %s) because we have found a shorter path to that node\n", buffer, s_state, s_rt);
 
 			previous_edge = RRGraph::null_edge();
 		} else {
@@ -1093,6 +1093,9 @@ std::shared_ptr<vector<path_node_t>> get_path(int sink_rr_node_id, const route_s
 	RREdge previous_edge;
 	std::shared_ptr<vector<path_node_t>> path = make_shared<vector<path_node_t>>();
 
+	char p[256];
+	char c[256];
+
 	while (valid((previous_edge = get_previous_edge(current_rr_node_id, state, rt, g)))) {
 		/* parent */
 		int parent_rr_node_id = get_source(g, previous_edge);
@@ -1104,8 +1107,6 @@ std::shared_ptr<vector<path_node_t>> get_path(int sink_rr_node_id, const route_s
 
 		path->emplace_back(node);
 
-		char p[256];
-		char c[256];
 		/* printing */
 		sprintf_rr_node(parent_rr_node_id, p);
 		sprintf_rr_node(current_rr_node_id, c);
@@ -1119,6 +1120,8 @@ std::shared_ptr<vector<path_node_t>> get_path(int sink_rr_node_id, const route_s
 	node.prev_edge = RRGraph::null_edge();
 	//node.update_cost = get_vertex_props(g, current_rr_node_id).type == SOURCE;
 	//node.update_cost = false;
+	sprintf_rr_node(current_rr_node_id, c);
+	zlog_level(delta_log, ROUTER_V2, "Net %d get path: %s\n", vpr_net_id, c);
 
 	path->emplace_back(node);
 

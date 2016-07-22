@@ -81,8 +81,13 @@ bool mpi_spatial_route_flat_reduced_comm(t_router_opts *opts, struct s_det_routi
 
 	printf("[%d] Initializing router\n", initial_rank);
 
+	auto init_dt_start = clock::now();
+
 	init_congestion_mpi_datatype();
 	init_datatypes();
+
+	auto init_dt_time = clock::now()-init_dt_start;
+	printf("[%d] init dt time: %g\n", initial_rank, duration_cast<nanoseconds>(init_dt_time).count() / 1e9);
 
     init_logging();
     zlog_set_record("custom_output", concurrent_log_impl);
@@ -281,6 +286,11 @@ bool mpi_spatial_route_flat_reduced_comm(t_router_opts *opts, struct s_det_routi
     std::sort(begin(nets_to_route), end(nets_to_route), [] (const pair<box, net_t *> &a, const pair<box, net_t *> &b) -> bool {
             return a.second->sinks.size()*get_bounding_box_area(a.second->bounding_box) > b.second->sinks.size()*get_bounding_box_area(b.second->bounding_box);
             });
+
+	vector<vector<pair<int, int>>> overlaps;
+	vector<vector<int>> partitions;
+	vector<bool> has_interpartition_overlap;
+	partition_nets_overlap_area_metric(nets_to_route, 8, 1.001, overlaps, partitions, has_interpartition_overlap);
 
 	//vector<int> num_recvs_called(mpi.comm_size);
 	//vector<int> num_recvs_required(mpi.comm_size, 0);

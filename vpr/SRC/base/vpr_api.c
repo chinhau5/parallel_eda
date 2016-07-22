@@ -43,6 +43,7 @@
 #include "vpr_api.h"
 #include "read_sdc.h"
 #include "power.h"
+#include "config.h"
 
 /* Local subroutines */
 static void free_pb_type(t_pb_type *pb_type);
@@ -244,7 +245,9 @@ void vpr_init_pre_place_and_route(INP t_vpr_setup vpr_setup, INP t_arch Arch) {
 	boolean fit;
 
 	int procid = 0;
-	//MPI_Comm_rank(MPI_COMM_WORLD, &procid);
+#ifdef VPR_MPI
+	MPI_Comm_rank(MPI_COMM_WORLD, &procid);
+#endif
 
 	/* Read in netlist file for placement and routing */
 	if (vpr_setup.FileNameOpts.NetFile) {

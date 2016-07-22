@@ -166,6 +166,18 @@ typedef struct alignas(64) congestion_locked_t {
 	congestion_t cong;
 } congestion_locked_t;
 
+typedef struct local_cost_t {
+	int occ_delta;
+	float pres_cost;
+} local_cost_t;
+
+typedef struct congestion_local_t {
+	int tid;
+	congestion_t *global;
+	vector<local_cost_t> local;
+	set<int> dirty_nodes;
+} congestion_local_t;
+
 typedef struct route_state_t {
 	int rr_node;
 	RREdge prev_edge;

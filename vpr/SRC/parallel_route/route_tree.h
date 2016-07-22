@@ -149,6 +149,8 @@ void route_tree_rip_up_marked(route_tree_t &rt, const RRGraph &g, congestion_loc
 
 void route_tree_rip_up_marked(route_tree_t &rt, const RRGraph &g, congestion_t *congestion, float pres_fac);
 
+void route_tree_rip_up_marked(route_tree_t &rt, const RRGraph &g, congestion_local_t *congestion, float pres_fac);
+
 void route_tree_rip_up_marked_mpi_rma(route_tree_t &rt, const RRGraph &g, const vector<int> &pid, int this_pid, congestion_t *congestion, MPI_Win win, float pres_fac);
 
 void route_tree_rip_up_marked_mpi_send_recv(route_tree_t &rt, const RRGraph &g, congestion_t *congestion, float pres_fac, queue<RRNode> &cost_update_q);
@@ -197,7 +199,7 @@ bool route_tree_node_check_and_mark_congested_for_rip_up(route_tree_t &rt, Route
 		rt_node_p.pending_rip_up = false;
 	}
 
-	rt_node_p.pending_rip_up |= (get_occ(congestion[rt_node_p.rr_node]) > rr_node_p.capacity);
+	rt_node_p.pending_rip_up |= (get_occ(congestion, rt_node_p.rr_node) > rr_node_p.capacity);
 	/*rt_node_p.pending_rip_up = true;*/
 
 	if (rt_node_p.pending_rip_up) {
@@ -219,7 +221,7 @@ bool route_tree_mark_congested_nodes_to_be_ripped_internal(route_tree_t &rt, con
 	bool marked = route_tree_node_check_and_mark_congested_for_rip_up(rt, rt_node, g, congestion);
 
 	for (auto &branch : route_tree_get_branches(rt, rt_node)) {
-		auto child = get_target(rt.graph, branch);
+		const auto &child = get_target(rt.graph, branch);
 
 		marked |= route_tree_mark_congested_nodes_to_be_ripped_internal(rt, g, congestion, child);
 	}

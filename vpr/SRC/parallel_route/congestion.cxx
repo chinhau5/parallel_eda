@@ -310,6 +310,27 @@ void update_one_cost_internal(RRNode rr_node, const RRGraph &g, congestion_t *co
 	zlog_level(delta_log, ROUTER_V2, "Update cost of %s delta: %d new_occ: %d pres_fac: %g\n", buffer, delta, congestion[rr_node].occ, pres_fac);
 }
 
+void update_one_cost_internal(RRNode rr_node, const RRGraph &g, congestion_local_t *congestion, int delta, float pres_fac)
+{
+	add_occ(congestion, rr_node, delta);
+
+	int new_occ = get_occ(congestion, rr_node);
+
+	assert(new_occ >= 0);
+
+	const auto &rr_node_p = get_vertex_props(g, rr_node);
+
+	if (get_occ(congestion, rr_node) < rr_node_p.capacity) {
+		set_pres_cost(congestion, rr_node, 1);
+	} else {
+		set_pres_cost(congestion, rr_node, 1 + (new_occ + 1 - rr_node_p.capacity) * pres_fac);
+	}
+
+	char buffer[256];
+	sprintf_rr_node(rr_node, buffer);
+	zlog_level(delta_log, ROUTER_V2, "Update cost of %s delta: %d new_occ: %d pres_fac: %g\n", buffer, delta, new_occ, pres_fac);
+}
+
 void update_one_cost_mpi_send(const vector<RRNode>::const_iterator &rr_nodes_begin, const vector<RRNode>::const_iterator &rr_nodes_end, const RRGraph &g, congestion_t *congestion, int delta, float pres_fac, int this_pid, int num_procs, MPI_Comm comm, vector<ongoing_transaction_t> &transactions)
 {
 	/*const RouteTreeNode *last = nullptr;*/
