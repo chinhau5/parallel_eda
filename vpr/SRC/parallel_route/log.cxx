@@ -32,6 +32,8 @@ void init_logging()
 	ss_log = zlog_get_category("second_stage");
 }
 
+#define LOG_PATH_PREFIX "/tmp/"
+
 int concurrent_log_impl(zlog_msg_t *msg)
 {
 	auto iter = log_files.find(string(msg->path));

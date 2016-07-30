@@ -31,7 +31,7 @@ extern zlog_category_t *ss_log;
 #define zlog_info(cat, ...)
 #define zlog_warn(cat, ...)
 
-#define LOG_PATH_PREFIX "/projects/p_fpgasrouter/"
+//#define LOG_PATH_PREFIX "/projects/p_fpgasrouter/"
 
 int concurrent_log_impl(zlog_msg_t *msg);
 

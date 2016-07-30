@@ -66,7 +66,7 @@ void broadcast_pending_cost_updates_reduced(const vector<RRNode> &added_nodes, i
 	progress_sends(mpi->pending_sends);
 }
 
-void handle_packet(const MPI_Status &status, congestion_t *congestion, const RRGraph &g, float pres_fac, vector<vector<RRNode>> &net_route_trees, mpi_context_t *mpi, mpi_perf_t *mpi_perf)
+void handle_packet(const MPI_Status &status, const vector<net_t> &nets, congestion_t *congestion, const RRGraph &g, float pres_fac, vector<vector<RRNode>> &net_route_trees, mpi_context_t *mpi, mpi_perf_t *mpi_perf)
 {
     using clock = std::chrono::high_resolution_clock;
 
@@ -97,7 +97,7 @@ void handle_packet(const MPI_Status &status, congestion_t *congestion, const RRG
 			int net_id = status.MPI_TAG - COST_UPDATE_TAG;
 			assert(net_id >= 0 && net_id < net_route_trees.size());
 
-			zlog_level(delta_log, ROUTER_V3, "MPI received a path of length %d from %d\n", num_recvd/2, status.MPI_SOURCE);
+			zlog_level(delta_log, ROUTER_V3, "MPI received a net %d path of length %d from %d\n", nets[net_id].vpr_id, num_recvd/2, status.MPI_SOURCE);
 
 			vector<send_data_t> data(num_recvd/2);
 
@@ -129,7 +129,7 @@ void handle_packet(const MPI_Status &status, congestion_t *congestion, const RRG
 			int net_id = status.MPI_TAG - RIP_UP_TAG;
 			assert(net_id >= 0 && net_id < net_route_trees.size());
 
-			zlog_level(delta_log, ROUTER_V3, "MPI ripping up net %d route tree of size %lu from %d\n", net_id, net_route_trees[net_id].size(), status.MPI_SOURCE);
+			zlog_level(delta_log, ROUTER_V3, "MPI ripping up net %d route tree of size %lu from %d\n", nets[net_id].vpr_id, net_route_trees[net_id].size(), status.MPI_SOURCE);
 
 			auto recv_start = clock::now();
 			assert(MPI_Recv(nullptr, 0, MPI_INT, status.MPI_SOURCE, status.MPI_TAG, mpi->comm, MPI_STATUS_IGNORE) == MPI_SUCCESS);
@@ -150,7 +150,7 @@ void handle_packet(const MPI_Status &status, congestion_t *congestion, const RRG
 	}
 }
 
-void sync_iprobe(congestion_t *congestion, const RRGraph &g, float pres_fac, vector<vector<RRNode>> &net_route_trees, mpi_context_t *mpi, mpi_perf_t *mpi_perf)
+void sync_iprobe(const vector<net_t> &nets, congestion_t *congestion, const RRGraph &g, float pres_fac, vector<vector<RRNode>> &net_route_trees, mpi_context_t *mpi, mpi_perf_t *mpi_perf)
 {
     using clock = std::chrono::high_resolution_clock;
 
@@ -168,7 +168,7 @@ void sync_iprobe(congestion_t *congestion, const RRGraph &g, float pres_fac, vec
 			while (flag) {
 				assert(status.MPI_SOURCE == pid);
 
-				handle_packet(status, congestion, g, pres_fac, net_route_trees, mpi, mpi_perf);
+				handle_packet(status, nets, congestion, g, pres_fac, net_route_trees, mpi, mpi_perf);
 
 				if (!mpi->received_last_update[pid]) {
 					auto iprobe_start = clock::now();
@@ -248,7 +248,7 @@ void expand_neighbors_mpi_recv(const RRGraph &g, RRNode current, const route_sta
 	}
 }
 
-void route_net_mpi_send_recv_reduced_comm(const RRGraph &g, int vpr_id, int net_id, const source_t *source, const vector<sink_t *> &sinks, const route_parameters_t &params, route_state_t *state, congestion_t *congestion, route_tree_t &rt, t_net_timing &net_timing, vector<vector<RRNode>> &net_route_trees, vector<sink_t *> &routed_sinks, vector<sink_t *> &unrouted_sinks, mpi_context_t *mpi, perf_t *perf, mpi_perf_t *mpi_perf)
+void route_net_mpi_send_recv_reduced_comm(const RRGraph &g, int vpr_id, int net_id, const source_t *source, const vector<sink_t *> &sinks, const route_parameters_t &params, const vector<net_t> &nets, route_state_t *state, congestion_t *congestion, route_tree_t &rt, t_net_timing &net_timing, vector<vector<RRNode>> &net_route_trees, vector<sink_t *> &routed_sinks, vector<sink_t *> &unrouted_sinks, mpi_context_t *mpi, perf_t *perf, mpi_perf_t *mpi_perf)
 {
     using clock = std::chrono::high_resolution_clock;
 
@@ -428,7 +428,7 @@ void route_net_mpi_send_recv_reduced_comm(const RRGraph &g, int vpr_id, int net_
 
 		if (sync_costs) {
 			auto sync_start = clock::now();
-			sync_iprobe(congestion, g, params.pres_fac, net_route_trees, mpi, mpi_perf);
+			sync_iprobe(nets, congestion, g, params.pres_fac, net_route_trees, mpi, mpi_perf);
 			if (mpi_perf) {
 				mpi_perf->total_sync_time += clock::now()-sync_start;
 			}
@@ -445,6 +445,7 @@ void route_net_mpi_send_recv_reduced_comm(const RRGraph &g, int vpr_id, int net_
 
 		++isink;
 	}
+	zlog_level(delta_log, ROUTER_V2, "Routed net %d\n", vpr_id);
 	//zlog_level(delta_log, ROUTER_V1, "\n");
 
 	//return unrouted_sinks;

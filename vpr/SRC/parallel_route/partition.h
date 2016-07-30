@@ -45,7 +45,7 @@ void partition_graph(const Graph &g, int num_partitions, float ubvec, vector<int
 	idx_t *vwgt = new idx_t[nvtxs];
 
 	for (int i = 0; i < nvtxs; ++i) {
-		vwgt[i] = get_vertex_props(g).weight;
+		vwgt[i] = get_vertex_props(g, i).weight;
 	}
 	METIS_SetDefaultOptions(options);
 	//options[METIS_OPTION_DBGLVL] = METIS_DBG_INFO;

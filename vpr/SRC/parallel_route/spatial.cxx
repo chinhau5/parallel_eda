@@ -2273,7 +2273,8 @@ static void log_impl(zlog_msg_t *msg, FILE *&file)
 {
 	if (!file) {
 		char filename[256];
-		sprintf(filename, "%s%s", LOG_PATH_PREFIX, msg->path);
+		assert(false);
+		//sprintf(filename, "%s%s", LOG_PATH_PREFIX, msg->path);
 
 		file = fopen(filename, "w");
 		if (!file) {
@@ -2648,6 +2649,28 @@ void recalc_sum(congestion_t *in, congestion_t *inout, int *len, MPI_Datatype *d
 	}
 }
 
+void init_displ(const vector<vector<net_t*>> &partitions, int **recvcounts, int **displs)
+{
+	*recvcounts = new int[partitions.size()];
+	for (int i = 0; i < partitions.size(); ++i) {
+		(*recvcounts)[i] = 0;
+	}
+
+	for (int pi = 0; pi < partitions.size(); ++pi) {
+		for (auto &net : partitions[pi]) {
+			(*recvcounts)[pi] += net->sinks.size();
+		}
+	}
+
+	*displs = new int[partitions.size()];
+	for (int i = 0; i < partitions.size(); ++i) {
+		(*displs)[i] = 0;
+		for (int j = 0; j < i; ++j) {
+			(*displs)[i] += (*recvcounts)[j];
+		}
+	}
+}
+
 void init_displ(int num_procs, int current_level, const vector<pair<box, net_t *>> &nets_to_route, int initial_num_procs, int **recvcounts, int **displs)
 {
 	*recvcounts = new int[num_procs];
@@ -2670,6 +2693,57 @@ void init_displ(int num_procs, int current_level, const vector<pair<box, net_t *
 			(*displs)[i] += (*recvcounts)[j];
 		}
 	}
+}
+
+void sync_net_delay(const vector<vector<net_t *>> &partitions, int procid, int num_procs, int *recvcounts, int *displs, int current_level, MPI_Comm comm, t_net_timing *net_timing)
+{
+	int num_delays = 0;
+	for (auto &net : partitions[procid]) {
+		num_delays += net->sinks.size();
+	}
+
+	float *delays = new float[num_delays];
+	int idx = 0;
+	for (auto &net : partitions[procid]) {
+		zlog_level(delta_log, ROUTER_V3, "Net vpd id %d send delays:\n", net->vpr_id);
+		for (int k = 1; k <= net->sinks.size(); ++k) {
+			delays[idx] = net_timing[net->vpr_id].delay[k];
+			zlog_level(delta_log, ROUTER_V3, "\t%g\n", delays[idx]);
+			++idx;
+		}
+	}
+
+	assert(idx == num_delays);
+	assert(idx == recvcounts[procid]);
+
+	int total_num_sinks = 0;
+	for (int i = 0; i < num_procs; ++i) {
+		total_num_sinks += recvcounts[i];
+	}
+
+	float *all_delays = new float[total_num_sinks];
+
+	MPI_Allgatherv(delays, recvcounts[procid], MPI_FLOAT, all_delays, recvcounts, displs, MPI_FLOAT, comm);
+
+	for (int pi = 0; pi < num_procs; ++pi) {
+		idx = 0;
+		for (auto &net : partitions[pi]) {
+			zlog_level(delta_log, ROUTER_V3, "Net vpr id %d recv delays:\n", net->vpr_id);
+			for (int k = 1; k <= net->sinks.size(); ++k) {
+				if (pi == procid) {
+					assert(net_timing[net->vpr_id].delay[k] == all_delays[displs[pi] + idx]);
+				} else {
+					net_timing[net->vpr_id].delay[k] = all_delays[displs[pi] + idx];
+				}
+				zlog_level(delta_log, ROUTER_V3, "\t%g\n", net_timing[net->vpr_id].delay[k]);
+				++idx;
+			}
+		}
+		assert(idx == recvcounts[pi]);
+	}
+
+	delete [] delays;
+	delete [] all_delays;
 }
 
 void sync_net_delay(const vector<pair<box, net_t *>> &nets_to_route, int procid, int num_procs, int initial_num_procs, int *recvcounts, int *displs, int current_level, MPI_Comm comm, t_net_timing *net_timing)

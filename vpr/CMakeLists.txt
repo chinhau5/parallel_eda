@@ -104,6 +104,7 @@ set(srcs
 	SRC/parallel_route/mpi_spatial_route_partitioned.cxx
 	SRC/parallel_route/mpi_spatial_route_rma.cxx
 	SRC/parallel_route/mpi_spatial_route_simulated.cxx
+	SRC/parallel_route/mpi_route_load_balanced.cxx
 	#SRC/parallel_route/astar.cxx
 	#SRC/parallel_route/partitioning_route.c
 	SRC/parallel_route/route_tree.c

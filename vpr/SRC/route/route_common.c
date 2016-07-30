@@ -38,6 +38,7 @@ bool mpi_spatial_route_simulated(t_router_opts *opts, struct s_det_routing_arch 
 bool mpi_spatial_route_flat(t_router_opts *opts, struct s_det_routing_arch det_routing_arch, t_direct_inf *directs, int num_directs, t_segment_inf *segment_inf, t_timing_inf timing_inf);
 bool mpi_spatial_route_flat_improved(t_router_opts *opts, struct s_det_routing_arch det_routing_arch, t_direct_inf *directs, int num_directs, t_segment_inf *segment_inf, t_timing_inf timing_inf);
 bool mpi_spatial_route_flat_reduced_comm(t_router_opts *opts, struct s_det_routing_arch det_routing_arch, t_direct_inf *directs, int num_directs, t_segment_inf *segment_inf, t_timing_inf timing_inf);
+bool mpi_route_load_balanced(t_router_opts *opts, struct s_det_routing_arch det_routing_arch, t_direct_inf *directs, int num_directs, t_segment_inf *segment_inf, t_timing_inf timing_inf);
 bool new_astar_route(t_router_opts *opts);
 
 
@@ -382,7 +383,7 @@ boolean try_route_new(int width_fac, struct s_router_opts router_opts,
 			vpr_printf(TIO_MESSAGE_INFO, "Confirming Router Algorithm: HYBRID.\n");
 			assert(router_opts.route_type != GLOBAL);
 			/*success = locking_route_deterministic(&router_opts, 0);*/
-			success = mpi_spatial_route_flat_reduced_comm(&router_opts, det_routing_arch, directs, num_directs, segment_inf, timing_inf);
+			success = mpi_route_load_balanced(&router_opts, det_routing_arch, directs, num_directs, segment_inf, timing_inf);
 			/*success = new_astar_route(&router_opts);*/
 			break;
 		default:
