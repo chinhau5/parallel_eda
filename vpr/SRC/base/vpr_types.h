@@ -747,6 +747,7 @@ struct s_router_opts {
     boolean rip_up_always;
 	   boolean large_bb;
 	   boolean work_conserving;
+	   boolean load_balanced;
 };
 
 /* All the parameters controlling the router's operation are in this        *

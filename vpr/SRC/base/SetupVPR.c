@@ -516,6 +516,11 @@ static void SetupRouterOpts(INP t_options Options, INP boolean TimingEnabled,
 	if (Options.Count[OT_RIP_UP_ALWAYS]) {
 		RouterOpts->rip_up_always = Options.rip_up_always;
 	}
+
+	RouterOpts->load_balanced = TRUE;
+	if (Options.Count[OT_LOAD_BALANCED]) {
+		RouterOpts->load_balanced = Options.load_balanced;
+	}
 }
 
 static void SetupAnnealSched(INP t_options Options,

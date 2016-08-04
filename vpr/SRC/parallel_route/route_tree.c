@@ -11,6 +11,17 @@ void route_tree_init(route_tree_t &rt)
 	rt.num_nodes = 0;
 }
 
+void route_tree_clear(route_tree_t &rt)
+{
+	rt.root_rt_node_id = RouteTree::null_vertex();
+	rt.root_rt_nodes.clear();
+	rt.num_nodes = 0;
+	clear_vertices(rt.graph);
+	rt.rr_node_to_rt_node.clear();
+
+	assert(route_tree_empty(rt));
+}
+
 bool route_tree_empty(const route_tree_t &rt)
 {
 	int num_rt_nodes = 0;
@@ -85,13 +96,13 @@ RouteTreeNode route_tree_add_rr_node(route_tree_t &rt, RRNode rr_node, const RRG
 
 		const auto &rr_node_p = get_vertex_props(g, rr_node);
 
-		segment seg(point(rr_node_p.xlow, rr_node_p.ylow), point(rr_node_p.xhigh, rr_node_p.yhigh));
+		/*segment seg(point(rr_node_p.xlow, rr_node_p.ylow), point(rr_node_p.xhigh, rr_node_p.yhigh));*/
 
-		if (rr_node_p.type != IPIN && rr_node_p.type != SINK) {
-			assert(rt.point_tree.count(make_pair(seg, rt_node)) == 0);
+		/*if (rr_node_p.type != IPIN && rr_node_p.type != SINK) {*/
+			/*assert(rt.point_tree.count(make_pair(seg, rt_node)) == 0);*/
 
-			rt.point_tree.insert(make_pair(seg, rt_node));
-		}
+			/*rt.point_tree.insert(make_pair(seg, rt_node));*/
+		/*}*/
 
 		++rt.num_nodes;
 
@@ -446,17 +457,18 @@ void route_tree_remove_node(route_tree_t &rt, RRNode rr_node, const RRGraph &g)
 
 	const auto &rr_node_p = get_vertex_props(g, rr_node);
 
-	if (rr_node_p.type != IPIN && rr_node_p.type != SINK) {
-		assert(rt.point_tree.remove(make_pair(
-						segment(
-							point(rr_node_p.xlow, rr_node_p.ylow),
-							point(rr_node_p.xhigh, rr_node_p.yhigh)
-							),
-						rt_node
-						)
-					)
-			  );
-	}
+	/*if (rr_node_p.type != IPIN && rr_node_p.type != SINK) {*/
+		/*bool success = rt.point_tree.remove(make_pair(*/
+						/*segment(*/
+							/*point(rr_node_p.xlow, rr_node_p.ylow),*/
+							/*point(rr_node_p.xhigh, rr_node_p.yhigh)*/
+							/*),*/
+						/*rt_node*/
+						/*)*/
+					/*);*/
+
+		/*assert(success);*/
+	/*}*/
 
 	--rt.num_nodes;
 	

@@ -37,8 +37,8 @@ void sync_net_delay(const vector<pair<box, net_t *>> &nets_to_route, int procid,
 void free_circuit();
 void init_displ(int num_procs, int current_level, const vector<pair<box, net_t *>> &nets_to_route, int initial_num_procs, int **recvcounts, int **displs);
 void get_sinks_to_route(net_t *net, const route_tree_t &rt, const vector<sink_t *> &unroutable_sinks, vector<sink_t *> &sinks_to_route);
-void send_route_tree(net_t *net, const RRGraph &g, const vector<vector<sink_t *>> &routed_sinks, const vector<route_tree_t> &route_trees, int to_procid, MPI_Comm comm);
-void recv_route_tree(net_t *net, const RRGraph &g, vector<vector<sink_t *>> &routed_sinks, route_state_t *states, vector<route_tree_t> &route_trees, t_net_timing *net_timing, int from_procid, MPI_Comm comm);
+void send_route_tree(const net_t *net, const vector<vector<sink_t *>> &routed_sinks, const vector<route_tree_t> &route_trees, int to_procid, MPI_Comm comm);
+void recv_route_tree(net_t *net, const RRGraph &g, vector<vector<sink_t *>> &routed_sinks, vector<route_tree_t> &route_trees, t_net_timing *net_timing, int from_procid, MPI_Comm comm);
 void init_route_structs(const RRGraph &g, const vector<net_t> &nets, const vector<net_t> &global_nets, route_state_t **states, congestion_t **congestion, vector<route_tree_t> &route_trees, t_net_timing **net_timing);
 void broadcast_rip_up(int net_id, mpi_context_t *mpi);
 void broadcast_pending_cost_updates_reduced(const vector<RRNode> &added_nodes, int net_id, int delta, mpi_context_t *mpi);
@@ -921,7 +921,7 @@ bool mpi_spatial_route_flat_reduced_comm(t_router_opts *opts, struct s_det_routi
 
 							zlog_level(delta_log, ROUTER_V3, "Recving net index %d from %d\n", i+j, mpi.rank+1);
 
-							recv_route_tree(net, partitioner.orig_g, routed_sinks, states, route_trees, net_timing, mpi.rank+1, mpi.comm);
+							recv_route_tree(net, partitioner.orig_g, routed_sinks, route_trees, net_timing, mpi.rank+1, mpi.comm);
 							assert(!net_route_trees[net->local_id].empty());
 
 							net_route_trees[net->local_id].clear();
@@ -935,7 +935,7 @@ bool mpi_spatial_route_flat_reduced_comm(t_router_opts *opts, struct s_det_routi
 
 							zlog_level(delta_log, ROUTER_V3, "Sending net index %d from %d\n", i+j, mpi.rank);
 
-							send_route_tree(net, partitioner.orig_g, routed_sinks, route_trees, mpi.rank-1, mpi.comm);
+							send_route_tree(net, routed_sinks, route_trees, mpi.rank-1, mpi.comm);
 						}
 					}
 				}

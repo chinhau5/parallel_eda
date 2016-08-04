@@ -51,9 +51,9 @@ typedef struct route_tree_t {
 	//map<int, vector<int>> sink_rr_node_to_path;
 	map<RRNode, std::shared_ptr<vector<path_node_t>>> rr_node_to_path;
 	//map<int, RouteTreeNode> path_branch_point;
-	bgi::rtree<rtree_value, bgi::rstar<64>> point_tree;
-	box scheduler_bounding_box;
-	std::map<int, std::vector<int>> sink_edges;
+	//bgi::rtree<rtree_value, bgi::rstar<64>> point_tree;
+	//box scheduler_bounding_box;
+	//std::map<int, std::vector<int>> sink_edges;
 
 	//template<typename Graph, typename Value, typename Base>
 	//struct iterator : public std::iterator<
@@ -103,7 +103,7 @@ typedef struct route_tree_t {
 	//typedef iterator<RouteTree, int, int> vertex_iterator;
 	typedef typename RouteTree::vertex_iterator vertex_iterator;
 	//typedef iterator<const RouteTreeNode, typename RouteTree::vertex_iterator> vertex_const_iterator;
-	typedef typename RouteTree::out_edges_iterator branch_iterator;
+	typedef typename RouteTree::out_edge_iterator branch_iterator;
 	//typedef typename RouteTree::out_edges_const_iterator branch_const_iterator;
 } route_tree_t;
 
@@ -202,9 +202,9 @@ bool route_tree_node_check_and_mark_congested_for_rip_up(route_tree_t &rt, Route
 	rt_node_p.pending_rip_up |= (get_occ(congestion, rt_node_p.rr_node) > rr_node_p.capacity);
 	/*rt_node_p.pending_rip_up = true;*/
 
-	if (rt_node_p.pending_rip_up) {
-		bg::expand(rt.scheduler_bounding_box, segment(point(rr_node_p.xlow, rr_node_p.ylow), point(rr_node_p.xhigh, rr_node_p.yhigh)));
-	}
+	//if (rt_node_p.pending_rip_up) {
+		//bg::expand(rt.scheduler_bounding_box, segment(point(rr_node_p.xlow, rr_node_p.ylow), point(rr_node_p.xhigh, rr_node_p.yhigh)));
+	//}
 
 	rt_node_p.ripped_up = false;
 
@@ -232,7 +232,7 @@ bool route_tree_mark_congested_nodes_to_be_ripped_internal(route_tree_t &rt, con
 template<typename Congestion>
 bool route_tree_mark_congested_nodes_to_be_ripped(route_tree_t &rt, const RRGraph &g, const Congestion *congestion)
 {
-	rt.scheduler_bounding_box = bg::make_inverse<box>();
+	//rt.scheduler_bounding_box = bg::make_inverse<box>();
 
 	bool marked = false;
 

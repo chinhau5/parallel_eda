@@ -202,7 +202,7 @@ struct fast_graph_t {
 			int end_e;
 	};
 
-	//struct out_edges_iterator : public std::iterator<
+	//struct out_edge_iterator : public std::iterator<
 					  //typename std::forward_iterator_tag,
 					  //fast_edge_t<EdgeProperties>,
 					  //ptrdiff_t,
@@ -212,33 +212,33 @@ struct fast_graph_t {
 		//fast_graph_t &g;
 		//vector<int>::const_iterator iter;
 
-		//out_edges_iterator(fast_graph_t &g, const vector<int>::const_iterator &iter) 
+		//out_edge_iterator(fast_graph_t &g, const vector<int>::const_iterator &iter) 
 			//: g(g), iter(iter)
 		   //{
 		//}
 
-		//out_edges_iterator &operator++()
+		//out_edge_iterator &operator++()
 		//{
 			//++iter;
 			//return *this;
 		//}
 
-		//typename out_edges_iterator::reference operator*() const
+		//typename out_edge_iterator::reference operator*() const
 		//{
 			//return g.edges[*iter];
 		//}
 
-		//typename out_edges_iterator::pointer operator->() const
+		//typename out_edge_iterator::pointer operator->() const
 		//{
 			//return &g.edges[*iter];
 		//}
 
-		//bool operator==(const out_edges_iterator &other) const
+		//bool operator==(const out_edge_iterator &other) const
 		//{
 			//return other.iter == iter;
 		//}
 
-		//bool operator!=(const out_edges_iterator &other) const
+		//bool operator!=(const out_edge_iterator &other) const
 		//{
 			//return other.iter != iter;
 		//}
@@ -343,8 +343,8 @@ struct fast_graph_t {
 
 	typedef boost::counting_iterator<unsigned long> vertex_iterator;
 
-	//typedef boost::transform_iterator<edge_to_target_t<EdgeProperties>, typename vector<fast_edge_t<EdgeProperties>>::const_iterator> out_edges_iterator;
-	typedef typename vector<fast_edge_t<EdgeProperties>>::const_iterator out_edges_iterator;
+	//typedef boost::transform_iterator<edge_to_target_t<EdgeProperties>, typename vector<fast_edge_t<EdgeProperties>>::const_iterator> out_edge_iterator;
+	typedef typename vector<fast_edge_t<EdgeProperties>>::const_iterator out_edge_iterator;
 };
 
 template<typename VertexProperties, typename EdgeProperties>
@@ -365,7 +365,7 @@ get_vertices(const fast_graph_t<VertexProperties, EdgeProperties> &g)
 }
 
 //template<typename VertexProperties, typename EdgeProperties>
-//boost::iterator_range<typename fast_graph_t<VertexProperties, EdgeProperties>::out_edges_iterator>
+//boost::iterator_range<typename fast_graph_t<VertexProperties, EdgeProperties>::out_edge_iterator>
 //get_out_edges(const fast_graph_t<VertexProperties, EdgeProperties> &g, int v)
 //{
 	//assert(v < g.vertices.size());
@@ -377,7 +377,7 @@ get_vertices(const fast_graph_t<VertexProperties, EdgeProperties> &g)
 //}
 
 template<typename VertexProperties, typename EdgeProperties>
-boost::iterator_range<typename fast_graph_t<VertexProperties, EdgeProperties>::out_edges_iterator>
+boost::iterator_range<typename fast_graph_t<VertexProperties, EdgeProperties>::out_edge_iterator>
 get_out_edges(const fast_graph_t<VertexProperties, EdgeProperties> &g, int v)
 {
 	assert(v < g.vertices.size());
@@ -545,19 +545,19 @@ EdgeProperties &get_edge_props(const fast_graph_t<VertexProperties, EdgeProperti
 	return *e.properties;
 }
 
-template<typename VertexProperties, typename EdgeProperties, typename Func>
-void clear_vertices(fast_graph_t<VertexProperties, EdgeProperties> &g)
-{
-	g.vertices.clear();
-	g.edges.clear();
-}
-
 template<typename VertexProperties, typename EdgeProperties>
 void clear_edges(fast_graph_t<VertexProperties, EdgeProperties> &g)
 {
 	for (const auto &v : get_vertices(g)) {
 		g.vertices[v].edges.clear();
 	}
+}
+
+template<typename VertexProperties, typename EdgeProperties>
+void clear_vertices(fast_graph_t<VertexProperties, EdgeProperties> &g)
+{
+	clear_edges(g);
+	g.vertices.clear();
 }
 
 template<typename Graph, typename VertexLabeler, typename EdgeLabeler>

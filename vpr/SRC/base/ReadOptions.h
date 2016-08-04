@@ -90,6 +90,7 @@ struct s_options {
     boolean rip_up_always;
     boolean large_bb;
     boolean work_conserving;
+    boolean load_balanced;
 
 	/* Timing-driven router options only */
 	float astar_fac;

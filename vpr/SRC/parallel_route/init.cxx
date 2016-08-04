@@ -341,7 +341,6 @@ void init_nets(vector<net_t> &nets, vector<net_t> &global_nets, int bb_factor, b
 		net_t net;
 
 		net.vpr_id = i;
-		net.local_id = local_id;
 
 		net.source.rr_node = net_rr_terminals[i][0];
 		int b = clb_net[i].node_block[0];
@@ -444,12 +443,16 @@ void init_nets(vector<net_t> &nets, vector<net_t> &global_nets, int bb_factor, b
 		/*net.box.ymax = route_bb[i].ymax;*/
 
 		if (clb_net[i].is_global) {
+			net.local_id = -1;
+
 			global_nets.push_back(net);
 
 			zlog_debug(net_log, "Global net %d\n", i);
 		} else {
-			nets.push_back(net);
+			net.local_id = local_id;
 			++local_id;
+
+			nets.push_back(net);
 		}
 	}
 

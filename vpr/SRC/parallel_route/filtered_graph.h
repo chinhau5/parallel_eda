@@ -72,7 +72,7 @@ get_edges(const filtered_graph_t<Graph, VertexPredicate, EdgePredicate> &fg)
 }
 
 template<typename Graph, typename VertexPredicate, typename EdgePredicate>
-boost::iterator_range<boost::filter_iterator<EdgePredicate, typename Graph::out_edges_iterator>>
+boost::iterator_range<boost::filter_iterator<EdgePredicate, typename Graph::out_edge_iterator>>
 //auto 
 get_out_edges(const filtered_graph_t<Graph, VertexPredicate, EdgePredicate> &fg, int v)
 {

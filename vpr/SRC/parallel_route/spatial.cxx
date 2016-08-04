@@ -2649,6 +2649,22 @@ void recalc_sum(congestion_t *in, congestion_t *inout, int *len, MPI_Datatype *d
 	}
 }
 
+void init_displ_nets(const vector<vector<net_t*>> &partitions, int **recvcounts, int **displs)
+{
+	*recvcounts = new int[partitions.size()];
+	for (int pi = 0; pi < partitions.size(); ++pi) {
+		(*recvcounts)[pi] = partitions[pi].size();
+	}
+
+	*displs = new int[partitions.size()];
+	for (int i = 0; i < partitions.size(); ++i) {
+		(*displs)[i] = 0;
+		for (int j = 0; j < i; ++j) {
+			(*displs)[i] += (*recvcounts)[j];
+		}
+	}
+}
+
 void init_displ(const vector<vector<net_t*>> &partitions, int **recvcounts, int **displs)
 {
 	*recvcounts = new int[partitions.size()];
@@ -2807,7 +2823,7 @@ void sync_net_delay(const vector<pair<box, net_t *>> &nets_to_route, int procid,
 	delete [] all_delays;
 }
 
-void recv_route_tree(net_t *net, const RRGraph &g, vector<vector<sink_t *>> &routed_sinks, route_state_t *states, vector<route_tree_t> &route_trees, t_net_timing *net_timing, int from_procid, MPI_Comm comm)
+void recv_route_tree(net_t *net, const RRGraph &g, vector<vector<sink_t *>> &routed_sinks, vector<route_tree_t> &route_trees, t_net_timing *net_timing, int from_procid, MPI_Comm comm)
 {
 	MPI_Status status;
 	MPI_Probe(from_procid, net->local_id, comm, &status);
@@ -2821,6 +2837,7 @@ void recv_route_tree(net_t *net, const RRGraph &g, vector<vector<sink_t *>> &rou
 	MPI_Recv(routed_sink_ids, num_routed_sinks, MPI_INT, status.MPI_SOURCE, status.MPI_TAG, comm, MPI_STATUS_IGNORE);
 
 	assert(routed_sinks[net->local_id].empty());
+
 	for (int i = 0; i < num_routed_sinks; ++i) {
 		int num_matches = 0;
 		int match = -1;
@@ -2916,7 +2933,7 @@ void recv_route_tree(net_t *net, const RRGraph &g, vector<vector<sink_t *>> &rou
 	delete [] recv;
 }
 
-void send_route_tree(net_t *net, const RRGraph &g, const vector<vector<sink_t *>> &routed_sinks, const vector<route_tree_t> &route_trees, int to_procid, MPI_Comm comm)
+void send_route_tree(const net_t *net, const vector<vector<sink_t *>> &routed_sinks, const vector<route_tree_t> &route_trees, int to_procid, MPI_Comm comm)
 {
 	if (routed_sinks[net->local_id].empty()) {
 		zlog_level(delta_log, ROUTER_V3, "Sending, net %d has no routed sinks\n", net->vpr_id);
