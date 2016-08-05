@@ -17,25 +17,22 @@ float get_delay(const rr_edge_property_t &e, const rr_node_property_t &v, float 
 //void broadcast_pending_cost_updates(queue<RRNode> &cost_update_q, int delta, int this_pid, int num_procs, MPI_Comm comm, vector<ongoing_transaction_t> &transactions);
 //
 
-void progress_sends(vector<ongoing_transaction_t> &pending_sends)
+void progress_sends(mpi_context_t *mpi)
 {
 	const int MAX_PENDING_SENDS = 8;
 
-	vector<MPI_Request> pending_send_reqs;
-	for (auto &pending_send : pending_sends) {
-		pending_send_reqs.push_back(pending_send.req);
-	}
-
 	//if (pending_sends.size() > MAX_PENDING_SENDS) {
-		int num_completed;
-		vector<int> completed_indices(pending_send_reqs.size());
-		vector<MPI_Status> completed_statuses(pending_send_reqs.size());
+		//int num_completed;
+		//vector<int> completed_indices(mpi->pending_send_req.size());
+		//vector<MPI_Status> completed_statuses(mpi->pending_send_req.size());
 		//assert(MPI_Waitall(pending_send_reqs.size(), pending_send_reqs.data(),
 				//&num_completed, completed_indices.data(), completed_statuses.data()) == MPI_SUCCESS);
-		assert(MPI_Waitall(pending_send_reqs.size(), pending_send_reqs.data(),
-				MPI_STATUSES_IGNORE) == MPI_SUCCESS);
+		int error = MPI_Waitall(mpi->pending_send_req.size(), mpi->pending_send_req.data(), MPI_STATUSES_IGNORE);
+
+		assert(error == MPI_SUCCESS);
 		
-		pending_sends.clear();
+		mpi->pending_send_data.clear();
+		mpi->pending_send_req.clear();
 
 		//vector<bool> completed(pending_sends.size(), false);
 		//for (int i = 0; i < num_completed; ++i) {
@@ -58,10 +55,10 @@ void broadcast_pending_cost_updates_improved(queue<RRNode> &cost_update_q, int d
 		return;
 	}
 
-	auto data = make_shared<vector<send_data_t>>();
+	auto data = make_shared<vector<node_update_t>>();
 
 	while (!cost_update_q.empty()) {
-		send_data_t d;
+		node_update_t d;
 
 		d.rr_node = cost_update_q.front();
 		d.delta = delta;
@@ -76,16 +73,14 @@ void broadcast_pending_cost_updates_improved(queue<RRNode> &cost_update_q, int d
 		if (i != mpi->rank) {
 			zlog_level(delta_log, ROUTER_V3, "Sent a path of length %lu from %d to %d\n", data->size(), mpi->rank, i);
 
-			ongoing_transaction_t trans;
+			mpi->pending_send_data.push_back(data);
+			mpi->pending_send_req.push_back(MPI_Request());
 
-			trans.data = data;
-			assert(MPI_Isend(trans.data->data(), trans.data->size()*2, MPI_INT, i, 3399, mpi->comm, &trans.req) == MPI_SUCCESS);
-
-			mpi->pending_sends.push_back(trans);
+			assert(MPI_Isend(data->data(), data->size()*2, MPI_INT, i, 3399, mpi->comm, &mpi->pending_send_req.back()) == MPI_SUCCESS);
 		}
 	}
 
-	progress_sends(mpi->pending_sends);
+	progress_sends(mpi);
 }
 
 bool sync_iprobe(congestion_t *congestion, const RRGraph &g, float pres_fac, bool blocking, mpi_context_t *mpi, mpi_perf_t *mpi_perf)
@@ -108,11 +103,11 @@ bool sync_iprobe(congestion_t *congestion, const RRGraph &g, float pres_fac, boo
 					if (num_recvd % 2 == 0) {
 						zlog_level(delta_log, ROUTER_V3, "Received a path of length %d from %d\n", num_recvd/2, status.MPI_SOURCE);
 
-						vector<send_data_t> data(num_recvd/2);
+						vector<node_update_t> data(num_recvd/2);
 
 						assert(MPI_Recv(data.data(), num_recvd, MPI_INT, pid, 3399, mpi->comm, MPI_STATUS_IGNORE) == MPI_SUCCESS);
 
-						const send_data_t *d = data.data();
+						const node_update_t *d = data.data();
 
 						for (int j = 0; j < num_recvd/2; ++j) {
 							update_one_cost_internal(d[j].rr_node, g, congestion, d[j].delta, pres_fac);
@@ -146,18 +141,17 @@ bool sync_improved(congestion_t *congestion, const RRGraph &g, float pres_fac, b
 	for (int pid = 0; pid < mpi->comm_size; ++pid) {
 		if (pid != mpi->rank) {
 			if (!mpi->received_last_update[pid]) {
-				int num_recvs_required = MAX_PENDING_RECVS-mpi->pending_recvs[pid].size();
+				int num_recvs_required = MAX_PENDING_RECVS-mpi->pending_recv_req[pid].size();
 
 				for (int i = 0; i < num_recvs_required; ++i) {
-					ongoing_transaction_t trans;
-
-					trans.data = make_shared<vector<send_data_t>>();
+					auto data = make_shared<vector<node_update_t>>();
 					/* a large buffer, mpi_recv will raise exception when the buffer is too small */
-					trans.data->resize(4096);
+					data->resize(4096);
 
-					assert(MPI_Irecv(trans.data->data(), trans.data->size()*2, MPI_INT, pid, 3399, mpi->comm, &trans.req) == MPI_SUCCESS);
+					mpi->pending_recv_data[pid].push_back(data);
+					mpi->pending_recv_req[pid].push_back(MPI_Request());
 
-					mpi->pending_recvs[pid].push_back(trans);
+					assert(MPI_Irecv(data->data(), data->size()*2, MPI_INT, pid, 3399, mpi->comm, &mpi->pending_recv_req[pid].back()) == MPI_SUCCESS);
 				}
 
 				++num_active_procs;
@@ -174,8 +168,8 @@ bool sync_improved(congestion_t *congestion, const RRGraph &g, float pres_fac, b
 
 	for (int pid = 0; pid < mpi->comm_size; ++pid) {
 		if (pid != mpi->rank) {
-			for (auto &recv : mpi->pending_recvs[pid]) {
-				all_requests.push_back(recv.req);
+			for (auto &req : mpi->pending_recv_req[pid]) {
+				all_requests.push_back(req);
 				owner.push_back(pid);
 			}
 		}
@@ -205,7 +199,7 @@ bool sync_improved(congestion_t *congestion, const RRGraph &g, float pres_fac, b
 	for (int i = 0; i < num_completed; ++i) {
 		assert(completed_statuses[i].MPI_SOURCE == owner[completed_indices[i]]);
 
-		ongoing_transaction_t *completed_recv = &mpi->pending_recvs[completed_statuses[i].MPI_SOURCE][completed_indices[i] % MAX_PENDING_RECVS];
+		const auto &completed_recv_data = mpi->pending_recv_data[completed_statuses[i].MPI_SOURCE][completed_indices[i] % MAX_PENDING_RECVS];
 
 		int num_recvd;
 		assert(MPI_Get_count(&completed_statuses[i], MPI_INT, &num_recvd) == MPI_SUCCESS);
@@ -213,7 +207,7 @@ bool sync_improved(congestion_t *congestion, const RRGraph &g, float pres_fac, b
 		if (num_recvd % 2 == 0) {
 			zlog_level(delta_log, ROUTER_V3, "Received a path of length %d from %d\n", num_recvd/2, completed_statuses[i].MPI_SOURCE);
 
-			const send_data_t *d = completed_recv->data->data();
+			const node_update_t *d = completed_recv_data->data();
 
 			for (int j = 0; j < num_recvd/2; ++j) {
 				update_one_cost_internal(d[j].rr_node, g, congestion, d[j].delta, pres_fac);
@@ -222,7 +216,7 @@ bool sync_improved(congestion_t *congestion, const RRGraph &g, float pres_fac, b
 		} else {
 			zlog_level(delta_log, ROUTER_V3, "Received last update from %d\n", completed_statuses[i].MPI_SOURCE);
 			assert(num_recvd == 1);
-			int *data = (int *)completed_recv->data->data();
+			int *data = (int *)completed_recv_data->data();
 			assert(data[0] == -1);
 			assert(!mpi->received_last_update[completed_statuses[i].MPI_SOURCE]);
 			mpi->received_last_update[completed_statuses[i].MPI_SOURCE] = true;
@@ -231,24 +225,29 @@ bool sync_improved(congestion_t *congestion, const RRGraph &g, float pres_fac, b
 		completed[completed_indices[i]] = true;
 	}
 
-	vector<vector<ongoing_transaction_t>> new_pending_recvs(mpi->comm_size);
+	vector<vector<MPI_Request>> new_pending_recv_req(mpi->comm_size);
+	vector<vector<std::shared_ptr<vector<node_update_t>>>> new_pending_recv_data(mpi->comm_size);
 	vector<MPI_Request> cancelled_requests;
 	for (int i = 0; i < completed.size(); ++i) {
 		int from_pid = owner[i];
 		if (!completed[i]) {
-			auto &pending_recv = mpi->pending_recvs[from_pid][i % MAX_PENDING_RECVS];
+			auto &pending_recv_data = mpi->pending_recv_data[from_pid][i % MAX_PENDING_RECVS];
+			auto &pending_recv_req = mpi->pending_recv_req[from_pid][i % MAX_PENDING_RECVS];
+
 			if (!mpi->received_last_update[from_pid]) { 
-				new_pending_recvs[from_pid].push_back(pending_recv);	
+				new_pending_recv_data[from_pid].push_back(pending_recv_data);	
+				new_pending_recv_req[from_pid].push_back(pending_recv_req);	
 			} else {
-				MPI_Cancel(&pending_recv.req);
-				cancelled_requests.push_back(pending_recv.req);
+				MPI_Cancel(&pending_recv_req);
+				cancelled_requests.push_back(pending_recv_req);
 			}
 		}
 	}
 
 	for (int pid = 0; pid < mpi->comm_size; ++pid) {
 		if (pid != mpi->rank) {
-			mpi->pending_recvs[pid] = new_pending_recvs[pid];
+			mpi->pending_recv_data[pid] = new_pending_recv_data[pid];
+			mpi->pending_recv_req[pid] = new_pending_recv_req[pid];
 		}
 	}
 

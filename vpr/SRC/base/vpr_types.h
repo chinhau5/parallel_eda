@@ -748,6 +748,7 @@ struct s_router_opts {
 	   boolean large_bb;
 	   boolean work_conserving;
 	   boolean load_balanced;
+	   boolean sync_only_once;
 };
 
 /* All the parameters controlling the router's operation are in this        *

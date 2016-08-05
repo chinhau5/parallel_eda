@@ -69,6 +69,7 @@ if (CMAKE_SYSTEM_NAME STREQUAL "Linux")
 		pthread
 		dl 
 		m
+		rt
 		zlog
 		boost_timer
 		boost_system

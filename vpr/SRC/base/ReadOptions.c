@@ -481,6 +481,8 @@ ProcessOption(INP char **Args, INOUTP t_options * Options) {
 		return ReadOnOff(Args, &Options->rip_up_always);
 	case OT_LOAD_BALANCED:
 		return ReadOnOff(Args, &Options->load_balanced);
+	case OT_SYNC_ONLY_ONCE:
+		return ReadOnOff(Args, &Options->sync_only_once);
 			
 		/* Routing options valid only for timing-driven routing */
 	case OT_ASTAR_FAC:

@@ -206,13 +206,13 @@ typedef struct boundary_node_t {
 	vector<path_node_t> path;
 } boundary_node_t;
 
-typedef	struct send_data_t {
+typedef	struct node_update_t {
 	int rr_node;
 	int delta;
-} send_data_t;
+} node_update_t;
 
 typedef struct ongoing_transaction_t {
-	std::shared_ptr<vector<send_data_t>> data;
+	std::shared_ptr<vector<node_update_t>> data;
 	MPI_Request req;
 } ongoing_transaction_t;
 
@@ -220,8 +220,10 @@ typedef struct mpi_context_t {
 	MPI_Comm comm;
 	int rank;
 	int comm_size;
-	vector<ongoing_transaction_t> pending_sends;
-	vector<vector<ongoing_transaction_t>> pending_recvs; 
+	vector<std::shared_ptr<vector<node_update_t>>> pending_send_data;
+	vector<MPI_Request> pending_send_req;
+	vector<vector<std::shared_ptr<vector<node_update_t>>>> pending_recv_data; 
+	vector<vector<MPI_Request>> pending_recv_req; 
 	vector<bool> received_last_update; 
 } mpi_context_t;
 

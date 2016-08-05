@@ -336,7 +336,7 @@ void update_one_cost_mpi_send(const vector<RRNode>::const_iterator &rr_nodes_beg
 	/*const RouteTreeNode *last = nullptr;*/
 
 	ongoing_transaction_t trans;
-	trans.data = make_shared<vector<send_data_t>>();
+	trans.data = make_shared<vector<node_update_t>>();
 	for (auto iter = rr_nodes_begin; iter != rr_nodes_end; ++iter) {
 		/* we don't update get_source because that's the link to existing route tree and the cost is handled by update_one_cost_internal */
 		/*const RouteTreeNode &rt_node = get_target(rt.graph, get_edge(rt.graph, rt_edge_id));*/
@@ -344,7 +344,7 @@ void update_one_cost_mpi_send(const vector<RRNode>::const_iterator &rr_nodes_beg
 		/*RRNode &rr_node = get_vertex(g, rt_node.rr_node);*/
 		update_one_cost_internal(*iter, g, congestion, /*net_id,*/ delta, pres_fac);
 
-		send_data_t d;
+		node_update_t d;
 		d.rr_node = *iter;
 		d.delta = delta;
 

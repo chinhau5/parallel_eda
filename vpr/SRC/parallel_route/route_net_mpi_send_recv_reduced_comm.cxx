@@ -17,35 +17,39 @@ std::shared_ptr<vector<path_node_t>> get_path(int sink_rr_node_id, const route_s
 float get_timing_driven_expected_cost(const rr_node_property_t &current, const rr_node_property_t &target, float criticality_fac, float R_upstream);
 float get_delay(const rr_edge_property_t &e, const rr_node_property_t &v, float unbuffered_upstream_R);
 //void broadcast_pending_cost_updates(queue<RRNode> &cost_update_q, int delta, int this_pid, int num_procs, MPI_Comm comm, vector<ongoing_transaction_t> &transactions);
-void progress_sends(vector<ongoing_transaction_t> &pending_sends);
+void progress_sends(mpi_context_t *mpi);
 
-void broadcast_rip_up(int net_id, mpi_context_t *mpi)
+void broadcast_rip_up_no_progress(int net_id, mpi_context_t *mpi)
 {
 	for (int i = 0; i < mpi->comm_size; ++i) {
 		if (i != mpi->rank) {
 			zlog_level(delta_log, ROUTER_V3, "MPI sent rip up from %d to %d\n", mpi->rank, i);
 
-			ongoing_transaction_t trans;
+			mpi->pending_send_data.push_back(nullptr);
+			mpi->pending_send_req.push_back(MPI_Request());
 
-			int error = MPI_Isend(nullptr, 0, MPI_INT, i, RIP_UP_TAG + net_id, mpi->comm, &trans.req);
+			int error = MPI_Isend(nullptr, 0, MPI_INT, i, RIP_UP_TAG + net_id, mpi->comm, &mpi->pending_send_req.back());
 
 			assert(error == MPI_SUCCESS);
-
-			mpi->pending_sends.push_back(trans);
 		}
 	}
-
-	progress_sends(mpi->pending_sends);
 }
 
-void broadcast_pending_cost_updates_reduced(const vector<RRNode> &added_nodes, int net_id, int delta, mpi_context_t *mpi)
+void broadcast_rip_up(int net_id, mpi_context_t *mpi)
+{
+	broadcast_rip_up_no_progress(net_id, mpi);
+
+	progress_sends(mpi);
+}
+
+void broadcast_pending_cost_updates_reduced_no_progress(const vector<RRNode> &added_nodes, int net_id, int delta, mpi_context_t *mpi)
 {
 	assert(!added_nodes.empty());
 
-	auto data = make_shared<vector<send_data_t>>();
+	auto data = make_shared<vector<node_update_t>>();
 
 	for (const auto &node : added_nodes) {
-		send_data_t d;
+		node_update_t d;
 
 		d.rr_node = node;
 		d.delta = delta;
@@ -57,19 +61,23 @@ void broadcast_pending_cost_updates_reduced(const vector<RRNode> &added_nodes, i
 		if (i != mpi->rank) {
 			zlog_level(delta_log, ROUTER_V3, "MPI sent a path of length %lu from %d to %d\n", data->size(), mpi->rank, i);
 
-			ongoing_transaction_t trans;
+			mpi->pending_send_data.push_back(data);
+			mpi->pending_send_req.push_back(MPI_Request());
 
-			trans.data = data;
-
-			int error = MPI_Isend(trans.data->data(), trans.data->size()*2, MPI_INT, i, COST_UPDATE_TAG + net_id, mpi->comm, &trans.req);
+			int error = MPI_Isend(data->data(), data->size()*2, MPI_INT, i, COST_UPDATE_TAG + net_id, mpi->comm, &mpi->pending_send_req.back());
 
 			assert(error == MPI_SUCCESS);
-
-			mpi->pending_sends.push_back(trans);
 		}
 	}
 
-	progress_sends(mpi->pending_sends);
+	progress_sends(mpi);
+}
+
+void broadcast_pending_cost_updates_reduced(const vector<RRNode> &added_nodes, int net_id, int delta, mpi_context_t *mpi)
+{
+	broadcast_pending_cost_updates_reduced_no_progress(added_nodes, net_id, delta, mpi);
+
+	progress_sends(mpi);
 }
 
 void handle_packet(const MPI_Status &status, const vector<net_t> &nets, congestion_t *congestion, const RRGraph &g, float pres_fac, vector<vector<RRNode>> &net_route_trees, mpi_context_t *mpi, mpi_perf_t *mpi_perf)
@@ -123,7 +131,7 @@ void handle_packet(const MPI_Status &status, const vector<net_t> &nets, congesti
 
 			//auto update_start = clock::now();
 
-			vector<send_data_t> data(num_recvd/2);
+			vector<node_update_t> data(num_recvd/2);
 
 			//if (mpi_perf) {
 				//mpi_perf->total_update_time += clock::now()-update_start;
@@ -137,7 +145,7 @@ void handle_packet(const MPI_Status &status, const vector<net_t> &nets, congesti
 				//mpi_perf->total_calls += 2;
 			//}
 
-			const send_data_t *d = data.data();
+			const node_update_t *d = data.data();
 
 			//update_start = clock::now();
 
@@ -302,7 +310,7 @@ void expand_neighbors_mpi_recv(const RRGraph &g, RRNode current, const route_sta
 	}
 }
 
-void route_net_mpi_send_recv_reduced_comm(const RRGraph &g, int vpr_id, int net_id, const source_t *source, const vector<sink_t *> &sinks, const route_parameters_t &params, const vector<net_t> &nets, route_state_t *state, congestion_t *congestion, route_tree_t &rt, t_net_timing &net_timing, vector<vector<RRNode>> &net_route_trees, vector<sink_t *> &routed_sinks, vector<sink_t *> &unrouted_sinks, mpi_context_t *mpi, perf_t *perf, mpi_perf_t *mpi_perf)
+void route_net_mpi_send_recv_reduced_comm(const RRGraph &g, int vpr_id, int net_id, const source_t *source, const vector<sink_t *> &sinks, const route_parameters_t &params, const vector<net_t> &nets, route_state_t *state, congestion_t *congestion, route_tree_t &rt, t_net_timing &net_timing, vector<vector<RRNode>> &net_route_trees, vector<sink_t *> &routed_sinks, vector<sink_t *> &unrouted_sinks, mpi_context_t *mpi, perf_t *perf, mpi_perf_t *mpi_perf, bool sync_only_once)
 {
     using clock = myclock;
 
@@ -351,6 +359,8 @@ void route_net_mpi_send_recv_reduced_comm(const RRGraph &g, int vpr_id, int net_
 	}
 
 	int sync_freq = (int)floor(sqrt(sorted_sinks.size()));
+
+	vector<RRNode> all_added_nodes;
 
 	int isink = 0;
 	for (const auto &sink : sorted_sinks) {
@@ -428,7 +438,7 @@ void route_net_mpi_send_recv_reduced_comm(const RRGraph &g, int vpr_id, int net_
 		}
 
 		//bool sync_costs = (isink % sync_freq) == 0;
-		bool sync_costs = true;
+		//bool sync_costs = true;
 
 		if (!found_sink) {
 			assert(heap.empty());
@@ -460,18 +470,19 @@ void route_net_mpi_send_recv_reduced_comm(const RRGraph &g, int vpr_id, int net_
 			for (const auto &n : *path) {
 				if (valid(n.prev_edge) || n.rr_node_id == source->rr_node) {
 					added_nodes.push_back(n.rr_node_id);
+					all_added_nodes.push_back(n.rr_node_id);
 				}
 			}
 
 			update_one_cost(g, congestion, added_nodes.begin(), added_nodes.end(), 1, params.pres_fac);
 
-			//if (sync_costs) {
+			if (!sync_only_once) {
 				auto broadcast_start = clock::now();
 				broadcast_pending_cost_updates_reduced(added_nodes, net_id, 1, mpi);
 				if (mpi_perf) {
 					mpi_perf->total_broadcast_time += clock::now()-broadcast_start;
 				}
-			//}
+			}
 
 			if (sink->id != -1) {
 				net_timing.delay[sink->id+1] = get_vertex_props(rt.graph, route_tree_get_rt_node(rt, sink->rr_node)).delay;
@@ -480,7 +491,7 @@ void route_net_mpi_send_recv_reduced_comm(const RRGraph &g, int vpr_id, int net_
 			zlog_level(delta_log, ROUTER_V2, "Routed sink %d\n", sink->rr_node);
 		}
 
-		if (sync_costs) {
+		if (!sync_only_once) {
 			auto sync_start = clock::now();
 			sync_iprobe(nets, congestion, g, params.pres_fac, net_route_trees, mpi, mpi_perf);
 			if (mpi_perf) {
@@ -498,6 +509,20 @@ void route_net_mpi_send_recv_reduced_comm(const RRGraph &g, int vpr_id, int net_
 		heap = std::priority_queue<route_state_t>();
 
 		++isink;
+	}
+
+	if (sync_only_once) {
+		auto broadcast_start = clock::now();
+		broadcast_pending_cost_updates_reduced(all_added_nodes, net_id, 1, mpi);
+		if (mpi_perf) {
+			mpi_perf->total_broadcast_time += clock::now()-broadcast_start;
+		}
+
+		auto sync_start = clock::now();
+		sync_iprobe(nets, congestion, g, params.pres_fac, net_route_trees, mpi, mpi_perf);
+		if (mpi_perf) {
+			mpi_perf->total_sync_time += clock::now()-sync_start;
+		}
 	}
 
 	zlog_level(delta_log, ROUTER_V2, "Routed net %d\n", vpr_id);

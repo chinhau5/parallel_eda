@@ -87,6 +87,7 @@ enum e_OptionBaseToken {
 	OT_WORK_CONSERVING,
 	OT_RIP_UP_ALWAYS,
 	OT_LOAD_BALANCED,
+	OT_SYNC_ONLY_ONCE,
 	OT_BASE_UNKNOWN /* Must be last since used for counting enum items */
 };
 

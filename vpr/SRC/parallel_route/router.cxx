@@ -1669,10 +1669,10 @@ void broadcast_costs(const vector<RRNode>::const_iterator &rr_nodes_begin, const
 {
 	ongoing_transaction_t trans;
 
-	trans.data = make_shared<vector<send_data_t>>();
+	trans.data = make_shared<vector<node_update_t>>();
 
 	for (auto iter = rr_nodes_begin; iter != rr_nodes_end; ++iter) {
-		send_data_t d;
+		node_update_t d;
 		d.rr_node = *iter;
 		d.delta = delta;
 

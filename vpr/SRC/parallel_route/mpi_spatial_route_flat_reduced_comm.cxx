@@ -42,8 +42,8 @@ void recv_route_tree(net_t *net, const RRGraph &g, vector<vector<sink_t *>> &rou
 void init_route_structs(const RRGraph &g, const vector<net_t> &nets, const vector<net_t> &global_nets, route_state_t **states, congestion_t **congestion, vector<route_tree_t> &route_trees, t_net_timing **net_timing);
 void broadcast_rip_up(int net_id, mpi_context_t *mpi);
 void broadcast_pending_cost_updates_reduced(const vector<RRNode> &added_nodes, int net_id, int delta, mpi_context_t *mpi);
-void progress_sends(vector<ongoing_transaction_t> &pending_sends);
-void route_net_mpi_send_recv_reduced_comm(const RRGraph &g, int vpr_id, int net_id, const source_t *source, const vector<sink_t *> &sinks, const route_parameters_t &params, const vector<net_t> &nets, route_state_t *state, congestion_t *congestion, route_tree_t &rt, t_net_timing &net_timing, vector<vector<RRNode>> &net_route_trees, vector<sink_t *> &routed_sinks, vector<sink_t *> &unrouted_sinks, mpi_context_t *mpi, perf_t *perf, mpi_perf_t *mpi_perf);
+void progress_sends(mpi_context_t *mpi);
+void route_net_mpi_send_recv_reduced_comm(const RRGraph &g, int vpr_id, int net_id, const source_t *source, const vector<sink_t *> &sinks, const route_parameters_t &params, const vector<net_t> &nets, route_state_t *state, congestion_t *congestion, route_tree_t &rt, t_net_timing &net_timing, vector<vector<RRNode>> &net_route_trees, vector<sink_t *> &routed_sinks, vector<sink_t *> &unrouted_sinks, mpi_context_t *mpi, perf_t *perf, mpi_perf_t *mpi_perf, bool sync_only_once);
 
 bool all_done(mpi_context_t *mpi)
 {
@@ -357,7 +357,8 @@ bool mpi_spatial_route_flat_reduced_comm(t_router_opts *opts, struct s_det_routi
         int thread_num_sinks_to_route = 0;
 		//vector<vector<RRNode>> net_sinks(nets.size());
 		//
-		mpi.pending_recvs.resize(mpi.comm_size);
+		mpi.pending_recv_data.resize(mpi.comm_size);
+		mpi.pending_recv_req.resize(mpi.comm_size);
 		mpi.received_last_update.resize(mpi.comm_size);
 
 		std::fill(begin(mpi.received_last_update), end(mpi.received_last_update), false);
@@ -474,7 +475,7 @@ bool mpi_spatial_route_flat_reduced_comm(t_router_opts *opts, struct s_det_routi
 
 					int previous_num_routed_sinks = routed_sinks[net->local_id].size();
 
-					route_net_mpi_send_recv_reduced_comm(partitioner.orig_g, net->vpr_id, net->local_id, &net->source, sinks, params, nets, states, congestion, route_trees[net->local_id], net_timing[net->vpr_id], net_route_trees, routed_sinks[net->local_id], unroutable_sinks[net->local_id], &mpi, &perf, &mpi_perf);
+					route_net_mpi_send_recv_reduced_comm(partitioner.orig_g, net->vpr_id, net->local_id, &net->source, sinks, params, nets, states, congestion, route_trees[net->local_id], net_timing[net->vpr_id], net_route_trees, routed_sinks[net->local_id], unroutable_sinks[net->local_id], &mpi, &perf, &mpi_perf, false);
 
 					assert(routed_sinks[net->local_id].size() + unroutable_sinks[net->local_id].size() == net->sinks.size());
 
@@ -504,16 +505,15 @@ bool mpi_spatial_route_flat_reduced_comm(t_router_opts *opts, struct s_det_routi
 			if (pid != mpi.rank) {
 				/* very hackish just to make sure we have persistent storage 
 				 * for the trailer INT */
-				ongoing_transaction_t trans;
+				mpi.pending_send_data.push_back(nullptr);
+				mpi.pending_send_req.push_back(MPI_Request());
 
 				zlog_level(delta_log, ROUTER_V2, "Sent trailer packet from %d to %d\n", mpi.rank, pid);
-				assert(MPI_Isend(nullptr, 0, MPI_INT, pid, LAST_TAG, mpi.comm, &trans.req) == MPI_SUCCESS);
-
-				mpi.pending_sends.push_back(trans);
+				assert(MPI_Isend(nullptr, 0, MPI_INT, pid, LAST_TAG, mpi.comm, &mpi.pending_send_req.back()) == MPI_SUCCESS);
 			}
 		}
 
-		progress_sends(mpi.pending_sends);
+		progress_sends(&mpi);
 
 		actual_route_time = clock::now() - route_start;
 
@@ -526,9 +526,11 @@ bool mpi_spatial_route_flat_reduced_comm(t_router_opts *opts, struct s_det_routi
 		last_sync_time += clock::now()-last_sync_start;
 
 		for (int pid = 0; pid < mpi.comm_size; ++pid) {
-			assert(mpi.pending_recvs[pid].empty());
+			assert(mpi.pending_recv_data[pid].empty());
+			assert(mpi.pending_recv_req[pid].empty());
 		}
-		assert(mpi.pending_sends.empty());
+		assert(mpi.pending_send_data.empty());
+		assert(mpi.pending_send_req.empty());
 
 		//vector<MPI_Request> requests;
 		//for (int pid = 0; pid < mpi.comm_size; ++pid) {

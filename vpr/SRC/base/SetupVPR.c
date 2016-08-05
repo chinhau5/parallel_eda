@@ -521,6 +521,11 @@ static void SetupRouterOpts(INP t_options Options, INP boolean TimingEnabled,
 	if (Options.Count[OT_LOAD_BALANCED]) {
 		RouterOpts->load_balanced = Options.load_balanced;
 	}
+
+	RouterOpts->sync_only_once = FALSE;
+	if (Options.Count[OT_SYNC_ONLY_ONCE]) {
+		RouterOpts->sync_only_once = Options.sync_only_once;
+	}
 }
 
 static void SetupAnnealSched(INP t_options Options,

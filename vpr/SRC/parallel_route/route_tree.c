@@ -690,7 +690,7 @@ void route_tree_rip_up_marked_mpi_send_recv(route_tree_t &rt, const RRGraph &g, 
 {
 	char buffer[256];
 	ongoing_transaction_t trans;
-	trans.data = make_shared<vector<send_data_t>>();
+	trans.data = make_shared<vector<node_update_t>>();
 
 	for (const auto &rt_node : route_tree_get_nodes(rt)) {
 		auto &rt_node_p = get_vertex_props(rt.graph, rt_node);

@@ -21,10 +21,10 @@ void broadcast_pending_cost_updates(queue<RRNode> &cost_update_q, int delta, int
 		return;
 	}
 
-	auto data = make_shared<vector<send_data_t>>();
+	auto data = make_shared<vector<node_update_t>>();
 
 	while (!cost_update_q.empty()) {
-		send_data_t d;
+		node_update_t d;
 
 		d.rr_node = cost_update_q.front();
 		d.delta = delta;
@@ -80,7 +80,7 @@ void sync(congestion_t *congestion, const RRGraph &g, float pres_fac, int this_p
 				
 				assert(count > 0 && count % 2 == 0);
 
-				send_data_t *d = new send_data_t[count/2];
+				node_update_t *d = new node_update_t[count/2];
 
 				assert(MPI_Recv(d, count, MPI_INT, status.MPI_SOURCE, status.MPI_TAG, comm, &status) == MPI_SUCCESS);
 

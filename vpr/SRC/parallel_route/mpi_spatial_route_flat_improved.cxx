@@ -40,7 +40,7 @@ void send_route_tree(net_t *net, const RRGraph &g, const vector<vector<sink_t *>
 void recv_route_tree(net_t *net, const RRGraph &g, vector<vector<sink_t *>> &routed_sinks, route_state_t *states, vector<route_tree_t> &route_trees, t_net_timing *net_timing, int from_procid, MPI_Comm comm);
 void init_route_structs(const RRGraph &g, const vector<net_t> &nets, const vector<net_t> &global_nets, route_state_t **states, congestion_t **congestion, vector<route_tree_t> &route_trees, t_net_timing **net_timing);
 void broadcast_pending_cost_updates_improved(queue<RRNode> &cost_update_q, int delta, mpi_context_t *mpi);
-void progress_sends(vector<ongoing_transaction_t> &pending_sends);
+void progress_sends(mpi_context_t *mpi);
 
 bool mpi_spatial_route_flat_improved(t_router_opts *opts, struct s_det_routing_arch det_routing_arch, t_direct_inf *directs, int num_directs, t_segment_inf *segment_inf, t_timing_inf timing_inf)
 {
@@ -330,7 +330,8 @@ bool mpi_spatial_route_flat_improved(t_router_opts *opts, struct s_det_routing_a
         int thread_num_sinks_to_route = 0;
 		//vector<vector<RRNode>> net_sinks(nets.size());
 		//
-		mpi.pending_recvs.resize(mpi.comm_size);
+		mpi.pending_recv_data.resize(mpi.comm_size);
+		mpi.pending_recv_req.resize(mpi.comm_size);
 		mpi.received_last_update.resize(mpi.comm_size);
 
 		std::fill(begin(mpi.received_last_update), end(mpi.received_last_update), false);
@@ -455,21 +456,22 @@ bool mpi_spatial_route_flat_improved(t_router_opts *opts, struct s_det_routing_a
 			if (pid != mpi.rank) {
 				/* very hackish just to make sure we have persistent storage 
 				 * for the trailer INT */
-				ongoing_transaction_t trans;
-				trans.data = make_shared<vector<send_data_t>>();
-				send_data_t d;
+				node_update_t d;
 				d.rr_node = -1;
 				d.delta = -1;
-				trans.data->push_back(d);
+
+				auto data = make_shared<vector<node_update_t>>();
+				data->push_back(d);
+
+				mpi.pending_send_data.push_back(data);
+				mpi.pending_send_req.push_back(MPI_Request());
 
 				zlog_level(delta_log, ROUTER_V2, "Sent trailer packet from %d to %d\n", mpi.rank, pid);
-				assert(MPI_Isend(trans.data->data(), 1, MPI_INT, pid, 3399, mpi.comm, &trans.req) == MPI_SUCCESS);
-
-				mpi.pending_sends.push_back(trans);
+				assert(MPI_Isend(data->data(), 1, MPI_INT, pid, 3399, mpi.comm, &mpi.pending_send_req.back()) == MPI_SUCCESS);
 			}
 		}
 
-		progress_sends(mpi.pending_sends);
+		progress_sends(&mpi);
 
 		actual_route_time = clock::now() - route_start;
 
@@ -481,9 +483,11 @@ bool mpi_spatial_route_flat_improved(t_router_opts *opts, struct s_det_routing_a
 		last_sync_time += clock::now()-last_sync_start;
 
 		for (int pid = 0; pid < mpi.comm_size; ++pid) {
-			assert(mpi.pending_recvs[pid].empty());
+			assert(mpi.pending_recv_data[pid].empty());
+			assert(mpi.pending_recv_req[pid].empty());
 		}
-		assert(mpi.pending_sends.empty());
+		assert(mpi.pending_send_data.empty());
+		assert(mpi.pending_send_req.empty());
 
 		//vector<MPI_Request> requests;
 		//for (int pid = 0; pid < mpi.comm_size; ++pid) {

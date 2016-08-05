@@ -62,6 +62,7 @@ struct s_TokenPair OptionBaseTokenList[] = {
 	{ "num_runs", OT_NUM_RUNS }, { "analyze_timing", OT_ANALYZE_TIMING },
 	{ "transition_threshold", OT_TRANSITION_THRESHOLD }, { "rip_up_period", OT_RIP_UP_PERIOD },
 	{ "rip_up_always", OT_RIP_UP_ALWAYS }, { "work_conserving", OT_WORK_CONSERVING }, { "large_bb", OT_LARGE_BB }, { "load_balanced", OT_LOAD_BALANCED },
+	{ "sync_only_once", OT_SYNC_ONLY_ONCE },
 		{ NULL, OT_BASE_UNKNOWN } /* End of list marker */
 };
 
