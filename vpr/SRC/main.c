@@ -259,8 +259,8 @@ int main(int argc, char **argv) {
 
 	get_sched_bind(cpuset, nodeset);
 
-	print_sched_bind(cpuset, nodeset);
-	print_mem_bind();
+	/*print_sched_bind(cpuset, nodeset);*/
+	/*print_mem_bind();*/
 
 	bitmask *bind_to = numa_allocate_nodemask();
 	numa_bitmask_clearall(bind_to);
@@ -311,8 +311,8 @@ int main(int argc, char **argv) {
 #endif
 
 #ifdef __linux__
-	print_mem_map();
-	print_env();
+	/*print_mem_map();*/
+	/*print_env();*/
 
 	vector<mem_map_entry_t> entries_after_init;
 	parse_mem_map(getpid(), entries_after_init);

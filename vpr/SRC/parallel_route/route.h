@@ -224,7 +224,10 @@ typedef struct mpi_context_t {
 	vector<MPI_Request> pending_send_req;
 	vector<vector<std::shared_ptr<vector<node_update_t>>>> pending_recv_data; 
 	vector<vector<MPI_Request>> pending_recv_req; 
+	vector<std::shared_ptr<vector<int>>> pending_recv_data_flat; 
+	vector<MPI_Request> pending_recv_req_flat; 
 	vector<bool> received_last_update; 
+	vector<bool> has_pending_recv;
 } mpi_context_t;
 
 //typedef struct unrouted_sink_t {

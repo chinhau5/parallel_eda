@@ -3151,42 +3151,73 @@ static void free_blocks()
 	block = NULL;
 }
 
+void recv_sinks(vector<net_t> &nets, MPI_Comm comm)
+{
+	for (int i = 0; i < nets.size(); ++i) {
+		zlog_level(delta_log, ROUTER_V3, "Recving net vpr id %d source rr %d x %d y %d bb %d %d %d %d\n", nets[i].vpr_id, nets[i].source.rr_node, nets[i].source.x, nets[i].source.y, nets[i].bounding_box.xmin, nets[i].bounding_box.xmax, nets[i].bounding_box.ymin, nets[i].bounding_box.ymax);
+
+		int num_sinks;
+		MPI_Bcast(&num_sinks, 1, MPI_INT, 0, comm);
+
+		nets[i].sinks.resize(num_sinks);
+		MPI_Bcast(nets[i].sinks.data(), num_sinks, net_sink_dt, 0, comm);
+
+		zlog_level(delta_log, ROUTER_V3, "Net %d sink capacity %d\n", nets[i].vpr_id, nets[i].sinks.capacity()*sizeof(sink_t));
+
+		for (int j = 0; j < num_sinks; ++j) {
+			zlog_level(delta_log, ROUTER_V3, "\tRecving net sink rr %d x %d y %d bb %d %d %d %d\n", nets[i].sinks[j].rr_node, nets[i].sinks[j].x, nets[i].sinks[j].y, nets[i].sinks[j].current_bounding_box.xmin, nets[i].sinks[j].current_bounding_box.xmax, nets[i].sinks[j].current_bounding_box.ymin, nets[i].sinks[j].current_bounding_box.ymax);
+
+			nets[i].sinks[j].id = j;
+			nets[i].sinks[j].criticality_fac = std::numeric_limits<float>::max();
+		}
+	}
+}
+
+void send_sinks(vector<net_t> &nets, MPI_Comm comm)
+{
+	for (int i = 0; i < nets.size(); ++i) {
+		int num_sinks = nets[i].sinks.size();
+
+		assert(num_sinks > 0);
+
+		zlog_level(delta_log, ROUTER_V3, "Sending net vpr id %d source rr %d x %d y %d bb %d %d %d %d\n", nets[i].vpr_id, nets[i].source.rr_node, nets[i].source.x, nets[i].source.y, nets[i].bounding_box.xmin, nets[i].bounding_box.xmax, nets[i].bounding_box.ymin, nets[i].bounding_box.ymax);
+
+		MPI_Bcast(&num_sinks, 1, MPI_INT, 0, comm);
+		MPI_Bcast(nets[i].sinks.data(), num_sinks, net_sink_dt, 0, comm);
+
+		for (int j = 0; j < num_sinks; ++j) {
+			zlog_level(delta_log, ROUTER_V3, "\tSending net sink rr %d x %d y %d bb %d %d %d %d\n", nets[i].sinks[j].rr_node, nets[i].sinks[j].x, nets[i].sinks[j].y, nets[i].sinks[j].current_bounding_box.xmin, nets[i].sinks[j].current_bounding_box.xmax, nets[i].sinks[j].current_bounding_box.ymin, nets[i].sinks[j].current_bounding_box.ymax);
+		}
+	}
+}
+
 void sync_nets(vector<net_t> &nets, vector<net_t> &global_nets, int procid, MPI_Comm comm)
 {
 	if (procid == 0) {
 		int num_global_nets = global_nets.size();
 		MPI_Bcast(&num_global_nets, 1, MPI_INT, 0, comm);
+		MPI_Bcast(global_nets.data(), global_nets.size(), net_dt, 0, comm);
 
 		printf("sent num_global_nets: %d\n", num_global_nets);
 		
 		int num_nets = nets.size();
 		MPI_Bcast(&num_nets, 1, MPI_INT, 0, comm);
+		MPI_Bcast(nets.data(), nets.size(), net_dt, 0, comm);
 
 		printf("sent num_nets: %d\n", num_nets);
 
-		MPI_Bcast(nets.data(), nets.size(), net_dt, 0, comm);
-
 		printf("sent nets\n");
 
-		for (int i = 0; i < nets.size(); ++i) {
-			int num_sinks = nets[i].sinks.size();
-
-			assert(num_sinks > 0);
-
-			zlog_level(delta_log, ROUTER_V3, "Sending net vpr id %d source rr %d x %d y %d bb %d %d %d %d\n", nets[i].vpr_id, nets[i].source.rr_node, nets[i].source.x, nets[i].source.y, nets[i].bounding_box.xmin, nets[i].bounding_box.xmax, nets[i].bounding_box.ymin, nets[i].bounding_box.ymax);
-			MPI_Bcast(&num_sinks, 1, MPI_INT, 0, comm);
-			MPI_Bcast(nets[i].sinks.data(), num_sinks, net_sink_dt, 0, comm);
-
-			for (int j = 0; j < num_sinks; ++j) {
-				zlog_level(delta_log, ROUTER_V3, "\tSending net sink rr %d x %d y %d bb %d %d %d %d\n", nets[i].sinks[j].rr_node, nets[i].sinks[j].x, nets[i].sinks[j].y, nets[i].sinks[j].current_bounding_box.xmin, nets[i].sinks[j].current_bounding_box.xmax, nets[i].sinks[j].current_bounding_box.ymin, nets[i].sinks[j].current_bounding_box.ymax);
-			}
-		}
+		send_sinks(nets, comm);
+		send_sinks(global_nets, comm);
 	} else {
 		int num_global_nets;
 		MPI_Bcast(&num_global_nets, 1, MPI_INT, 0, comm);
 		global_nets.resize(num_global_nets);
 
 		printf("recv num_global_nets: %d\n", num_global_nets);
+
+		MPI_Bcast(global_nets.data(), global_nets.size(), net_dt, 0, comm);
 
 		int num_nets;
 		MPI_Bcast(&num_nets, 1, MPI_INT, 0, comm);
@@ -3199,28 +3230,15 @@ void sync_nets(vector<net_t> &nets, vector<net_t> &global_nets, int procid, MPI_
 		printf("recv nets\n");
 
 		int local_id = 0;
-
-		for (int i = 0; i < num_nets; ++i) {
-			zlog_level(delta_log, ROUTER_V3, "Recving net vpr id %d source rr %d x %d y %d bb %d %d %d %d\n", nets[i].vpr_id, nets[i].source.rr_node, nets[i].source.x, nets[i].source.y, nets[i].bounding_box.xmin, nets[i].bounding_box.xmax, nets[i].bounding_box.ymin, nets[i].bounding_box.ymax);
-
-			nets[i].local_id = local_id;
-
-			int num_sinks;
-			MPI_Bcast(&num_sinks, 1, MPI_INT, 0, comm);
-			nets[i].sinks.resize(num_sinks);
-			MPI_Bcast(nets[i].sinks.data(), num_sinks, net_sink_dt, 0, comm);
-
-			zlog_level(delta_log, ROUTER_V3, "Net %d sink capacity %d\n", nets[i].vpr_id, nets[i].sinks.capacity()*sizeof(sink_t));
-
-			for (int j = 0; j < num_sinks; ++j) {
-				zlog_level(delta_log, ROUTER_V3, "\tRecving net sink rr %d x %d y %d bb %d %d %d %d\n", nets[i].sinks[j].rr_node, nets[i].sinks[j].x, nets[i].sinks[j].y, nets[i].sinks[j].current_bounding_box.xmin, nets[i].sinks[j].current_bounding_box.xmax, nets[i].sinks[j].current_bounding_box.ymin, nets[i].sinks[j].current_bounding_box.ymax);
-
-				nets[i].sinks[j].id = j;
-				nets[i].sinks[j].criticality_fac = std::numeric_limits<float>::max();
-			}
-
-			++local_id;
+		for (int i = 0; i < nets.size(); ++i) {
+			nets[i].local_id = local_id++;
 		}
+		for (int i = 0; i < global_nets.size(); ++i) {
+			global_nets[i].local_id = -1;
+		}
+
+		recv_sinks(nets, comm);
+		recv_sinks(global_nets, comm);
 	}
 }
 

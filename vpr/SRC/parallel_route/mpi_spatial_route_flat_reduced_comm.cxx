@@ -43,7 +43,7 @@ void init_route_structs(const RRGraph &g, const vector<net_t> &nets, const vecto
 void broadcast_rip_up(int net_id, mpi_context_t *mpi);
 void broadcast_pending_cost_updates_reduced(const vector<RRNode> &added_nodes, int net_id, int delta, mpi_context_t *mpi);
 void progress_sends(mpi_context_t *mpi);
-void route_net_mpi_send_recv_reduced_comm(const RRGraph &g, int vpr_id, int net_id, const source_t *source, const vector<sink_t *> &sinks, const route_parameters_t &params, const vector<net_t> &nets, route_state_t *state, congestion_t *congestion, route_tree_t &rt, t_net_timing &net_timing, vector<vector<RRNode>> &net_route_trees, vector<sink_t *> &routed_sinks, vector<sink_t *> &unrouted_sinks, mpi_context_t *mpi, perf_t *perf, mpi_perf_t *mpi_perf, bool sync_only_once);
+void route_net_mpi_send_recv_reduced_comm(const RRGraph &g, int vpr_id, int net_id, const source_t *source, const vector<sink_t *> &sinks, const route_parameters_t &params, const vector<net_t> &nets, route_state_t *state, congestion_t *congestion, route_tree_t &rt, t_net_timing &net_timing, vector<vector<RRNode>> &net_route_trees, vector<sink_t *> &routed_sinks, vector<sink_t *> &unrouted_sinks, mpi_context_t *mpi, perf_t *perf, mpi_perf_t *mpi_perf, bool sync_only_once, bool delayed_progress);
 
 bool all_done(mpi_context_t *mpi)
 {
@@ -475,7 +475,7 @@ bool mpi_spatial_route_flat_reduced_comm(t_router_opts *opts, struct s_det_routi
 
 					int previous_num_routed_sinks = routed_sinks[net->local_id].size();
 
-					route_net_mpi_send_recv_reduced_comm(partitioner.orig_g, net->vpr_id, net->local_id, &net->source, sinks, params, nets, states, congestion, route_trees[net->local_id], net_timing[net->vpr_id], net_route_trees, routed_sinks[net->local_id], unroutable_sinks[net->local_id], &mpi, &perf, &mpi_perf, false);
+					route_net_mpi_send_recv_reduced_comm(partitioner.orig_g, net->vpr_id, net->local_id, &net->source, sinks, params, nets, states, congestion, route_trees[net->local_id], net_timing[net->vpr_id], net_route_trees, routed_sinks[net->local_id], unroutable_sinks[net->local_id], &mpi, &perf, &mpi_perf, false, false);
 
 					assert(routed_sinks[net->local_id].size() + unroutable_sinks[net->local_id].size() == net->sinks.size());
 
