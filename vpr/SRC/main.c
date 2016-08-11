@@ -259,8 +259,8 @@ int main(int argc, char **argv) {
 
 	get_sched_bind(cpuset, nodeset);
 
-	/*print_sched_bind(cpuset, nodeset);*/
-	/*print_mem_bind();*/
+	print_sched_bind(cpuset, nodeset);
+	print_mem_bind();
 
 	bitmask *bind_to = numa_allocate_nodemask();
 	numa_bitmask_clearall(bind_to);

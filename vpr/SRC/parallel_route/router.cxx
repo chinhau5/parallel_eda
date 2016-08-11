@@ -1076,7 +1076,7 @@ RREdge get_previous_edge(int rr_node_id, const route_state_t *state, const route
 			char s_rt[256];
 			sprintf_rr_node(get_source(g, state[rr_node_id].prev_edge), s_state);
 			sprintf_rr_node(get_vertex_props(rt.graph, get_source(rt.graph, get_vertex_props(rt.graph, rt_node).rt_edge_to_parent)).rr_node, s_rt);
-			printf("Warning: Existing route tree node %s does not have a matching route state. (state.prev_edge: %s rt_node.rr_edge_to_parent: %s) because we have found a shorter path to that node\n", buffer, s_state, s_rt);
+			zlog_warn(delta_log, "Warning: Existing route tree node %s does not have a matching route state. (state.prev_edge: %s rt_node.rr_edge_to_parent: %s) because we have found a shorter path to that node\n", buffer, s_state, s_rt);
 
 			previous_edge = RRGraph::null_edge();
 		} else {
