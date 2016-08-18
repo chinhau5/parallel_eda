@@ -2,6 +2,8 @@ cmake_minimum_required(VERSION 2.8)
 
 project(Router)
 
+option(WITH_NUMA "Compile and link with NUMA library" OFF)
+
 if (CMAKE_SYSTEM_NAME STREQUAL "Linux")
 	link_directories(
 		/usr/local/lib
@@ -17,6 +19,10 @@ if (CMAKE_SYSTEM_NAME STREQUAL "Linux")
 		/home/akkumar/Downloads/tbb44_20160526oss/lib/intel64/gcc4.4
 		/home/akkumar/Downloads/boost_1_60_0/stage/lib
 		/home/akkumar/zlog/lib
+		/home/svu/a0045424/Downloads/metis-5.1.0/build/Linux-x86_64/libmetis
+		/home/svu/a0045424/Downloads/tbb44_20160526oss/lib/intel64/gcc4.4
+		/home/svu/a0045424/Downloads/boost_1_60_0/stage/lib
+		/home/svu/a0045424/zlog/lib
 		)
 else()
 	link_directories(
@@ -75,7 +81,6 @@ if (CMAKE_SYSTEM_NAME STREQUAL "Linux")
 		boost_system
 		tbb
 		metis
-		numa
 		)
 else()
 	set(link_libs
@@ -99,6 +104,12 @@ endif()
 target_link_libraries(Router 
 	${link_libs}
 	)
+
+if (WITH_NUMA)
+	target_link_libraries(Router 
+		numa
+		)
+endif()
 
 if (CMAKE_SYSTEM_NAME STREQUAL "Linux" AND SANITIZE EQUAL 1)
 target_link_libraries(Router

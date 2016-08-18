@@ -213,7 +213,7 @@ bool mpi_route_load_balanced_nonblocking(t_router_opts *opts, struct s_det_routi
     partitioner.init(opts, &det_routing_arch, directs, num_directs, segment_inf, &timing_inf);
     partitioner.partition_without_ipin(1, graphs);
 
-	mpi.buffer_size = sizeof(node_update_t)/sizeof(int) * num_vertices(partitioner.orig_g) * 0.3; //30% of total number of vertices
+	mpi.buffer_size = sizeof(node_update_t)/sizeof(int) * num_vertices(partitioner.orig_g) * 0.1; //30% of total number of vertices
 
     //for (const auto &g : graphs) {
         //routability(*g);
@@ -469,13 +469,13 @@ bool mpi_route_load_balanced_nonblocking(t_router_opts *opts, struct s_det_routi
     clock::duration total_iter_time = clock::duration::zero();
     clock::duration total_wait_time = clock::duration::zero();
     clock::duration total_combine_time = clock::duration::zero();
-    clock::duration total_sync_time = clock::duration::zero();
-    clock::duration total_iprobe_time = clock::duration::zero();
-    clock::duration total_update_time = clock::duration::zero();
-	int total_calls = 0;
-    clock::duration total_recv_time = clock::duration::zero();
-    clock::duration total_broadcast_time = clock::duration::zero();
     clock::duration total_last_sync_time = clock::duration::zero();
+    clock::duration total_last_progress_time = clock::duration::zero();
+	 //mpi 
+    clock::duration total_sync_time = clock::duration::zero();
+    clock::duration total_broadcast_time = clock::duration::zero();
+    clock::duration total_send_testsome_time = clock::duration::zero();
+	int total_calls = 0;
 
     for (iter = 0; iter < opts->max_router_iterations && !routed && !idling; ++iter) {
         clock::duration actual_route_time = clock::duration::zero();
@@ -486,6 +486,7 @@ bool mpi_route_load_balanced_nonblocking(t_router_opts *opts, struct s_det_routi
         clock::duration wait_time = clock::duration::zero();
         clock::duration combine_time = clock::duration::zero();
         clock::duration last_sync_time = clock::duration::zero();
+        clock::duration last_progress_time = clock::duration::zero();
 
         //for (int i = 0; i < opts->num_threads; ++i) {
             //sprintf(buffer, LOG_PATH_PREFIX"iter_%d_tid_%d.log", iter, i);
@@ -524,7 +525,9 @@ bool mpi_route_load_balanced_nonblocking(t_router_opts *opts, struct s_det_routi
 		zlog_put_mdc("tid", buffer);
 
         zlog_info(delta_log, "Routing iteration: %d\n", iter);
-        printf("Routing iteration: %d\n", iter);
+		if (mpi.rank == 0) {
+			printf("Routing iteration: %d\n", iter);
+		}
 
 		MPI_Barrier(mpi.comm);
         
@@ -537,11 +540,9 @@ bool mpi_route_load_balanced_nonblocking(t_router_opts *opts, struct s_det_routi
 		perf.num_neighbor_visits = 0;
 
 		mpi_perf.total_sync_time = clock::duration::zero();
-		mpi_perf.total_recv_time = clock::duration::zero();
-		mpi_perf.total_iprobe_time = clock::duration::zero();
-		mpi_perf.total_update_time = clock::duration::zero();
-		mpi_perf.total_calls = 0;
 		mpi_perf.total_broadcast_time = clock::duration::zero();
+		mpi_perf.total_send_testsome_time = clock::duration::zero();
+		mpi_perf.total_calls = 0;
 
 		//for (int i = 0; i < mpi.comm_size; ++i) {
 			//num_recvs_called[i] = 0;
@@ -681,7 +682,7 @@ bool mpi_route_load_balanced_nonblocking(t_router_opts *opts, struct s_det_routi
 				if (should_progress) {
 					auto progress_start = clock::now();
 					progress_sends_testsome(&mpi);
-					mpi_perf.total_broadcast_time += clock::now()-progress_start;
+					mpi_perf.total_send_testsome_time += clock::now()-progress_start;
 				}
 			}
 
@@ -745,7 +746,9 @@ bool mpi_route_load_balanced_nonblocking(t_router_opts *opts, struct s_det_routi
 		}
 		last_sync_time += clock::now()-last_sync_start;
 
+		auto last_progress_start = clock::now();
 		progress_sends_waitall(&mpi);
+		last_progress_time += clock::now()-last_progress_start;
 
 		//for (int pid = 0; pid < mpi.comm_size; ++pid) {
 			//if (pid == mpi.rank) {
@@ -763,7 +766,13 @@ bool mpi_route_load_balanced_nonblocking(t_router_opts *opts, struct s_det_routi
 		}
 		for (int i = 0; i < mpi.pending_send_req.size(); ++i) {
 			assert(mpi.pending_send_req[i] == MPI_REQUEST_NULL);
-			assert(mpi.pending_send_data_raw[mpi.pending_send_req_data_ref[i]].second == 0);
+			int data_index = mpi.pending_send_req_data_ref[i];
+			if (data_index >= 0) {
+				assert(mpi.pending_send_data_raw[data_index].second == 0);
+			}
+		}
+		for (int i = 0; i < mpi.pending_send_data_raw.size(); ++i) {
+			assert(mpi.pending_send_data_raw[i].second == 0);
 		}
 
 		//vector<MPI_Request> requests;
@@ -825,12 +834,11 @@ bool mpi_route_load_balanced_nonblocking(t_router_opts *opts, struct s_det_routi
 		//fclose(net_route_time_f);
 
 		total_sync_time += mpi_perf.total_sync_time;
-		total_recv_time += mpi_perf.total_recv_time;
-		total_iprobe_time += mpi_perf.total_iprobe_time;
-		total_update_time += mpi_perf.total_update_time;
-		total_calls += mpi_perf.total_calls;
 		total_broadcast_time += mpi_perf.total_broadcast_time;
+		total_send_testsome_time += mpi_perf.total_send_testsome_time;
+		total_last_progress_time += last_progress_time;
 		total_last_sync_time += last_sync_time;
+		total_calls += mpi_perf.total_calls;
 
 		int total_num_sinks_to_route;
 		if (mpi.rank == 0) {
@@ -1142,6 +1150,9 @@ bool mpi_route_load_balanced_nonblocking(t_router_opts *opts, struct s_det_routi
 				MPI_Comm_split(mpi.comm, idling ? 1 : 0, mpi.rank, &new_comm);
 				mpi.comm = new_comm;
 				MPI_Comm_rank(mpi.comm, &mpi.rank);
+				int new_comm_size;
+				MPI_Comm_size(mpi.comm, &new_comm_size);
+				assert(mpi.comm_size == new_comm_size);
 
 				combine_time = clock::now()-combine_start;
 
@@ -1214,7 +1225,7 @@ bool mpi_route_load_balanced_nonblocking(t_router_opts *opts, struct s_det_routi
 
 			vector<float> all_route_time(prev_comm_size, 0);
 
-			printf("\tRoute time: %lld %g ", route_time.count(), duration_cast<nanoseconds>(route_time).count() / 1e9);
+			printf("\tRoute time: %g ", duration_cast<nanoseconds>(route_time).count() / 1e9);
 			for (int i = 1; i < prev_comm_size; ++i) {
 				float f_route_time;
 				MPI_Recv(&f_route_time, 1, MPI_FLOAT, i, i, prev_comm, MPI_STATUS_IGNORE);
@@ -1225,7 +1236,7 @@ bool mpi_route_load_balanced_nonblocking(t_router_opts *opts, struct s_det_routi
 			}
 			printf("\n");
 
-			printf("\t\tActual route time: %lld %g (%g) ", actual_route_time.count(), duration_cast<nanoseconds>(actual_route_time).count() / 1e9, duration_cast<nanoseconds>(actual_route_time).count() * 100.0 / duration_cast<nanoseconds>(route_time).count());
+			printf("\t\tActual route time: %g (%g) ", duration_cast<nanoseconds>(actual_route_time).count() / 1e9, duration_cast<nanoseconds>(actual_route_time).count() * 100.0 / duration_cast<nanoseconds>(route_time).count());
 			for (int i = 1; i < prev_comm_size; ++i) {
 				float f_actual_route_time;
 				MPI_Recv(&f_actual_route_time, 1, MPI_FLOAT, i, i, prev_comm, MPI_STATUS_IGNORE);
@@ -1243,29 +1254,29 @@ bool mpi_route_load_balanced_nonblocking(t_router_opts *opts, struct s_det_routi
 			}
 			printf("\n");
 
-			float f_recv_time = duration_cast<nanoseconds>(mpi_perf.total_recv_time).count() / 1e9;
-			printf("\t\t\t\tRecv time: %g (%g) ", f_recv_time, f_recv_time * 100.0 / (duration_cast<nanoseconds>(route_time).count() / 1e9));
-			for (int i = 1; i < prev_comm_size; ++i) {
-				MPI_Recv(&f_recv_time, 1, MPI_FLOAT, i, i, prev_comm, MPI_STATUS_IGNORE);
-				printf("%g (%g) ", f_recv_time, f_recv_time * 100 / all_route_time[i]);
-			}
-			printf("\n");
+			//float f_recv_time = duration_cast<nanoseconds>(mpi_perf.total_recv_time).count() / 1e9;
+			//printf("\t\t\t\tRecv time: %g (%g) ", f_recv_time, f_recv_time * 100.0 / (duration_cast<nanoseconds>(route_time).count() / 1e9));
+			//for (int i = 1; i < prev_comm_size; ++i) {
+				//MPI_Recv(&f_recv_time, 1, MPI_FLOAT, i, i, prev_comm, MPI_STATUS_IGNORE);
+				//printf("%g (%g) ", f_recv_time, f_recv_time * 100 / all_route_time[i]);
+			//}
+			//printf("\n");
 
-			float f_iprobe_time = duration_cast<nanoseconds>(mpi_perf.total_iprobe_time).count() / 1e9;
-			printf("\t\t\t\tIprobe time: %g (%g) ", f_iprobe_time, f_iprobe_time * 100.0 / (duration_cast<nanoseconds>(route_time).count() / 1e9));
-			for (int i = 1; i < prev_comm_size; ++i) {
-				MPI_Recv(&f_iprobe_time, 1, MPI_FLOAT, i, i, prev_comm, MPI_STATUS_IGNORE);
-				printf("%g (%g) ", f_iprobe_time, f_iprobe_time * 100 / all_route_time[i]);
-			}
-			printf("\n");
+			//float f_iprobe_time = duration_cast<nanoseconds>(mpi_perf.total_iprobe_time).count() / 1e9;
+			//printf("\t\t\t\tIprobe time: %g (%g) ", f_iprobe_time, f_iprobe_time * 100.0 / (duration_cast<nanoseconds>(route_time).count() / 1e9));
+			//for (int i = 1; i < prev_comm_size; ++i) {
+				//MPI_Recv(&f_iprobe_time, 1, MPI_FLOAT, i, i, prev_comm, MPI_STATUS_IGNORE);
+				//printf("%g (%g) ", f_iprobe_time, f_iprobe_time * 100 / all_route_time[i]);
+			//}
+			//printf("\n");
 
-			float f_update_time = duration_cast<nanoseconds>(mpi_perf.total_update_time).count() / 1e9;
-			printf("\t\t\t\tUpdate time: %g (%g) ", f_update_time, f_update_time * 100.0 / (duration_cast<nanoseconds>(route_time).count() / 1e9));
-			for (int i = 1; i < prev_comm_size; ++i) {
-				MPI_Recv(&f_update_time, 1, MPI_FLOAT, i, i, prev_comm, MPI_STATUS_IGNORE);
-				printf("%g (%g) ", f_update_time, f_update_time * 100 / all_route_time[i]);
-			}
-			printf("\n");
+			//float f_update_time = duration_cast<nanoseconds>(mpi_perf.total_update_time).count() / 1e9;
+			//printf("\t\t\t\tUpdate time: %g (%g) ", f_update_time, f_update_time * 100.0 / (duration_cast<nanoseconds>(route_time).count() / 1e9));
+			//for (int i = 1; i < prev_comm_size; ++i) {
+				//MPI_Recv(&f_update_time, 1, MPI_FLOAT, i, i, prev_comm, MPI_STATUS_IGNORE);
+				//printf("%g (%g) ", f_update_time, f_update_time * 100 / all_route_time[i]);
+			//}
+			//printf("\n");
 
 			printf("Total calls %d\n", mpi_perf.total_calls);
 
@@ -1274,6 +1285,22 @@ bool mpi_route_load_balanced_nonblocking(t_router_opts *opts, struct s_det_routi
 			for (int i = 1; i < prev_comm_size; ++i) {
 				MPI_Recv(&f_broadcast_time, 1, MPI_FLOAT, i, i, prev_comm, MPI_STATUS_IGNORE);
 				printf("%g (%g) ", f_broadcast_time, f_broadcast_time * 100 / all_route_time[i]);
+			}
+			printf("\n");
+
+			float f_testsome_time = duration_cast<nanoseconds>(mpi_perf.total_send_testsome_time).count() / 1e9;
+			printf("\t\t\tSend testsome time: %g (%g) ", f_testsome_time, f_testsome_time * 100.0 / (duration_cast<nanoseconds>(route_time).count() / 1e9));
+			for (int i = 1; i < prev_comm_size; ++i) {
+				MPI_Recv(&f_testsome_time, 1, MPI_FLOAT, i, i, prev_comm, MPI_STATUS_IGNORE);
+				printf("%g (%g) ", f_testsome_time, f_testsome_time * 100 / all_route_time[i]);
+			}
+			printf("\n");
+
+			float f_last_progress_time = duration_cast<nanoseconds>(last_progress_time).count() / 1e9;
+			printf("\t\tLast progress time: %g (%g) ", f_last_progress_time, f_last_progress_time * 100.0 / (duration_cast<nanoseconds>(route_time).count() / 1e9));
+			for (int i = 1; i < prev_comm_size; ++i) {
+				MPI_Recv(&f_last_progress_time, 1, MPI_FLOAT, i, i, prev_comm, MPI_STATUS_IGNORE);
+				printf("%g (%g) ", f_last_progress_time, f_last_progress_time * 100 / all_route_time[i]);
 			}
 			printf("\n");
 
@@ -1321,17 +1348,23 @@ bool mpi_route_load_balanced_nonblocking(t_router_opts *opts, struct s_det_routi
 			float f_sync_time = duration_cast<nanoseconds>(mpi_perf.total_sync_time).count() / 1e9;
 			MPI_Send(&f_sync_time, 1, MPI_FLOAT, 0, prev_rank, prev_comm);
 
-			float f_recv_time = duration_cast<nanoseconds>(mpi_perf.total_recv_time).count() / 1e9;
-			MPI_Send(&f_recv_time, 1, MPI_FLOAT, 0, prev_rank, prev_comm);
+			//float f_recv_time = duration_cast<nanoseconds>(mpi_perf.total_recv_time).count() / 1e9;
+			//MPI_Send(&f_recv_time, 1, MPI_FLOAT, 0, prev_rank, prev_comm);
 
-			float f_iprobe_time = duration_cast<nanoseconds>(mpi_perf.total_iprobe_time).count() / 1e9;
-			MPI_Send(&f_iprobe_time, 1, MPI_FLOAT, 0, prev_rank, prev_comm);
+			//float f_iprobe_time = duration_cast<nanoseconds>(mpi_perf.total_iprobe_time).count() / 1e9;
+			//MPI_Send(&f_iprobe_time, 1, MPI_FLOAT, 0, prev_rank, prev_comm);
 
-			float f_update_time = duration_cast<nanoseconds>(mpi_perf.total_update_time).count() / 1e9;
-			MPI_Send(&f_update_time, 1, MPI_FLOAT, 0, prev_rank, prev_comm);
+			//float f_update_time = duration_cast<nanoseconds>(mpi_perf.total_update_time).count() / 1e9;
+			//MPI_Send(&f_update_time, 1, MPI_FLOAT, 0, prev_rank, prev_comm);
 
 			float f_broadcast_time = duration_cast<nanoseconds>(mpi_perf.total_broadcast_time).count() / 1e9;
 			MPI_Send(&f_broadcast_time, 1, MPI_FLOAT, 0, prev_rank, prev_comm);
+
+			float f_testsome_time = duration_cast<nanoseconds>(mpi_perf.total_send_testsome_time).count() / 1e9;
+			MPI_Send(&f_testsome_time, 1, MPI_FLOAT, 0, prev_rank, prev_comm);
+
+			float f_last_progress_time = duration_cast<nanoseconds>(last_progress_time).count() / 1e9;
+			MPI_Send(&f_last_progress_time, 1, MPI_FLOAT, 0, prev_rank, prev_comm);
 
 			float f_last_sync_time = duration_cast<nanoseconds>(last_sync_time).count() / 1e9;
 			MPI_Send(&f_last_sync_time, 1, MPI_FLOAT, 0, prev_rank, prev_comm);
@@ -1391,33 +1424,47 @@ bool mpi_route_load_balanced_nonblocking(t_router_opts *opts, struct s_det_routi
 			printf("%g (%g) ", f_total_sync_time, f_total_sync_time * 100.0 / all_total_route_time[i]);
 		}
 		printf("\n");
-		printf("\t\t\t\tTotal recv time: %g (%g) ", duration_cast<nanoseconds>(total_recv_time).count() / 1e9, duration_cast<nanoseconds>(total_recv_time).count() * 100.0 / duration_cast<nanoseconds>(total_route_time).count());
-		for (int i = 1; i < initial_comm_size; ++i) {
-			float f_total_recv_time;
-			MPI_Recv(&f_total_recv_time, 1, MPI_FLOAT, i, i, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
-			printf("%g (%g) ", f_total_recv_time, f_total_recv_time * 100.0 / all_total_route_time[i]);
-		}
-		printf("\n");
-		printf("\t\t\t\tTotal probe time: %g (%g) ", duration_cast<nanoseconds>(total_iprobe_time).count() / 1e9, duration_cast<nanoseconds>(total_iprobe_time).count() * 100.0 / duration_cast<nanoseconds>(total_route_time).count());
-		for (int i = 1; i < initial_comm_size; ++i) {
-			float f_total_iprobe_time;
-			MPI_Recv(&f_total_iprobe_time, 1, MPI_FLOAT, i, i, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
-			printf("%g (%g) ", f_total_iprobe_time, f_total_iprobe_time * 100.0 / all_total_route_time[i]);
-		}
-		printf("\n");
-		printf("\t\t\t\tTotal update time: %g (%g) ", duration_cast<nanoseconds>(total_update_time).count() / 1e9, duration_cast<nanoseconds>(total_update_time).count() * 100.0 / duration_cast<nanoseconds>(total_route_time).count());
-		for (int i = 1; i < initial_comm_size; ++i) {
-			float f_total_update_time;
-			MPI_Recv(&f_total_update_time, 1, MPI_FLOAT, i, i, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
-			printf("%g (%g) ", f_total_update_time, f_total_update_time * 100.0 / all_total_route_time[i]);
-		}
-		printf("\n");
+		//printf("\t\t\t\tTotal recv time: %g (%g) ", duration_cast<nanoseconds>(total_recv_time).count() / 1e9, duration_cast<nanoseconds>(total_recv_time).count() * 100.0 / duration_cast<nanoseconds>(total_route_time).count());
+		//for (int i = 1; i < initial_comm_size; ++i) {
+			//float f_total_recv_time;
+			//MPI_Recv(&f_total_recv_time, 1, MPI_FLOAT, i, i, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+			//printf("%g (%g) ", f_total_recv_time, f_total_recv_time * 100.0 / all_total_route_time[i]);
+		//}
+		//printf("\n");
+		//printf("\t\t\t\tTotal probe time: %g (%g) ", duration_cast<nanoseconds>(total_iprobe_time).count() / 1e9, duration_cast<nanoseconds>(total_iprobe_time).count() * 100.0 / duration_cast<nanoseconds>(total_route_time).count());
+		//for (int i = 1; i < initial_comm_size; ++i) {
+			//float f_total_iprobe_time;
+			//MPI_Recv(&f_total_iprobe_time, 1, MPI_FLOAT, i, i, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+			//printf("%g (%g) ", f_total_iprobe_time, f_total_iprobe_time * 100.0 / all_total_route_time[i]);
+		//}
+		//printf("\n");
+		//printf("\t\t\t\tTotal update time: %g (%g) ", duration_cast<nanoseconds>(total_update_time).count() / 1e9, duration_cast<nanoseconds>(total_update_time).count() * 100.0 / duration_cast<nanoseconds>(total_route_time).count());
+		//for (int i = 1; i < initial_comm_size; ++i) {
+			//float f_total_update_time;
+			//MPI_Recv(&f_total_update_time, 1, MPI_FLOAT, i, i, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+			//printf("%g (%g) ", f_total_update_time, f_total_update_time * 100.0 / all_total_route_time[i]);
+		//}
+		//printf("\n");
 		printf("Total calls %d\n", total_calls);
 		printf("\t\t\tTotal broadcast time: %g (%g) ", duration_cast<nanoseconds>(total_broadcast_time).count() / 1e9, duration_cast<nanoseconds>(total_broadcast_time).count() * 100.0 / duration_cast<nanoseconds>(total_route_time).count());
 		for (int i = 1; i < initial_comm_size; ++i) {
 			float f_total_broadcast_time;
 			MPI_Recv(&f_total_broadcast_time, 1, MPI_FLOAT, i, i, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
 			printf("%g (%g) ", f_total_broadcast_time, f_total_broadcast_time * 100.0 / all_total_route_time[i]);
+		}
+		printf("\n");
+		printf("\t\t\tTotal send testsome time: %g (%g) ", duration_cast<nanoseconds>(total_send_testsome_time).count() / 1e9, duration_cast<nanoseconds>(total_send_testsome_time).count() * 100.0 / duration_cast<nanoseconds>(total_route_time).count());
+		for (int i = 1; i < initial_comm_size; ++i) {
+			float f_total_send_testsome_time;
+			MPI_Recv(&f_total_send_testsome_time, 1, MPI_FLOAT, i, i, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+			printf("%g (%g) ", f_total_send_testsome_time, f_total_send_testsome_time * 100.0 / all_total_route_time[i]);
+		}
+		printf("\n");
+		printf("\t\tTotal last progress time: %g (%g) ", duration_cast<nanoseconds>(total_last_progress_time).count() / 1e9, duration_cast<nanoseconds>(total_last_progress_time).count() * 100.0 / duration_cast<nanoseconds>(total_route_time).count());
+		for (int i = 1; i < initial_comm_size; ++i) {
+			float f_total_last_progress_time;
+			MPI_Recv(&f_total_last_progress_time, 1, MPI_FLOAT, i, i, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+			printf("%g (%g) ", f_total_last_progress_time, f_total_last_progress_time * 100.0 / all_total_route_time[i]);
 		}
 		printf("\n");
 		printf("\t\tTotal last sync time: %g (%g) ", duration_cast<nanoseconds>(total_last_sync_time).count() / 1e9, duration_cast<nanoseconds>(total_last_sync_time).count() * 100.0 / duration_cast<nanoseconds>(total_route_time).count());
@@ -1451,17 +1498,23 @@ bool mpi_route_load_balanced_nonblocking(t_router_opts *opts, struct s_det_routi
 		float f_total_sync_time = duration_cast<nanoseconds>(total_sync_time).count() / 1e9;
 		MPI_Send(&f_total_sync_time, 1, MPI_FLOAT, 0, initial_rank, MPI_COMM_WORLD);
 
-		float f_total_recv_time = duration_cast<nanoseconds>(total_recv_time).count() / 1e9;
-		MPI_Send(&f_total_recv_time, 1, MPI_FLOAT, 0, initial_rank, MPI_COMM_WORLD);
+		//float f_total_recv_time = duration_cast<nanoseconds>(total_recv_time).count() / 1e9;
+		//MPI_Send(&f_total_recv_time, 1, MPI_FLOAT, 0, initial_rank, MPI_COMM_WORLD);
 
-		float f_total_iprobe_time = duration_cast<nanoseconds>(total_iprobe_time).count() / 1e9;
-		MPI_Send(&f_total_iprobe_time, 1, MPI_FLOAT, 0, initial_rank, MPI_COMM_WORLD);
+		//float f_total_iprobe_time = duration_cast<nanoseconds>(total_iprobe_time).count() / 1e9;
+		//MPI_Send(&f_total_iprobe_time, 1, MPI_FLOAT, 0, initial_rank, MPI_COMM_WORLD);
 
-		float f_total_update_time = duration_cast<nanoseconds>(total_update_time).count() / 1e9;
-		MPI_Send(&f_total_update_time, 1, MPI_FLOAT, 0, initial_rank, MPI_COMM_WORLD);
+		//float f_total_update_time = duration_cast<nanoseconds>(total_update_time).count() / 1e9;
+		//MPI_Send(&f_total_update_time, 1, MPI_FLOAT, 0, initial_rank, MPI_COMM_WORLD);
 
 		float f_total_broadcast_time = duration_cast<nanoseconds>(total_broadcast_time).count() / 1e9;
 		MPI_Send(&f_total_broadcast_time, 1, MPI_FLOAT, 0, initial_rank, MPI_COMM_WORLD);
+
+		float f_total_send_testsome_time = duration_cast<nanoseconds>(total_send_testsome_time).count() / 1e9;
+		MPI_Send(&f_total_send_testsome_time, 1, MPI_FLOAT, 0, initial_rank, MPI_COMM_WORLD);
+
+		float f_total_last_progress_time = duration_cast<nanoseconds>(total_last_progress_time).count() / 1e9;
+		MPI_Send(&f_total_last_progress_time, 1, MPI_FLOAT, 0, initial_rank, MPI_COMM_WORLD);
 
 		float f_total_last_sync_time = duration_cast<nanoseconds>(total_last_sync_time).count() / 1e9;
 		MPI_Send(&f_total_last_sync_time, 1, MPI_FLOAT, 0, initial_rank, MPI_COMM_WORLD);

@@ -28,8 +28,10 @@
 
 #ifdef __linux__
 #include <sched.h>
+#ifdef WITH_NUMA
 #include <numaif.h>
 #include <numa.h>
+#endif
 #include <unistd.h>
 #include <malloc.h>
 #endif
@@ -57,7 +59,7 @@ std::chrono::time_point<std::chrono::high_resolution_clock> program_start;
 
 char *s_circuit_name = nullptr;
 
-#ifdef __linux__
+#if defined(__linux__) && defined(WITH_NUMA)
 
 void print_mem_bind()
 {
@@ -246,6 +248,39 @@ string find_func_name(const mem_map_entry_t *entry, unsigned long addr)
 #endif
 
 /*extern void *(*__malloc_hook)(size_t size, const void *caller);*/
+void print_context(int rank)
+{
+#if defined(__linux__)
+	/*pid_t pid = getpid();*/
+
+	/*char buffer[256];*/
+	/*sprintf(buffer, "/proc/%d/status", pid);*/
+
+	/*FILE *stat = fopen(buffer, "r");*/
+	/*while (!feof(stat)) {*/
+		/*int num_read = fread(buffer, 1, 256, stat);*/
+		/*buffer[num_read] = 0;*/
+		/*printf("%s", buffer);*/
+	/*}*/
+
+	printf("[%d] LSB_BIND_CPU_LIST: %s\n", rank, getenv("LSB_BIND_CPU_LIST"));
+
+	cpu_set_t cpuset;
+	assert(sched_getaffinity(0, sizeof(cpu_set_t), &cpuset) == 0);
+
+	printf("[%d] cpu affinity [count %d max %d]: ", rank, CPU_COUNT(&cpuset), CPU_SETSIZE);
+	for (int i = 0; i < CPU_SETSIZE; ++i) {
+		if (CPU_ISSET(i, &cpuset)) {
+			printf("%d ", i);
+		}
+	}
+	printf("\n");
+
+	char hostname[256];
+	gethostname(hostname, 256);
+	printf("[%d] hostname: %s\n", rank, hostname);
+#endif
+}
 
 int main(int argc, char **argv) {
 	t_options Options;
@@ -253,7 +288,7 @@ int main(int argc, char **argv) {
 	t_vpr_setup vpr_setup;
 	clock_t entire_flow_begin,entire_flow_end;
 
-#ifdef __linux__
+#if defined(__linux__) && defined(WITH_NUMA)
 	vector<int> cpuset;
 	set<int> nodeset;
 
@@ -310,7 +345,7 @@ int main(int argc, char **argv) {
 	MPI_Init(&argc, &argv);
 #endif
 
-#ifdef __linux__
+#if defined(__linux__) && defined(WITH_NUMA)
 	/*print_mem_map();*/
 	/*print_env();*/
 
@@ -325,6 +360,9 @@ int main(int argc, char **argv) {
 		printf("malloc_hook after mpi_init not found: %lX\n", __malloc_hook);
 	}
 #endif
+	int rank;
+	MPI_Comm_rank(MPI_COMM_WORLD, &rank);
+	print_context(rank);
 
 	/*mtrace();*/
 

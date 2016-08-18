@@ -160,6 +160,12 @@ if (CMAKE_SYSTEM_NAME STREQUAL "Linux")
 		/home/akkumar/Downloads/armadillo-6.400.3/include
 		/home/akkumar/Downloads/metis-5.1.0/include/
 		/home/akkumar/zlog/include
+		/home/svu/a0045424/Downloads/boost_1_60_0/
+		/home/svu/a0045424/Downloads/tbb44_20160526oss/include
+		/home/svu/a0045424/Downloads/mlpack-1.0.12/build/include
+		/home/svu/a0045424/Downloads/armadillo-6.400.3/include
+		/home/svu/a0045424/Downloads/metis-5.1.0/include/
+		/home/svu/a0045424/zlog/include
 		)
 else()
 	set(external_includes 
@@ -191,6 +197,11 @@ target_include_directories(Vpr PUBLIC
 	SRC/power 
 	SRC/parallel_route
 )
+
+if (WITH_NUMA)
+	message("Compiling with NUMA library")
+	target_compile_definitions(Vpr PRIVATE -DWITH_NUMA)
+endif()
 
 target_compile_options(Vpr PRIVATE
 	-Wno-write-strings -Wno-unused-variable -Wno-unused-private-field -Wno-sign-compare

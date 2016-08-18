@@ -17,100 +17,103 @@ std::shared_ptr<vector<path_node_t>> get_path(int sink_rr_node_id, const route_s
 float get_timing_driven_expected_cost(const rr_node_property_t &current, const rr_node_property_t &target, float criticality_fac, float R_upstream);
 float get_delay(const rr_edge_property_t &e, const rr_node_property_t &v, float unbuffered_upstream_R);
 
-void get_free_buffer_and_req(mpi_context_t *mpi, vector<int> **buffer, int *free_req_start)
+int get_free_buffer(mpi_context_t *mpi, int size)
 {
-	if (!mpi->free_send_index.empty()) {
-		int free_index = mpi->free_send_index.front();
-		mpi->free_send_index.pop();
+	int data_index;
 
-		int data_index = mpi->pending_send_req_data_ref[free_index];
+	if (!mpi->free_send_data_index.empty()) {
+		data_index = mpi->free_send_data_index.front();
 
-		*buffer = mpi->pending_send_data_raw[data_index].first;
+		mpi->free_send_data_index.pop();
 
-		*free_req_start = free_index; 
-
-		zlog_level(delta_log, ROUTER_V3, "Existing buffer, data_index %d free_req %d\n", data_index, *free_req_start);
-
-		assert(mpi->pending_send_data_raw[data_index].second == 0);
-	} else {
-		int data_index = mpi->pending_send_data_raw.size();
-
-		mpi->pending_send_data_raw.emplace_back(new vector<int>(mpi->buffer_size), 0);
-		*buffer = mpi->pending_send_data_raw.back().first;
-
-		*free_req_start = mpi->pending_send_req.size();
-
-		for (int i = 0; i < mpi->comm_size-1; ++i) {
-			mpi->pending_send_req.emplace_back(MPI_REQUEST_NULL);
-			mpi->pending_send_req_data_ref.emplace_back(data_index);
+		if (mpi->pending_send_data_raw[data_index].first->size() < size) {
+			mpi->pending_send_data_raw[data_index].first->resize(2*size);
 		}
+	} else {
+		data_index = mpi->pending_send_data_raw.size();
 
-		zlog_level(delta_log, ROUTER_V3, "New buffer, data_index %d free_req %d\n", data_index, *free_req_start);
+		mpi->pending_send_data_raw.emplace_back(new vector<int>(size), 0);
+	}
+
+	return data_index;
+}
+
+int get_free_req(mpi_context_t *mpi, int data_index)
+{
+	int req_index;
+
+	if (!mpi->free_send_req_index.empty()) {
+		req_index = mpi->free_send_req_index.front();
+
+		mpi->free_send_req_index.pop();
+
+		mpi->pending_send_req_data_ref[req_index] = data_index;
+
+		zlog_level(delta_log, ROUTER_V3, "Existing req, req_index %d data_index %d\n", req_index, data_index);
+	} else {
+		req_index = mpi->pending_send_req.size();
+
+		mpi->pending_send_req.emplace_back(MPI_REQUEST_NULL);
+		mpi->pending_send_req_data_ref.emplace_back(data_index);
+
+		zlog_level(delta_log, ROUTER_V3, "New req, req_index %d data_index %d\n", req_index, data_index);
+	}
+
+	return req_index;
+}
+
+void broadcast(int data_index, int size, int tag, mpi_context_t *mpi)
+{
+	for (int i = 0; i < mpi->comm_size; ++i) {
+		if (i != mpi->rank) {
+			zlog_level(delta_log, ROUTER_V2, "Sent packet from %d to %d\n", mpi->rank, i);
+
+			int req_index = get_free_req(mpi, data_index);
+			int error;
+
+			assert(mpi->pending_send_req[req_index] == MPI_REQUEST_NULL);
+
+			if (data_index < 0) {
+				error = MPI_Isend(nullptr, 0, MPI_INT, i, tag, mpi->comm, &mpi->pending_send_req[req_index]);
+			} else {
+				pair<vector<int> *, int> *data = &mpi->pending_send_data_raw[data_index];
+				assert(data->second >= 0);
+				++data->second;
+				error = MPI_Isend(data->first->data(), size, MPI_INT, i, tag, mpi->comm, &mpi->pending_send_req[req_index]);
+			}
+
+			assert(error == MPI_SUCCESS);
+		}
 	}
 }
 
 void broadcast_trailer(mpi_context_t *mpi)
 {
-	vector<int> *buffer;
-	int free_req;
+	zlog_level(delta_log, ROUTER_V2, "Sending trailer packet\n");
 
-	get_free_buffer_and_req(mpi, &buffer, &free_req);
-
-	for (int i = 0; i < mpi->comm_size; ++i) {
-		if (i != mpi->rank) {
-			zlog_level(delta_log, ROUTER_V2, "Sent trailer packet from %d to %d\n", mpi->rank, i);
-
-			int data_index = mpi->pending_send_req_data_ref[free_req];
-			pair<vector<int> *, int> *data = &mpi->pending_send_data_raw[data_index];
-			assert(data->first == buffer);
-			assert(mpi->pending_send_req[free_req] == MPI_REQUEST_NULL);
-
-			int error = MPI_Isend(nullptr, 0, MPI_INT, i, LAST_TAG, mpi->comm, &mpi->pending_send_req[free_req]);
-
-			assert(error == MPI_SUCCESS);
-
-			++data->second;
-			++free_req;
-		}
-	}
+	broadcast(-1, 0, LAST_TAG, mpi);
 }
 
 void broadcast_rip_up_no_progress_reuse(int net_id, mpi_context_t *mpi)
 {
-	vector<int> *buffer;
-	int free_req;
+	zlog_level(delta_log, ROUTER_V3, "MPI sent rip up");
 
-	get_free_buffer_and_req(mpi, &buffer, &free_req);
-
-	for (int i = 0; i < mpi->comm_size; ++i) {
-		if (i != mpi->rank) {
-			zlog_level(delta_log, ROUTER_V3, "MPI sent rip up from %d to %d\n", mpi->rank, i);
-
-			int data_index = mpi->pending_send_req_data_ref[free_req];
-			pair<vector<int> *, int> *data = &mpi->pending_send_data_raw[data_index];
-			assert(data->first == buffer);
-			assert(mpi->pending_send_req[free_req] == MPI_REQUEST_NULL);
-
-			int error = MPI_Isend(nullptr, 0, MPI_INT, i, RIP_UP_TAG + net_id, mpi->comm, &mpi->pending_send_req[free_req]);
-
-			assert(error == MPI_SUCCESS);
-
-			++data->second;
-			++free_req;
-		}
-	}
+	broadcast(-1, 0, RIP_UP_TAG + net_id, mpi);
 }
 
 void broadcast_pending_cost_updates_reduced_no_progress_reuse(const vector<RRNode> &added_nodes, int net_id, int delta, mpi_context_t *mpi)
 {
+	if (mpi->comm_size < 2) {
+		return;
+	}
+
 	assert(!added_nodes.empty());
 
-	vector<int> *buffer;
-	int free_req;
-
-	get_free_buffer_and_req(mpi, &buffer, &free_req);
+	int data_index = get_free_buffer(mpi, added_nodes.size()*2);
+	vector<int> *buffer = mpi->pending_send_data_raw[data_index].first;
 
 	assert(buffer->size() >= added_nodes.size()*2);
+	assert(buffer->size() <= mpi->buffer_size);
 
 	node_update_t *cost_updates = (node_update_t *)buffer->data();
 	for (int i = 0; i < added_nodes.size(); ++i) {
@@ -118,27 +121,17 @@ void broadcast_pending_cost_updates_reduced_no_progress_reuse(const vector<RRNod
 		cost_updates[i].delta = delta;
 	}
 
-	for (int i = 0; i < mpi->comm_size; ++i) {
-		if (i != mpi->rank) {
-			zlog_level(delta_log, ROUTER_V3, "MPI sent a path of length %lu from %d to %d\n", added_nodes.size(), mpi->rank, i);
+	zlog_level(delta_log, ROUTER_V3, "MPI sent a path of length %lu\n", added_nodes.size());
 
-			int data_index = mpi->pending_send_req_data_ref[free_req];
-			pair<vector<int> *, int> *data = &mpi->pending_send_data_raw[data_index];
-			assert(mpi->pending_send_req[free_req] == MPI_REQUEST_NULL);
-			assert(data->first == buffer);
-
-			int error = MPI_Isend(buffer->data(), added_nodes.size()*2, MPI_INT, i, COST_UPDATE_TAG + net_id, mpi->comm, &mpi->pending_send_req[free_req]);
-
-			assert(error == MPI_SUCCESS);
-
-			++data->second;
-			++free_req;
-		}
-	}
+	broadcast(data_index, added_nodes.size()*2, COST_UPDATE_TAG+net_id, mpi);
 }
 
 void progress_sends_waitall(mpi_context_t *mpi)
 {
+	if (mpi->comm_size < 2) {
+		return;
+	}
+
 	assert(!mpi->pending_send_req.empty());
 
 	vector<MPI_Status> statuses(mpi->pending_send_req.size());
@@ -152,14 +145,27 @@ void progress_sends_waitall(mpi_context_t *mpi)
 			/* empty status */
 		} else {
 			int data_index = mpi->pending_send_req_data_ref[i];
-			assert(mpi->pending_send_data_raw[data_index].second > 0);
-			--mpi->pending_send_data_raw[data_index].second;
+			
+			if (data_index >= 0) {
+				assert(mpi->pending_send_data_raw[data_index].second > 0);
+				--mpi->pending_send_data_raw[data_index].second;
+			}
+
+			if (mpi->pending_send_data_raw[data_index].second == 0) {
+				mpi->free_send_data_index.push(data_index);
+			}
+
+			mpi->free_send_req_index.push(i);
 		}
 	}
 }
 
 void progress_sends_testsome(mpi_context_t *mpi)
 {
+	if (mpi->comm_size < 2) {
+		return;
+	}
+
 	assert(!mpi->pending_send_req.empty());
 
 	if (mpi->completed_send_indices.size() < mpi->pending_send_req.size()) {
@@ -181,18 +187,22 @@ void progress_sends_testsome(mpi_context_t *mpi)
 
 		int data_index = mpi->pending_send_req_data_ref[completed_index];
 
-		assert(mpi->pending_send_data_raw[data_index].second > 0);
-		--mpi->pending_send_data_raw[data_index].second;
+		if (data_index >= 0) {
+			zlog_level(delta_log, ROUTER_V3, "Reducing ref count, req_index %d data_index %d new_ref_count %d\n", completed_index, data_index, mpi->pending_send_data_raw[data_index].second);
 
-		zlog_level(delta_log, ROUTER_V3, "Reducing ref count, completed_index %d data_index %d new_ref_count %d\n", completed_index, data_index, mpi->pending_send_data_raw[data_index].second);
+			assert(mpi->pending_send_data_raw[data_index].second > 0);
+			--mpi->pending_send_data_raw[data_index].second;
 
-		if (mpi->pending_send_data_raw[data_index].second == 0) {
-			int free_index = data_index * (mpi->comm_size-1);
-			assert(free_index == (completed_index - (completed_index % (mpi->comm_size-1))));
-			mpi->free_send_index.push(free_index);
+			if (mpi->pending_send_data_raw[data_index].second == 0) {
+				zlog_level(delta_log, ROUTER_V3, "Freeing data, req_index %d data_index %d\n", completed_index, data_index);
 
-			zlog_level(delta_log, ROUTER_V3, "Freeing buffer, completed_index %d data_index %d free_req %d\n", completed_index, data_index, free_index);
+				mpi->free_send_data_index.push(data_index);
+			}
 		}
+
+		zlog_level(delta_log, ROUTER_V3, "Freeing req, req_index %d\n");
+
+		mpi->free_send_req_index.push(completed_index);
 	}
 }
 
@@ -334,9 +344,15 @@ void bootstrap_irecv(mpi_context_t *mpi)
 
 void sync_irecv(const vector<net_t> &nets, congestion_t *congestion, const RRGraph &g, float pres_fac, vector<vector<RRNode>> &net_route_trees, mpi_context_t *mpi, mpi_perf_t *mpi_perf)
 {
+	if (mpi->comm_size < 2) {
+		return;
+	}
+
 	int num_completed;
 
 	assert(mpi->comm_size == mpi->pending_recv_req_flat.size());
+	assert(mpi->comm_size == mpi->completed_recv_indices.size());
+	assert(mpi->comm_size == mpi->completed_recv_statuses.size());
 
 	int error = MPI_Testsome(mpi->pending_recv_req_flat.size(), mpi->pending_recv_req_flat.data(),
 			&num_completed, mpi->completed_recv_indices.data(), mpi->completed_recv_statuses.data());
@@ -486,7 +502,7 @@ void route_net_mpi_send_recv_nonblocking(const RRGraph &g, int vpr_id, int net_i
 			auto progress_start = clock::now();
 			progress_sends_testsome(mpi);
 			if (mpi_perf) {
-				mpi_perf->total_broadcast_time += clock::now()-progress_start;
+				mpi_perf->total_send_testsome_time += clock::now()-progress_start;
 			}
 		}
 
@@ -629,7 +645,7 @@ void route_net_mpi_send_recv_nonblocking(const RRGraph &g, int vpr_id, int net_i
 			auto progress_start = clock::now();
 			progress_sends_testsome(mpi);
 			if (mpi_perf) {
-				mpi_perf->total_broadcast_time += clock::now()-progress_start;
+				mpi_perf->total_send_testsome_time += clock::now()-progress_start;
 			}
 		}
 
@@ -661,7 +677,7 @@ void route_net_mpi_send_recv_nonblocking(const RRGraph &g, int vpr_id, int net_i
 		auto progress_start = clock::now();
 		progress_sends_testsome(mpi);
 		if (mpi_perf) {
-			mpi_perf->total_broadcast_time += clock::now()-progress_start;
+			mpi_perf->total_send_testsome_time += clock::now()-progress_start;
 		}
 	}
 

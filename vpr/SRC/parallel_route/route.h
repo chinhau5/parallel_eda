@@ -32,9 +32,11 @@ typedef struct perf_t {
 typedef struct mpi_perf_t {
 	std::chrono::high_resolution_clock::duration total_sync_time;
 	std::chrono::high_resolution_clock::duration total_broadcast_time;
+	std::chrono::high_resolution_clock::duration total_send_testsome_time;
+
+	std::chrono::high_resolution_clock::duration total_testsome_time;
 	std::chrono::high_resolution_clock::duration total_iprobe_time;
 	std::chrono::high_resolution_clock::duration total_probe_time;
-	std::chrono::high_resolution_clock::duration total_testsome_time;
 	std::chrono::high_resolution_clock::duration total_irecv_time;
 	std::chrono::high_resolution_clock::duration total_recv_time;
 	std::chrono::high_resolution_clock::duration total_update_time;
@@ -228,7 +230,8 @@ typedef struct mpi_context_t {
 	vector<int> pending_send_req_data_ref;
 
 	vector<int> completed_send_indices;
-	queue<int> free_send_index;
+	queue<int> free_send_data_index;
+	queue<int> free_send_req_index;
 
 	vector<vector<std::shared_ptr<vector<node_update_t>>>> pending_recv_data; 
 	vector<vector<MPI_Request>> pending_recv_req; 
