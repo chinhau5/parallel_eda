@@ -64,6 +64,8 @@ int get_free_req(mpi_context_t *mpi, int data_index)
 
 void broadcast(int data_index, int size, int tag, mpi_context_t *mpi)
 {
+	mpi->max_send_data_size = std::max(mpi->max_send_data_size, size);
+
 	for (int i = 0; i < mpi->comm_size; ++i) {
 		if (i != mpi->rank) {
 			zlog_level(delta_log, ROUTER_V2, "Sent packet from %d to %d\n", mpi->rank, i);
@@ -80,6 +82,9 @@ void broadcast(int data_index, int size, int tag, mpi_context_t *mpi)
 				assert(data->second >= 0);
 				++data->second;
 				error = MPI_Isend(data->first->data(), size, MPI_INT, i, tag, mpi->comm, &mpi->pending_send_req[req_index]);
+
+				mpi->total_send_data_size += size;
+				++mpi->total_send_count;
 			}
 
 			assert(error == MPI_SUCCESS);
@@ -126,6 +131,30 @@ void broadcast_pending_cost_updates_reduced_no_progress_reuse(const vector<RRNod
 	broadcast(data_index, added_nodes.size()*2, COST_UPDATE_TAG+net_id, mpi);
 }
 
+void complete_send_request(mpi_context_t *mpi, int completed_index)
+{
+	assert(mpi->pending_send_req[completed_index] == MPI_REQUEST_NULL);
+
+	int data_index = mpi->pending_send_req_data_ref[completed_index];
+
+	if (data_index >= 0) {
+		zlog_level(delta_log, ROUTER_V3, "Reducing ref count, req_index %d data_index %d new_ref_count %d\n", completed_index, data_index, mpi->pending_send_data_raw[data_index].second);
+
+		assert(mpi->pending_send_data_raw[data_index].second > 0);
+		--mpi->pending_send_data_raw[data_index].second;
+
+		if (mpi->pending_send_data_raw[data_index].second == 0) {
+			zlog_level(delta_log, ROUTER_V3, "Freeing data, req_index %d data_index %d\n", completed_index, data_index);
+
+			mpi->free_send_data_index.push(data_index);
+		}
+	}
+
+	zlog_level(delta_log, ROUTER_V3, "Freeing req, req_index %d\n");
+
+	mpi->free_send_req_index.push(completed_index);
+}
+
 void progress_sends_waitall(mpi_context_t *mpi)
 {
 	if (mpi->comm_size < 2) {
@@ -133,6 +162,8 @@ void progress_sends_waitall(mpi_context_t *mpi)
 	}
 
 	assert(!mpi->pending_send_req.empty());
+
+	mpi->max_send_req_size = std::max((unsigned long)mpi->max_send_req_size, mpi->pending_send_req.size());
 
 	vector<MPI_Status> statuses(mpi->pending_send_req.size());
 
@@ -144,18 +175,7 @@ void progress_sends_waitall(mpi_context_t *mpi)
 		if (statuses[i].MPI_TAG == MPI_ANY_TAG && statuses[i].MPI_SOURCE == MPI_ANY_SOURCE && statuses[i].MPI_ERROR == MPI_SUCCESS) {
 			/* empty status */
 		} else {
-			int data_index = mpi->pending_send_req_data_ref[i];
-			
-			if (data_index >= 0) {
-				assert(mpi->pending_send_data_raw[data_index].second > 0);
-				--mpi->pending_send_data_raw[data_index].second;
-			}
-
-			if (mpi->pending_send_data_raw[data_index].second == 0) {
-				mpi->free_send_data_index.push(data_index);
-			}
-
-			mpi->free_send_req_index.push(i);
+			complete_send_request(mpi, i);
 		}
 	}
 }
@@ -167,6 +187,8 @@ void progress_sends_testsome(mpi_context_t *mpi)
 	}
 
 	assert(!mpi->pending_send_req.empty());
+
+	mpi->max_send_req_size = std::max((unsigned long)mpi->max_send_req_size, mpi->pending_send_req.size());
 
 	if (mpi->completed_send_indices.size() < mpi->pending_send_req.size()) {
 		mpi->completed_send_indices.resize(mpi->pending_send_req.size());
@@ -181,28 +203,7 @@ void progress_sends_testsome(mpi_context_t *mpi)
 	assert(num_completed != MPI_UNDEFINED);
 
 	for (int i = 0; i < num_completed; ++i) {
-		int completed_index = mpi->completed_send_indices[i];
-
-		assert(mpi->pending_send_req[completed_index] == MPI_REQUEST_NULL);
-
-		int data_index = mpi->pending_send_req_data_ref[completed_index];
-
-		if (data_index >= 0) {
-			zlog_level(delta_log, ROUTER_V3, "Reducing ref count, req_index %d data_index %d new_ref_count %d\n", completed_index, data_index, mpi->pending_send_data_raw[data_index].second);
-
-			assert(mpi->pending_send_data_raw[data_index].second > 0);
-			--mpi->pending_send_data_raw[data_index].second;
-
-			if (mpi->pending_send_data_raw[data_index].second == 0) {
-				zlog_level(delta_log, ROUTER_V3, "Freeing data, req_index %d data_index %d\n", completed_index, data_index);
-
-				mpi->free_send_data_index.push(data_index);
-			}
-		}
-
-		zlog_level(delta_log, ROUTER_V3, "Freeing req, req_index %d\n");
-
-		mpi->free_send_req_index.push(completed_index);
+		complete_send_request(mpi, mpi->completed_send_indices[i]);
 	}
 }
 

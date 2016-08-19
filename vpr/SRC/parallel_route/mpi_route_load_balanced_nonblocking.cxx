@@ -515,6 +515,10 @@ bool mpi_route_load_balanced_nonblocking(t_router_opts *opts, struct s_det_routi
 		mpi.completed_recv_indices.resize(mpi.comm_size);
 		mpi.completed_recv_statuses.resize(mpi.comm_size);
 		mpi.received_last_update.resize(mpi.comm_size);
+		mpi.max_send_data_size = 0;
+		mpi.total_send_count = 0;
+		mpi.total_send_data_size = 0;
+		mpi.max_send_req_size = 0;
 
 		std::fill(begin(mpi.received_last_update), end(mpi.received_last_update), false);
 
@@ -913,6 +917,30 @@ bool mpi_route_load_balanced_nonblocking(t_router_opts *opts, struct s_det_routi
 			printf("total_num_heap_pushes: %lu\n", total_num_heap_pushes);
 			printf("total_num_heap_pops: %lu\n", total_num_heap_pops); 
 			printf("total_num_neighbor_visits: %lu\n", total_num_neighbor_visits);
+
+			printf("max send data size: %d ", mpi.max_send_data_size*sizeof(int));
+			for (int i = 1; i < mpi.comm_size; ++i) {
+				int tmp_max_send_data_size;
+				MPI_Recv(&tmp_max_send_data_size, 1, MPI_INT, i, i, mpi.comm, MPI_STATUS_IGNORE);
+				printf("%d ", tmp_max_send_data_size*sizeof(int));
+			}
+			printf("\n");
+			printf("total send size/count/average: %lu/%lu/%g ", mpi.total_send_data_size*sizeof(int), mpi.total_send_count, (float)mpi.total_send_data_size*sizeof(int)/mpi.total_send_count);
+			for (int i = 1; i < mpi.comm_size; ++i) {
+				unsigned long tmp_total_send_data_size;
+				unsigned long tmp_total_send_count;
+				MPI_Recv(&tmp_total_send_data_size, 1, MPI_UNSIGNED_LONG, i, i, mpi.comm, MPI_STATUS_IGNORE);
+				MPI_Recv(&tmp_total_send_count, 1, MPI_UNSIGNED_LONG, i, i, mpi.comm, MPI_STATUS_IGNORE);
+				printf("%lu/%lu/%g ", tmp_total_send_data_size*sizeof(int), tmp_total_send_count, (float)tmp_total_send_data_size*sizeof(int)/tmp_total_send_count);
+			}
+			printf("\n");
+			printf("max send req size: %d ", mpi.max_send_req_size);
+			for (int i = 1; i < mpi.comm_size; ++i) {
+				int tmp_max_send_req_size;
+				MPI_Recv(&tmp_max_send_req_size, 1, MPI_INT, i, i, mpi.comm, MPI_STATUS_IGNORE);
+				printf("%d ", tmp_max_send_req_size);
+			}
+			printf("\n");
 		} else {
 			MPI_Send(&thread_num_nets_to_route, 1, MPI_INT, 0, mpi.rank, mpi.comm);
 			MPI_Send(&thread_num_nets_routed, 1, MPI_INT, 0, mpi.rank, mpi.comm);
@@ -922,6 +950,11 @@ bool mpi_route_load_balanced_nonblocking(t_router_opts *opts, struct s_det_routi
 			MPI_Send(&perf.num_heap_pushes, 1, MPI_UNSIGNED_LONG, 0, mpi.rank, mpi.comm);
 			MPI_Send(&perf.num_heap_pops, 1, MPI_UNSIGNED_LONG, 0, mpi.rank, mpi.comm);
 			MPI_Send(&perf.num_neighbor_visits, 1, MPI_UNSIGNED_LONG, 0, mpi.rank, mpi.comm);
+
+			MPI_Send(&mpi.max_send_data_size, 1, MPI_INT, 0, mpi.rank, mpi.comm);
+			MPI_Send(&mpi.total_send_data_size, 1, MPI_UNSIGNED_LONG, 0, mpi.rank, mpi.comm);
+			MPI_Send(&mpi.total_send_count, 1, MPI_UNSIGNED_LONG, 0, mpi.rank, mpi.comm);
+			MPI_Send(&mpi.max_send_req_size, 1, MPI_INT, 0, mpi.rank, mpi.comm);
 		}
 
 		/* checking */
