@@ -1340,7 +1340,7 @@ void route_net_one_pass(const RRGraph &g, int vpr_id, const source_t *source, co
 
 		RouteTreeNode root_rt_node = route_tree_add_rr_node(rt, source->rr_node, g);
 		const auto &source_rr_node_p = get_vertex_props(g, source->rr_node);
-		route_tree_set_node_properties(rt, root_rt_node, true, RRGraph::null_edge(), source_rr_node_p.R, 0.5 * source_rr_node_p.R * source_rr_node_p.C);
+		route_tree_set_node_properties(rt, root_rt_node, true, source_rr_node_p.R, 0.5 * source_rr_node_p.R * source_rr_node_p.C);
 		route_tree_add_root(rt, source->rr_node);
 
 		/*update_one_cost_internal(source_rr_node_p, 1, params.pres_fac);*/
@@ -1524,7 +1524,7 @@ void route_net_with_partitioned_fine_grain_lock(const RRGraph &g, const vector<i
 
 		const auto &source_rr_node = get_vertex_props(g, source->rr_node);
 		RouteTreeNode root_rt_node = route_tree_add_rr_node(rt, source->rr_node, g);
-		route_tree_set_node_properties(rt, root_rt_node, true, RRGraph::null_edge(), source_rr_node.R, 0.5 * source_rr_node.R * source_rr_node.C);
+		route_tree_set_node_properties(rt, root_rt_node, true, source_rr_node.R, 0.5 * source_rr_node.R * source_rr_node.C);
 		route_tree_add_root(rt, source->rr_node);
 
 		/*update_one_cost_internal(source_rr_node, 1, params.pres_fac);*/
@@ -1714,7 +1714,7 @@ void route_net_lockless(const RRGraph &g, const vector<int> &pid, int this_pid, 
 
 		RouteTreeNode root_rt_node = route_tree_add_rr_node(rt, source->rr_node, g);
 		const auto &source_rr_node_p = get_vertex_props(g, source->rr_node);
-		route_tree_set_node_properties(rt, root_rt_node, true, RRGraph::null_edge(), source_rr_node_p.R, 0.5 * source_rr_node_p.R * source_rr_node_p.C);
+		route_tree_set_node_properties(rt, root_rt_node, true, source_rr_node_p.R, 0.5 * source_rr_node_p.R * source_rr_node_p.C);
 		route_tree_add_root(rt, source->rr_node);
 
 		/*update_one_cost_internal(source_rr_node_p, 1, params.pres_fac);*/
@@ -1883,7 +1883,7 @@ void route_net_mpi_rma(const RRGraph &g, const vector<int> &pid, int this_pid, M
 
 		RouteTreeNode root_rt_node = route_tree_add_rr_node(rt, source->rr_node, g);
 		const auto &source_rr_node_p = get_vertex_props(g, source->rr_node);
-		route_tree_set_node_properties(rt, root_rt_node, true, RRGraph::null_edge(), source_rr_node_p.R, 0.5 * source_rr_node_p.R * source_rr_node_p.C);
+		route_tree_set_node_properties(rt, root_rt_node, true, source_rr_node_p.R, 0.5 * source_rr_node_p.R * source_rr_node_p.C);
 		route_tree_add_root(rt, source->rr_node);
 
 		/*update_one_cost_internal(source_rr_node_p, 1, params.pres_fac);*/
@@ -2090,7 +2090,7 @@ void route_net_with_high_interpartition_cost(const RRGraph &g, const vector<int>
 
 		RouteTreeNode root_rt_node = route_tree_add_rr_node(rt, source->rr_node, g);
 		const auto &source_rr_node_p = get_vertex_props(g, source->rr_node);
-		route_tree_set_node_properties(rt, root_rt_node, true, RRGraph::null_edge(), source_rr_node_p.R, 0.5 * source_rr_node_p.R * source_rr_node_p.C);
+		route_tree_set_node_properties(rt, root_rt_node, true, source_rr_node_p.R, 0.5 * source_rr_node_p.R * source_rr_node_p.C);
 		route_tree_add_root(rt, source->rr_node);
 
 		/*update_one_cost_internal(source_rr_node_p, 1, params.pres_fac);*/
@@ -2297,7 +2297,7 @@ void route_net_with_partition_hopping(const RRGraph &g, const vector<int> &pid, 
 
 		RouteTreeNode root_rt_node = route_tree_add_rr_node(rt, source->rr_node, g);
 		const auto &source_rr_node_p = get_vertex_props(g, source->rr_node);
-		route_tree_set_node_properties(rt, root_rt_node, true, RRGraph::null_edge(), source_rr_node_p.R, 0.5 * source_rr_node_p.R * source_rr_node_p.C);
+		route_tree_set_node_properties(rt, root_rt_node, true, source_rr_node_p.R, 0.5 * source_rr_node_p.R * source_rr_node_p.C);
 		route_tree_add_root(rt, source->rr_node);
 
 		/*update_one_cost_internal(source_rr_node_p, 1, params.pres_fac);*/

@@ -17,7 +17,7 @@ std::shared_ptr<vector<path_node_t>> get_path(int sink_rr_node_id, const route_s
 float get_timing_driven_expected_cost(const rr_node_property_t &current, const rr_node_property_t &target, float criticality_fac, float R_upstream);
 float get_delay(const rr_edge_property_t &e, const rr_node_property_t &v, float unbuffered_upstream_R);
 
-int get_free_buffer(mpi_context_t *mpi, int size)
+static int get_free_buffer(mpi_context_t *mpi, int size)
 {
 	int data_index;
 
@@ -471,7 +471,7 @@ void route_net_mpi_send_recv_nonblocking(const RRGraph &g, int vpr_id, int net_i
 
 		RouteTreeNode root_rt_node = route_tree_add_rr_node(rt, source->rr_node, g);
 		const auto &source_rr_node_p = get_vertex_props(g, source->rr_node);
-		route_tree_set_node_properties(rt, root_rt_node, true, RRGraph::null_edge(), source_rr_node_p.R, 0.5 * source_rr_node_p.R * source_rr_node_p.C);
+		route_tree_set_node_properties(rt, root_rt_node, true, source_rr_node_p.R, 0.5 * source_rr_node_p.R * source_rr_node_p.C);
 		route_tree_add_root(rt, source->rr_node);
 
 		//update_one_cost_internal(source->rr_node, g, congestion, 1, params.pres_fac);

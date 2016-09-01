@@ -15,7 +15,7 @@ zlog_category_t *ss_log;
 
 using namespace std;
 
-static map<string, FILE *> log_files;
+map<string, FILE *> log_files;
 
 void init_logging()
 {

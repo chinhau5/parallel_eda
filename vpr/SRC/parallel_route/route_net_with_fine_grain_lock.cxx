@@ -59,7 +59,7 @@ vector<const sink_t *> route_net_with_fine_grain_lock(const RRGraph &g, int vpr_
 
 		const auto &source_rr_node = get_vertex_props(g, source->rr_node);
 		RouteTreeNode root_rt_node = route_tree_add_rr_node(rt, source->rr_node, g);
-		route_tree_set_node_properties(rt, root_rt_node, true, RRGraph::null_edge(), source_rr_node.R, 0.5 * source_rr_node.R * source_rr_node.C);
+		route_tree_set_node_properties(rt, root_rt_node, true, source_rr_node.R, 0.5 * source_rr_node.R * source_rr_node.C);
 		route_tree_add_root(rt, source->rr_node);
 
 		/*update_one_cost_internal(source_rr_node, 1, params.pres_fac);*/
@@ -172,7 +172,7 @@ vector<const sink_t *> route_net_with_fine_grain_lock(const RRGraph &g, int vpr_
 
 			RouteTreeNode rt_node = route_tree_add_rr_node(rt, sink->rr_node, g);
 			assert(rt_node != RouteTree::null_vertex());
-			route_tree_set_node_properties(rt, rt_node, false, RRGraph::null_edge(), state[sink->rr_node].upstream_R, state[sink->rr_node].delay);
+			route_tree_set_node_properties(rt, rt_node, false, state[sink->rr_node].upstream_R, state[sink->rr_node].delay);
 			update_one_cost_internal(sink->rr_node, g, congestion, 1, params.pres_fac, true, lock_perf);
 
 			sprintf_rr_node(sink->rr_node, buffer);
@@ -188,7 +188,7 @@ vector<const sink_t *> route_net_with_fine_grain_lock(const RRGraph &g, int vpr_
 
 					RouteTreeNode rt_node = route_tree_add_rr_node(rt, parent_rr_node, g);
 					if (rt_node != RouteTree::null_vertex()) {
-						route_tree_set_node_properties(rt, rt_node, parent_rr_node_p.type != IPIN && parent_rr_node_p.type != SINK, RRGraph::null_edge(), state[parent_rr_node].upstream_R, state[parent_rr_node].delay);
+						route_tree_set_node_properties(rt, rt_node, parent_rr_node_p.type != IPIN && parent_rr_node_p.type != SINK, state[parent_rr_node].upstream_R, state[parent_rr_node].delay);
 
 						update_one_cost_internal(parent_rr_node, g, congestion, 1, params.pres_fac, true, lock_perf);
 					} else if (get_vertex_props(g, parent_rr_node).type == SOURCE) {

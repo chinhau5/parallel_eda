@@ -111,11 +111,11 @@ void route_tree_init(route_tree_t &rt);
 
 bool route_tree_empty(const route_tree_t &rt);
 
-void route_tree_is_only_path_internal(const RRGraph &g, const RRNode &node);
+//void route_tree_is_only_path_internal(const RRGraph &g, const RRNode &node);
 
 RouteTreeNode route_tree_add_rr_node(route_tree_t &rt, RRNode rr_node, const RRGraph &g);
 
-int route_tree_num_nodes(const route_tree_t &rt);
+//int route_tree_num_nodes(const route_tree_t &rt);
 
 const RouteTreeEdge &route_tree_add_edge_between_rr_node(route_tree_t &rt, RRNode rr_node_a, RRNode rr_node_b);
 
@@ -137,7 +137,7 @@ boost::iterator_range<boost::filter_iterator<valid_rt_node, route_tree_t::vertex
 route_tree_get_nodes(const route_tree_t &rt);
 
 boost::iterator_range<route_tree_t::branch_iterator>
-route_tree_get_branches(const route_tree_t &rt, int rt_node);
+route_tree_get_branches(const route_tree_t &rt, RouteTreeNode rt_node);
 
 void route_tree_mark_paths_to_be_ripped(route_tree_t &rt, const RRGraph &g, const vector<int> &pid, int this_pid, const vector<RRNode> &rr_nodes);
 
@@ -167,21 +167,21 @@ void route_tree_add_path(route_tree_t &rt, const std::shared_ptr<vector<path_nod
 
 void route_tree_clear(route_tree_t &rt);
 
-void route_tree_set_root(route_tree_t &rt, int rr_node);
+void route_tree_set_root(route_tree_t &rt, RRNode rr_node);
 
-void route_tree_add_root(route_tree_t &rt, int rr_node);
+void route_tree_add_root(route_tree_t &rt, RRNode rr_node);
 
 //bool route_tree_is_only_path(const route_tree_t &rt, int sink_rr_node, const RRGraph &g);
 
 //pair<int, const RRNode *> route_tree_get_connection(const RRNode &current_rr_node, const RRGraph &g, const route_state_t *state, bool end);
 
-void route_tree_set_node_properties(route_tree_t &rt, RouteTreeNode &rt_node, bool reexpand, const RREdge &prev_edge, float upstream_R, float delay);
+void route_tree_set_node_properties(route_tree_t &rt, const RouteTreeNode &rt_node, bool reexpand, float upstream_R, float delay);
 
 //RouteTreeNode &route_tree_add_or_get_rr_node(route_tree_t &rt, int rr_node_id, const RRGraph &g, const route_state_t *state, bool &update_cost, bool &stop_traceback);
 
 //RouteTreeNode *route_tree_checked_add_rr_node(route_tree_t &rt, const RRNode &rr_node, const route_state_t *state);
 
-void route_tree_add_to_heap_internal(const route_tree_t &rt, RouteTreeNode rt_node, const RRGraph &g, const RRNode &target, float criticality_fac, float astar_fac, const bounding_box_t &current_bounding_box, std::priority_queue<route_state_t> &heap, perf_t *perf);
+//void route_tree_add_to_heap_internal(const route_tree_t &rt, RouteTreeNode rt_node, const RRGraph &g, const RRNode &target, float criticality_fac, float astar_fac, const bounding_box_t &current_bounding_box, std::priority_queue<route_state_t> &heap, perf_t *perf);
 
 void route_tree_add_to_heap(const route_tree_t &rt, const RRGraph &g, RRNode target, float criticality_fac, float astar_fac, const bounding_box_t &current_bounding_box, std::priority_queue<route_state_t> &heap, perf_t *perf);
 
@@ -196,6 +196,7 @@ bool route_tree_node_check_and_mark_congested_for_rip_up(route_tree_t &rt, Route
 	if (valid(rt_node_p.rt_edge_to_parent)) {
 		rt_node_p.pending_rip_up = get_vertex_props(rt.graph, get_source(rt.graph, rt_node_p.rt_edge_to_parent)).pending_rip_up;
 	} else {
+		assert(false);
 		rt_node_p.pending_rip_up = false;
 	}
 

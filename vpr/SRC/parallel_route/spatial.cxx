@@ -2823,6 +2823,92 @@ void sync_net_delay(const vector<pair<box, net_t *>> &nets_to_route, int procid,
 	delete [] all_delays;
 }
 
+void recv_route_tree(net_t *net, const RRGraph &g, vector<route_tree_t> &route_trees, t_net_timing *net_timing, int from_procid, MPI_Comm comm)
+{
+	assert(route_tree_empty(route_trees[net->local_id]));
+
+	MPI_Status status;
+
+	MPI_Probe(from_procid, net->local_id, comm, &status);
+
+	int count;
+	MPI_Get_count(&status, pn_send_dt, &count);
+
+	assert(count > 0);
+	assert(status.MPI_TAG == net->local_id);
+
+	path_node_send_t *recv = new path_node_send_t[count];
+	MPI_Recv(recv, count, pn_send_dt, status.MPI_SOURCE, status.MPI_TAG, comm, MPI_STATUS_IGNORE);
+
+	char buffer[256];
+	zlog_level(delta_log, ROUTER_V3, "Recv route tree of net %d\n", net->vpr_id);
+
+	int num_sources = 0;
+	int num_sinks = 0;
+	RRNode source_rr_node = RRGraph::null_vertex();
+	for (int i = 0; i < count; ++i) {
+		int rr_node = recv[i].rr_node_id;
+
+		RREdge rr_edge_to_parent;
+		if (recv[i].parent_rr_node == RRGraph::null_vertex()) {
+			rr_edge_to_parent = RRGraph::null_edge();
+		} else {
+			rr_edge_to_parent = get_edge(g, recv[i].parent_rr_node, rr_node);
+		}
+
+		const auto &rr_node_p = get_vertex_props(g, rr_node);
+
+		RouteTreeNode rt_node = route_tree_add_rr_node(route_trees[net->local_id], rr_node, g);
+		assert(rt_node != RouteTree::null_vertex());
+
+		route_tree_set_node_properties(route_trees[net->local_id], rt_node, rr_node_p.type != IPIN && rr_node_p.type != SINK, recv[i].upstream_R, recv[i].delay);
+
+		if (rr_node_p.type == SOURCE) {
+			route_tree_add_root(route_trees[net->local_id], rr_node);
+			source_rr_node = rr_node;
+			++num_sources;
+		} else if (rr_node_p.type == SINK) {
+			++num_sinks;
+
+			int num_matches = 0;
+			int match = -1;
+			for (int j = 0; j < net->sinks.size(); ++j) {
+				if (net->sinks[j].rr_node == rr_node) {
+					match = j;
+					++num_matches;
+				}
+			}
+			assert(num_matches == 1);
+
+			net_timing[net->vpr_id].delay[net->sinks[match].id+1] = recv[i].delay;
+		}
+
+		//update_one_cost_internal(rr_node, g, congestion, 1, pres_fac);
+
+		sprintf_rr_node(rr_node, buffer);
+		zlog_level(delta_log, ROUTER_V3, "\t%s parent: %d delay: %g upstream_R: %g\n", buffer, recv[i].parent_rr_node, recv[i].delay, recv[i].upstream_R);
+	}
+
+	assert(num_sources == 1);
+
+	/* set up edges */
+	for (int i = 0; i < count; ++i) {
+		int rr_node = recv[i].rr_node_id;
+
+		if (recv[i].parent_rr_node != RRGraph::null_vertex()) {
+			route_tree_add_edge_between_rr_node(route_trees[net->local_id], recv[i].parent_rr_node, rr_node);
+		} 
+	}
+
+	/* hacky fix for titan benchmark */
+	//RouteTreeNode source_rt_node = route_tree_get_rt_node(route_trees[net->local_id], source_rr_node);
+	//assert(source_rt_node != RouteTree::null_vertex());
+	//int delta = num_out_edges(route_trees[net->local_id].graph, source_rt_node)-1;
+	//update_one_cost_internal(source_rr_node, g, congestion, delta, pres_fac);
+
+	delete [] recv;
+}
+
 void recv_route_tree(net_t *net, const RRGraph &g, vector<vector<sink_t *>> &routed_sinks, vector<route_tree_t> &route_trees, t_net_timing *net_timing, int from_procid, MPI_Comm comm)
 {
 	MPI_Status status;
@@ -2891,7 +2977,7 @@ void recv_route_tree(net_t *net, const RRGraph &g, vector<vector<sink_t *>> &rou
 		RouteTreeNode rt_node = route_tree_add_rr_node(route_trees[net->local_id], rr_node, g);
 		assert(rt_node != RouteTree::null_vertex());
 
-		route_tree_set_node_properties(route_trees[net->local_id], rt_node, rr_node_p.type != IPIN && rr_node_p.type != SINK, rr_edge_to_parent, recv[i].upstream_R, recv[i].delay);
+		route_tree_set_node_properties(route_trees[net->local_id], rt_node, rr_node_p.type != IPIN && rr_node_p.type != SINK, recv[i].upstream_R, recv[i].delay);
 
 		if (rr_node_p.type == SOURCE) {
 			route_tree_add_root(route_trees[net->local_id], rr_node);
@@ -2931,6 +3017,43 @@ void recv_route_tree(net_t *net, const RRGraph &g, vector<vector<sink_t *>> &rou
 	//update_one_cost_internal(source_rr_node, g, congestion, delta, pres_fac);
 
 	delete [] recv;
+}
+
+void send_route_tree(const net_t *net, const vector<route_tree_t> &route_trees, int to_procid, MPI_Comm comm)
+{
+	zlog_level(delta_log, ROUTER_V3, "Sending route tree of net %d\n", net->vpr_id);
+	
+	int num_rt_nodes = 0;
+	for (const auto &rt_node : route_tree_get_nodes(route_trees[net->local_id])) {
+		++num_rt_nodes;
+	}
+
+	path_node_send_t *send = new path_node_send_t[num_rt_nodes];
+
+	int i = 0;
+	for (const auto &rt_node : route_tree_get_nodes(route_trees[net->local_id])) {
+		const auto &rt_node_p = get_vertex_props(route_trees[net->local_id].graph, rt_node);
+
+		send[i].rr_node_id = rt_node_p.rr_node;
+		if (valid(rt_node_p.rt_edge_to_parent)) {
+			send[i].parent_rr_node = get_vertex_props(route_trees[net->local_id].graph, get_source(route_trees[net->local_id].graph, rt_node_p.rt_edge_to_parent)).rr_node;
+		} else {
+			send[i].parent_rr_node = RRGraph::null_vertex();
+		}
+		send[i].delay = rt_node_p.delay;
+		send[i].upstream_R = rt_node_p.upstream_R;
+
+		char buffer[256];
+		sprintf_rr_node(send[i].rr_node_id, buffer);
+		
+		zlog_level(delta_log, ROUTER_V3, "\t%s parent: %d delay: %g upstream_R: %g\n", buffer, send[i].parent_rr_node, send[i].delay, send[i].upstream_R);
+		
+		++i;
+	}
+
+	MPI_Send(send, num_rt_nodes, pn_send_dt, to_procid, net->local_id, comm);
+
+	delete [] send;
 }
 
 void send_route_tree(const net_t *net, const vector<vector<sink_t *>> &routed_sinks, const vector<route_tree_t> &route_trees, int to_procid, MPI_Comm comm)

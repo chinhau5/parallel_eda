@@ -199,7 +199,7 @@ void route_net_mpi_send_recv(const RRGraph &g, int this_pid, int vpr_id, const s
 
 		RouteTreeNode root_rt_node = route_tree_add_rr_node(rt, source->rr_node, g);
 		const auto &source_rr_node_p = get_vertex_props(g, source->rr_node);
-		route_tree_set_node_properties(rt, root_rt_node, true, RRGraph::null_edge(), source_rr_node_p.R, 0.5 * source_rr_node_p.R * source_rr_node_p.C);
+		route_tree_set_node_properties(rt, root_rt_node, true, source_rr_node_p.R, 0.5 * source_rr_node_p.R * source_rr_node_p.C);
 		route_tree_add_root(rt, source->rr_node);
 
 		//update_one_cost_internal(source->rr_node, g, congestion, 1, params.pres_fac);

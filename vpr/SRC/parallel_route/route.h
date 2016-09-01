@@ -223,6 +223,12 @@ typedef struct mpi_context_t {
 	int rank;
 	int comm_size;
 
+	vector<int> all_data_sizes;
+	vector<vector<int> *> pending_send_data_nbc;
+	vector<int> packet_id;
+
+	int num_broadcasts_required;
+
 	int max_send_data_size;
 	unsigned long total_send_data_size;
 	unsigned long total_send_count;
@@ -232,8 +238,11 @@ typedef struct mpi_context_t {
 	vector<std::shared_ptr<vector<node_update_t>>> pending_send_data;
 	vector<MPI_Request> pending_send_req;
 
+	vector<vector<int>> pending_send_req_refs;
+
 	vector<pair<vector<int> *, int>> pending_send_data_raw;
 	vector<int> pending_send_req_data_ref;
+	vector<int> pending_send_req_meta_data_ref;
 
 	vector<int> completed_send_indices;
 	queue<int> free_send_data_index;

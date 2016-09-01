@@ -38,6 +38,8 @@ bool route_tree_empty(const route_tree_t &rt)
 		/*assert(num_rt_nodes > 0);*/
 	/*}*/
 	/*return rt.root_rt_node_id == -1;*/
+	assert(num_rt_nodes == rt.num_nodes);
+
 	return num_rt_nodes == 0 && num_rt_edges == 0;
 }
 
@@ -57,7 +59,7 @@ route_tree_get_nodes(const route_tree_t &rt)
 
 
 boost::iterator_range<route_tree_t::branch_iterator>
-route_tree_get_branches(const route_tree_t &rt, int rt_node)
+route_tree_get_branches(const route_tree_t &rt, RouteTreeNode rt_node)
 {
 	return get_out_edges(rt.graph, rt_node);
 }
@@ -163,7 +165,7 @@ RouteTreeNode route_tree_get_rt_node(const route_tree_t &rt, RRNode rr_node)
 	return res;
 }
 
-void route_tree_set_node_properties(route_tree_t &rt, RouteTreeNode &rt_node, bool reexpand, const RREdge &prev_edge, float upstream_R, float delay)
+void route_tree_set_node_properties(route_tree_t &rt, const RouteTreeNode &rt_node, bool reexpand, float upstream_R, float delay)
 {
 	auto &rt_node_p = get_vertex_props(rt.graph, rt_node);
 
@@ -190,7 +192,7 @@ void route_tree_set_root(route_tree_t &rt, RRNode rr_node)
 	rt.root_rt_node_id = rt_node;
 }
 
-void route_tree_add_to_heap_internal(const route_tree_t &rt, RouteTreeNode rt_node, const RRGraph &g, const RRNode &target, float criticality_fac, float astar_fac, const bounding_box_t &current_bounding_box, std::priority_queue<route_state_t> &heap, perf_t *perf)
+static void route_tree_add_to_heap_internal(const route_tree_t &rt, RouteTreeNode rt_node, const RRGraph &g, const RRNode &target, float criticality_fac, float astar_fac, const bounding_box_t &current_bounding_box, std::priority_queue<route_state_t> &heap, perf_t *perf)
 {
 	const auto &rt_node_p = get_vertex_props(rt.graph, rt_node);
 
@@ -320,9 +322,9 @@ void route_tree_add_path(route_tree_t &rt, const std::shared_ptr<vector<path_nod
 	const auto &current_rr_node_p = get_vertex_props(g, current_rr_node_id);
 
 	if (state) {
-		route_tree_set_node_properties(rt, current_rt_node, current_rr_node_p.type != IPIN && current_rr_node_p.type != SINK, path[0].prev_edge, state[current_rr_node_id].upstream_R, state[current_rr_node_id].delay);
+		route_tree_set_node_properties(rt, current_rt_node, current_rr_node_p.type != IPIN && current_rr_node_p.type != SINK, state[current_rr_node_id].upstream_R, state[current_rr_node_id].delay);
 	} else {
-		route_tree_set_node_properties(rt, current_rt_node, current_rr_node_p.type != IPIN && current_rr_node_p.type != SINK, path[0].prev_edge, 0, 0);
+		route_tree_set_node_properties(rt, current_rt_node, current_rr_node_p.type != IPIN && current_rr_node_p.type != SINK, 0, 0);
 	}
 
 	for (int i = 1; i < path.size(); ++i) {
@@ -340,9 +342,9 @@ void route_tree_add_path(route_tree_t &rt, const std::shared_ptr<vector<path_nod
 			const auto &previous_rr_node_p = get_vertex_props(g, previous_rr_node_id);
 
 			if (state) {
-				route_tree_set_node_properties(rt, previous_rt_node, previous_rr_node_p.type != IPIN && previous_rr_node_p.type != SINK, path[i].prev_edge, state[previous_rr_node_id].upstream_R, state[previous_rr_node_id].delay);
+				route_tree_set_node_properties(rt, previous_rt_node, previous_rr_node_p.type != IPIN && previous_rr_node_p.type != SINK, state[previous_rr_node_id].upstream_R, state[previous_rr_node_id].delay);
 			} else {
-				route_tree_set_node_properties(rt, previous_rt_node, previous_rr_node_p.type != IPIN && previous_rr_node_p.type != SINK, path[i].prev_edge, 0, 0);
+				route_tree_set_node_properties(rt, previous_rt_node, previous_rr_node_p.type != IPIN && previous_rr_node_p.type != SINK, 0, 0);
 			}
 		} else {
 			/*RouteTreeNode bp = route_tree_get_rt_node(rt, previous_rr_node_id);*/
@@ -455,7 +457,7 @@ void route_tree_remove_node(route_tree_t &rt, RRNode rr_node, const RRGraph &g)
 		rt.root_rt_nodes.erase(root);
 	}
 
-	const auto &rr_node_p = get_vertex_props(g, rr_node);
+	/*const auto &rr_node_p = get_vertex_props(g, rr_node);*/
 
 	/*if (rr_node_p.type != IPIN && rr_node_p.type != SINK) {*/
 		/*bool success = rt.point_tree.remove(make_pair(*/
@@ -723,16 +725,11 @@ void route_tree_rip_up_marked_mpi_send_recv(route_tree_t &rt, const RRGraph &g, 
 
 			cost_update_q.push(rr_node);
 
-			route_tree_remove_node(rt, rr_node, g);
-
-			rt_node_p.pending_rip_up = false;
-			rt_node_p.ripped_up = true;
-
 			const auto &edge = rt_node_p.rt_edge_to_parent;
 			if (valid(edge)) {
-				RouteTreeNode parent_rt_node = get_source(rt.graph, edge);
-				const auto &parent_rt_node_p = get_vertex_props(rt.graph, parent_rt_node);
-				const auto &parent_rr_node_p = get_vertex_props(g, parent_rt_node_p.rr_node);
+				/*RouteTreeNode parent_rt_node = get_source(rt.graph, edge);*/
+				/*const auto &parent_rt_node_p = get_vertex_props(rt.graph, parent_rt_node);*/
+				/*const auto &parent_rr_node_p = get_vertex_props(g, parent_rt_node_p.rr_node);*/
 				/* since reconnection back to SOURCE always causes cost to be updated, we need to
 				 * update the cost when ripping up also.
 				 * if parent is pending rip up, cost will be updated that time. so dont handle it here */
@@ -750,6 +747,11 @@ void route_tree_rip_up_marked_mpi_send_recv(route_tree_t &rt, const RRGraph &g, 
 
 				assert(!valid(edge));
 			} 
+
+			rt_node_p.pending_rip_up = false;
+			rt_node_p.ripped_up = true;
+
+			route_tree_remove_node(rt, rr_node, g);
 		} else {
 			zlog_level(delta_log, ROUTER_V2, "NOT ripping up node %s from route tree\n", buffer);
 			/* invalid assertion because we might have ripped this up from another virtual net */
