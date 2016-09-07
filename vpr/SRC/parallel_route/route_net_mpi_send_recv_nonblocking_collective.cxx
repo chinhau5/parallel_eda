@@ -26,6 +26,12 @@ enum PacketID {
 	NUM_PACKET_IDS
 };
 
+void decode_header(int header, int &packet_id, int &meta)
+{
+	packet_id = header >> 28;
+	meta = header & 0xFFFFFFF;
+}
+
 int get_header(enum PacketID packet_id, int net_id)
 {
 	assert(sizeof(int) == 4);
@@ -70,32 +76,71 @@ static void reuse_req(mpi_context_t *mpi, int req_index, int meta_data_index, in
 
 static int get_free_req(mpi_context_t *mpi, int meta_data_index, int data_index)
 {
-	int req_index;
+	assert((mpi->send_req_queue_tail % 2) == 0);
 
-	if (!mpi->free_send_req_index.empty()) {
-		req_index = mpi->free_send_req_index.front();
+	int req_index = (mpi->send_req_queue_tail + 2) % mpi->pending_send_req.size();
 
-		mpi->free_send_req_index.pop();
+	mpi->pending_send_req_meta_data_ref[req_index] = meta_data_index;
+	mpi->pending_send_req_data_ref[req_index] = data_index;
 
-		mpi->pending_send_req_meta_data_ref[req_index] = meta_data_index;
-		mpi->pending_send_req_data_ref[req_index] = data_index;
+	zlog_level(delta_log, ROUTER_V3, "Queuing req, req_index %d meta_data_index %d data_index %d\n", req_index, meta_data_index, data_index);
 
-		zlog_level(delta_log, ROUTER_V3, "Existing req, req_index %d meta_data_index %d data_index %d\n", req_index, meta_data_index, data_index);
-	} else {
-		req_index = mpi->pending_send_req.size();
-
-		mpi->pending_send_req.emplace_back(MPI_REQUEST_NULL);
-
-		mpi->pending_send_req_meta_data_ref.emplace_back(meta_data_index);
-		mpi->pending_send_req_data_ref.emplace_back(data_index);
-
-		assert(mpi->pending_send_req_meta_data_ref.size() == mpi->pending_send_req.size());
-		assert(mpi->pending_send_req_data_ref.size() == mpi->pending_send_req.size());
-
-		zlog_level(delta_log, ROUTER_V3, "New req, req_index %d meta_data_index %d data_index %d\n", req_index, meta_data_index, data_index);
-	}
+	++mpi->send_req_queue_size;
 
 	return req_index;
+}
+
+void handle_meta(mpi_context_t *mpi, int req_index, int meta_data_index, int data_index)
+{
+	int *recvcounts = mpi->pending_send_data_nbc[meta_data_index]->data();
+
+	int total_size = 0;
+
+	vector<int> displs(mpi->comm_size);
+
+	zlog_level(delta_log, ROUTER_V3, "Rank recvcount: ");
+
+	for (int i = 0; i < mpi->comm_size; ++i) {
+		displs[i] = total_size;
+
+		int pid;
+		int meta;
+		decode_header(recvcounts[i], pid, meta);
+		assert(pid == PacketID::META);
+
+		recvcounts[i] = meta;
+		total_size += meta;
+		zlog_level(delta_log, ROUTER_V3, "%d ", recvcounts[i]);
+	}
+
+	zlog_level(delta_log, ROUTER_V3, "\n");
+
+	zlog_level(delta_log, ROUTER_V3, "Rank displs: ");
+	for (int i = 0; i < mpi->comm_size; ++i) {
+		zlog_level(delta_log, ROUTER_V3, "%d ", displs[i]);
+	}
+	zlog_level(delta_log, ROUTER_V3, "\n");
+
+	int *local_data = mpi->pending_send_data_nbc[data_index]->data();
+
+	int global_data_index = get_free_buffer(mpi, total_size);
+
+	reuse_req(mpi, req_index, meta_data_index, global_data_index);
+	int global_req_index = req_index; 
+
+	int *global_data = mpi->pending_send_data_nbc[global_data_index]->data();
+
+	memcpy(&global_data[displs[mpi->rank]], local_data, sizeof(int)*recvcounts[mpi->rank]);
+
+	zlog_level(delta_log, ROUTER_V3, "Starting actual broadcast req %d meta_data_index %d global_data_index %d\n", global_req_index, meta_data_index, global_data_index);
+
+	int error = MPI_Iallgatherv(MPI_IN_PLACE, 0, MPI_DATATYPE_NULL, global_data, recvcounts, displs.data(), MPI_INT, mpi->comm, &mpi->pending_send_req[global_req_index]);
+
+	assert(error == MPI_SUCCESS);
+
+	zlog_level(delta_log, ROUTER_V3, "Freeing data_index %d\n", data_index);
+
+	mpi->free_send_data_index.push(data_index);
 }
 
 static void handle_packet(int completed_index, const vector<net_t> &nets, congestion_t *congestion, const RRGraph &g, float pres_fac, vector<vector<RRNode>> &net_route_trees, mpi_context_t *mpi)
@@ -105,51 +150,16 @@ static void handle_packet(int completed_index, const vector<net_t> &nets, conges
 	int meta_data_index = mpi->pending_send_req_meta_data_ref[completed_index];
 	int data_index = mpi->pending_send_req_data_ref[completed_index];
 
+	int *meta_data = mpi->pending_send_data_nbc[meta_data_index]->data();
+
 	zlog_level(delta_log, ROUTER_V3, "Completing req %d meta_data_index %d data_index %d\n", completed_index, meta_data_index, data_index);
 
-	if (meta_data_index >= 0) {
-		int *recvcounts = mpi->pending_send_data_nbc[meta_data_index]->data();
+	int first_pid;
+	int dummy;
+	decode_header(meta_data[0], first_pid, dummy);
 
-		int total_size = 0;
-
-		vector<int> tmp_displs(mpi->comm_size);
-
-		zlog_level(delta_log, ROUTER_V3, "Rank recvcount: ");
-
-		for (int i = 0; i < mpi->comm_size; ++i) {
-			tmp_displs[i] = total_size;
-			total_size += recvcounts[i];
-			zlog_level(delta_log, ROUTER_V3, "%d ", recvcounts[i]);
-		}
-
-		zlog_level(delta_log, ROUTER_V3, "\n");
-
-		zlog_level(delta_log, ROUTER_V3, "Rank displs: ");
-		for (int i = 0; i < mpi->comm_size; ++i) {
-			zlog_level(delta_log, ROUTER_V3, "%d ", tmp_displs[i]);
-		}
-		zlog_level(delta_log, ROUTER_V3, "\n");
-
-		int *local_data = mpi->pending_send_data_nbc[data_index]->data();
-
-		int global_data_index = get_free_buffer(mpi, total_size);
-
-		reuse_req(mpi, completed_index, meta_data_index, global_data_index);
-		int global_req_index = completed_index; 
-
-		int *global_data = mpi->pending_send_data_nbc[global_data_index]->data();
-
-		memcpy(&global_data[tmp_displs[mpi->rank]], local_data, sizeof(int)*recvcounts[mpi->rank]);
-
-		zlog_level(delta_log, ROUTER_V3, "Starting actual broadcast req %d meta_data_index %d global_data_index %d\n", global_req_index, meta_data_index, global_data_index);
-
-		int error = MPI_Iallgatherv(MPI_IN_PLACE, 0, MPI_DATATYPE_NULL, global_data, recvcounts, tmp_displs.data(), MPI_INT, mpi->comm, &mpi->pending_send_req[global_req_index]);
-
-		assert(error == MPI_SUCCESS);
-
-		zlog_level(delta_log, ROUTER_V3, "Freeing data_index %d\n", data_index);
-
-		mpi->free_send_data_index.push(data_index);
+	if (first_pid == PacketID::META) {
+		handle_meta(mpi, completed_index, meta_data_index, data_index);
 	} else {
 		int *recvcounts = mpi->pending_send_data_nbc[meta_data_index]->data();
 		int *data = mpi->pending_send_data_nbc[data_index]->data();
@@ -160,8 +170,10 @@ static void handle_packet(int completed_index, const vector<net_t> &nets, conges
 
 			if (i != mpi->rank) {
 				int *local_data = &data[offset];
-				int net_id = local_data[0] & 0xFFFFFFF;
-				int current_pid = local_data[0] >> 28;
+
+				int current_pid;
+				int net_id;
+				decode_header(local_data[0], current_pid, net_id);
 				int *changed_rr_nodes = &local_data[1];
 
 				assert(current_pid >= 0 && current_pid < PacketID::NUM_PACKET_IDS);
@@ -258,7 +270,7 @@ void progress_broadcast(const vector<net_t> &nets, congestion_t *congestion, con
 
 	int num_completed;
 
-	vector<MPI_Status> statuses(mpi->pending_send_req.size());
+	vector<MPI_Status> statuses(2);
 
 	zlog_level(delta_log, ROUTER_V3, "Null requests (size %d): ", mpi->pending_send_req.size());
 	for (int i = 0; i < mpi->pending_send_req.size(); ++i) {
@@ -268,7 +280,9 @@ void progress_broadcast(const vector<net_t> &nets, congestion_t *congestion, con
 	}
 	zlog_level(delta_log, ROUTER_V3, "\n");
 
-	int error = MPI_Testsome(mpi->pending_send_req.size(), mpi->pending_send_req.data(),
+	int size = mpi->send_req_queue_head % 2 == 1 && mpi->send_req_queue_tail > mpi->send_req_queue_tail ? 2 : 1;
+
+	int error = MPI_Testsome(size, &(mpi->pending_send_req.data()[mpi->send_req_queue_head]),
 					&num_completed, mpi->completed_send_indices.data(), statuses.data());
 
 	assert(error == MPI_SUCCESS);
@@ -305,6 +319,82 @@ void progress_broadcast_waitall(const vector<net_t> &nets, congestion_t *congest
 	}
 }
 
+void dispatch_broadcast(mpi_context_t *mpi)
+{
+	if (mpi->send_req_queue_size <= 0) {
+		return;
+	}
+
+	assert(mpi->send_req_queue_size == (mpi->pending_send_req.size() - (mpi->send_req_queue_tail - mpi->send_req_queue_head + 1)) % mpi->pending_send_req.size();
+
+	int req_index = mpi->send_req_queue_head;
+
+	if (mpi->pending_send_req[req_index] == MPI_REQUEST_NULL) {
+		if ((req_index % 2) == 0) {
+			int meta_data_index = mpi->pending_send_req_meta_data_ref[req_index];
+
+			int *meta_data = mpi->pending_send_data_nbc[meta_data_index]->data();
+
+			int error = MPI_Iallgather(MPI_IN_PLACE, 0, MPI_DATATYPE_NULL, meta_data, 1, MPI_INT, mpi->comm, &mpi->pending_send_req[req_index]);
+
+			assert(error == MPI_SUCCESS);
+		} else {
+			int meta_req_index = req_index-1;
+
+			assert(mpi->pending_send_req[meta_req_index] == MPI_REQUEST_NULL);
+
+			int meta_data_index = mpi->pending_send_req_meta_data_ref[meta_req_index];
+
+			int *recvcounts = mpi->pending_send_data_nbc[meta_data_index]->data();
+
+			int total_size = 0;
+
+			vector<int> displs(mpi->comm_size);
+
+			zlog_level(delta_log, ROUTER_V3, "Rank recvcount: ");
+
+			for (int i = 0; i < mpi->comm_size; ++i) {
+				displs[i] = total_size;
+
+				total_size += recvcounts[i];
+				zlog_level(delta_log, ROUTER_V3, "%d ", recvcounts[i]);
+			}
+
+			zlog_level(delta_log, ROUTER_V3, "\n");
+
+			zlog_level(delta_log, ROUTER_V3, "Rank displs: ");
+			for (int i = 0; i < mpi->comm_size; ++i) {
+				zlog_level(delta_log, ROUTER_V3, "%d ", displs[i]);
+			}
+			zlog_level(delta_log, ROUTER_V3, "\n");
+
+			/* -------------- */
+
+			int local_data_index = mpi->pending_send_req_data_ref[meta_req_index];
+
+			int *local_data = mpi->pending_send_data_nbc[local_data_index]->data();
+
+			int global_data_index = get_free_buffer(mpi, total_size);
+
+			int *global_data = mpi->pending_send_data_nbc[global_data_index]->data();
+
+			memcpy(&global_data[displs[mpi->rank]], local_data, sizeof(int)*recvcounts[mpi->rank]);
+
+			zlog_level(delta_log, ROUTER_V3, "Starting actual broadcast req %d meta_data_index %d global_data_index %d\n", req_index, meta_data_index, global_data_index);
+
+			int error = MPI_Iallgatherv(MPI_IN_PLACE, 0, MPI_DATATYPE_NULL, global_data, recvcounts, displs.data(), MPI_INT, mpi->comm, &mpi->pending_send_req[req_index]);
+
+			assert(error == MPI_SUCCESS);
+
+			/* -------------- */
+
+			error = MPI_Iallgather(MPI_IN_PLACE, 0, MPI_DATATYPE_NULL, meta_data, 1, MPI_INT, mpi->comm, &mpi->pending_send_req[mpi->send_req_queue_head]);
+
+			assert(error == MPI_SUCCESS);
+		}
+	}
+}
+
 void broadcast_dynamic(int data_index, int size, mpi_context_t *mpi)
 {
 	mpi->max_send_data_size = std::max(mpi->max_send_data_size, size);
@@ -318,9 +408,7 @@ void broadcast_dynamic(int data_index, int size, mpi_context_t *mpi)
 
 	zlog_level(delta_log, ROUTER_V3, "Starting meta broadcast of size %d req %d meta_data_index %d data_index %d\n", size, meta_req_index, meta_data_index, data_index);
 
-	int error = MPI_Iallgather(MPI_IN_PLACE, 0, MPI_DATATYPE_NULL, meta_data, 1, MPI_INT, mpi->comm, &mpi->pending_send_req[meta_req_index]);
-	
-	assert(error == MPI_SUCCESS);
+	dispatch_broadcast(mpi);
 }
 
 //void broadcast_static(int data_index, int size, mpi_context_t *mpi)

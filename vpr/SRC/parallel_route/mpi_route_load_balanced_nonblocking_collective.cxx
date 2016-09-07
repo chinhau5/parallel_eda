@@ -28,6 +28,7 @@
 #include "rr_graph_partitioner.h"
 #include "route_net_mpi_send_recv_reduced_comm.h"
 #include "clock.h"
+#include "queue.h"
 
 void init_datatypes();
 
@@ -170,6 +171,38 @@ void repartition(bool load_balanced, vector<net_t> &nets, vector<pair<box, net_t
 	//}
 	//zlog_info(delta_log, "\n");
 	//
+}
+
+void test_queue()
+{
+	queue_t<int> q;
+	q_init(&q, 5);
+	assert(q_empty(&q));
+	assert(q_size(&q) == 0);
+
+	assert(q_push(&q, 5));
+	assert(!q_empty(&q));
+	assert(q_size(&q) == 1);
+	assert(q_front(&q) == 5);
+
+	assert(q_push(&q, 6));
+	assert(q_front(&q) == 5);
+	assert(q_size(&q) == 2);
+
+	assert(q_pop(&q));
+	assert(q_front(&q) == 6);
+
+	assert(q_pop(&q));
+	assert(q_size(&q) == 0);
+
+	assert(!q_pop(&q));
+
+	for (int i = 0; i < 5; ++i) {
+		assert(q_size(&q) == i);
+		assert(q_push(&q, i));
+	}
+	assert(!q_push(&q, 100));
+	assert(q_size(&q) == 5);
 }
 
 bool mpi_route_load_balanced_nonblocking_collective(t_router_opts *opts, struct s_det_routing_arch det_routing_arch, t_direct_inf *directs, int num_directs, t_segment_inf *segment_inf, t_timing_inf timing_inf)
@@ -532,16 +565,12 @@ bool mpi_route_load_balanced_nonblocking_collective(t_router_opts *opts, struct 
         int thread_num_sinks_to_route = 0;
 		//vector<vector<RRNode>> net_sinks(nets.size());
 		//
-		mpi.pending_recv_data_flat.resize(mpi.comm_size);
-		for (int pid = 0; pid < mpi.comm_size; ++pid) {
-			if (pid != mpi.rank) {
-				mpi.pending_recv_data_flat[pid].resize(mpi.buffer_size);
-			}
-		}
-		mpi.pending_recv_req_flat.resize(mpi.comm_size, MPI_REQUEST_NULL);
-		mpi.completed_recv_indices.resize(mpi.comm_size);
-		mpi.completed_recv_statuses.resize(mpi.comm_size);
-		mpi.received_last_update.resize(mpi.comm_size);
+		mpi.pending_send_req.resize(256, MPI_REQUEST_NULL);
+		mpi.pending_send_req_meta_data_ref.resize(256, -1);
+		mpi.pending_send_req_data_ref.resize(256, -1);
+		mpi.send_req_queue_size = 0;
+		mpi.send_req_queue_head = -1;
+		mpi.send_req_queue_tail = -1;
 		mpi.max_send_data_size = 0;
 		mpi.total_send_count = 0;
 		mpi.total_send_data_size = 0;

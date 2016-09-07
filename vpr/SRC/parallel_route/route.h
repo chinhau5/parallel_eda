@@ -237,6 +237,9 @@ typedef struct mpi_context_t {
 
 	vector<std::shared_ptr<vector<node_update_t>>> pending_send_data;
 	vector<MPI_Request> pending_send_req;
+	int send_req_queue_size;
+	int send_req_queue_head;
+	int send_req_queue_tail;
 
 	vector<vector<int>> pending_send_req_refs;
 
