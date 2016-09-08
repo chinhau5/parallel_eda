@@ -3,6 +3,7 @@
 
 #include <chrono>
 #include <mpi.h>
+#include "queue.h"
 #include "geometry.h"
 #include "quadtree.h"
 #include "new_rr_graph.h"
@@ -218,6 +219,12 @@ typedef struct ongoing_transaction_t {
 	MPI_Request req;
 } ongoing_transaction_t;
 
+typedef struct broadcast_data_t {
+	bool is_meta;
+	int meta_ref;
+	int data_ref;
+} broadcast_data_t;
+
 typedef struct mpi_context_t {
 	MPI_Comm comm;
 	int rank;
@@ -240,6 +247,10 @@ typedef struct mpi_context_t {
 	int send_req_queue_size;
 	int send_req_queue_head;
 	int send_req_queue_tail;
+
+	MPI_Request active_req;
+	broadcast_data_t active_bcast_data;
+	queue_t<broadcast_data_t> pending_bcast_data_q;
 
 	vector<vector<int>> pending_send_req_refs;
 

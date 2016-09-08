@@ -196,7 +196,6 @@ bool route_tree_node_check_and_mark_congested_for_rip_up(route_tree_t &rt, Route
 	if (valid(rt_node_p.rt_edge_to_parent)) {
 		rt_node_p.pending_rip_up = get_vertex_props(rt.graph, get_source(rt.graph, rt_node_p.rt_edge_to_parent)).pending_rip_up;
 	} else {
-		assert(false);
 		rt_node_p.pending_rip_up = false;
 	}
 

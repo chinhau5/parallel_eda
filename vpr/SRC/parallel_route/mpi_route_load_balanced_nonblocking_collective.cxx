@@ -26,7 +26,7 @@
 #include "partition.h"
 #include "fm.h"
 #include "rr_graph_partitioner.h"
-#include "route_net_mpi_send_recv_reduced_comm.h"
+#include "route_net_mpi_send_recv_nonblocking_collective.h"
 #include "clock.h"
 #include "queue.h"
 
@@ -49,16 +49,7 @@ void route_net_mpi_send_recv_nonblocking_collective(const RRGraph &g, int vpr_id
 int get_free_buffer(mpi_context_t *mpi, int size);
 void broadcast_dynamic(int data_index, int size, mpi_context_t *mpi);
 
-enum PacketID {
-	META,
-	RIP_UP_ALL,
-	RIP_UP,
-	ROUTE,
-	NO_OP,
-	NUM_PACKET_IDS
-};
-
-int get_header(enum PacketID packet_id, int net_id);
+int encode_header(PacketID packet_id, unsigned int net_id);
 
 struct net_graph_vertex_prop {
 	int weight;
@@ -489,6 +480,12 @@ bool mpi_route_load_balanced_nonblocking_collective(t_router_opts *opts, struct 
 		//}
 	//}
 	//orig_num_recvs_required = num_recvs_required;
+	//
+	mpi.active_req = MPI_REQUEST_NULL;
+	mpi.active_bcast_data.is_meta = false;
+	mpi.active_bcast_data.data_ref = -1;
+	mpi.active_bcast_data.meta_ref = -1;
+	q_init(&mpi.pending_bcast_data_q, 256);
 
     bool routed = false;
 	bool idling = false;
@@ -515,6 +512,7 @@ bool mpi_route_load_balanced_nonblocking_collective(t_router_opts *opts, struct 
 	int total_calls = 0;
 
 	bool update_num_broadcasts = true;
+	int max_num_broadcasts;
 
     for (iter = 0; iter < opts->max_router_iterations && !routed && !idling; ++iter) {
         clock::duration actual_route_time = clock::duration::zero();
@@ -532,7 +530,7 @@ bool mpi_route_load_balanced_nonblocking_collective(t_router_opts *opts, struct 
 		}
 
 		if (update_num_broadcasts) {
-			int max_num_broadcasts = 0;
+			max_num_broadcasts = 0;
 			for (int i = 0; i < mpi.comm_size; ++i) {
 				int num_broadcasts = 0;
 				if (iter > 0) {
@@ -542,11 +540,14 @@ bool mpi_route_load_balanced_nonblocking_collective(t_router_opts *opts, struct 
 					num_broadcasts += net->sinks.size();
 				}
 
+				zlog_level(delta_log, ROUTER_V3, "Rank %d num broadcasts %d", i, num_broadcasts);
+
 				max_num_broadcasts = std::max(max_num_broadcasts, num_broadcasts);
 			}
-			mpi.num_broadcasts_required = max_num_broadcasts;
 			update_num_broadcasts = false;
 		}
+
+		mpi.num_broadcasts_required = max_num_broadcasts;
 
         //for (int i = 0; i < opts->num_threads; ++i) {
             //sprintf(buffer, LOG_PATH_PREFIX"iter_%d_tid_%d.log", iter, i);
@@ -565,12 +566,6 @@ bool mpi_route_load_balanced_nonblocking_collective(t_router_opts *opts, struct 
         int thread_num_sinks_to_route = 0;
 		//vector<vector<RRNode>> net_sinks(nets.size());
 		//
-		mpi.pending_send_req.resize(256, MPI_REQUEST_NULL);
-		mpi.pending_send_req_meta_data_ref.resize(256, -1);
-		mpi.pending_send_req_data_ref.resize(256, -1);
-		mpi.send_req_queue_size = 0;
-		mpi.send_req_queue_head = -1;
-		mpi.send_req_queue_tail = -1;
 		mpi.max_send_data_size = 0;
 		mpi.total_send_count = 0;
 		mpi.total_send_data_size = 0;
@@ -584,18 +579,18 @@ bool mpi_route_load_balanced_nonblocking_collective(t_router_opts *opts, struct 
 		sprintf(buffer, "%d", mpi.rank);
 		zlog_put_mdc("tid", buffer);
 
-		extern map<string, FILE *> log_files;
+		//extern map<string, FILE *> log_files;
 
-		char fname_buf[256];
-		sprintf(fname_buf, "iter_%d_tid_%d.log", iter, mpi.rank);
+		//char fname_buf[256];
+		//sprintf(fname_buf, "iter_%d_tid_%d.log", iter, mpi.rank);
 
-		auto file_iter = log_files.find(fname_buf);
-		assert(file_iter != log_files.end());
-		pair<string, FILE *> file = *file_iter;
-		int fd = fileno(file.second);
-		assert(fd != -1);
+		//auto file_iter = log_files.find(fname_buf);
+		//assert(file_iter != log_files.end());
+		//pair<string, FILE *> file = *file_iter;
+		//int fd = fileno(file.second);
+		//assert(fd != -1);
 
-		assert(dup2(fd, 1) != -1);
+		//assert(dup2(fd, 1) != -1);
 
         zlog_info(delta_log, "Routing iteration: %d\n", iter);
 		if (mpi.rank == 0) {
@@ -749,7 +744,7 @@ bool mpi_route_load_balanced_nonblocking_collective(t_router_opts *opts, struct 
 					int data_index = get_free_buffer(&mpi, 1+removed_nodes.size());
 
 					int *buffer = mpi.pending_send_data_nbc[data_index]->data();
-					buffer[0] = get_header(PacketID::RIP_UP, net->local_id);
+					buffer[0] = encode_header(PacketID::RIP_UP, net->local_id);
 					
 					for (int i = 0; i < removed_nodes.size(); ++i) {
 						buffer[1+i] = removed_nodes[i];
@@ -761,7 +756,7 @@ bool mpi_route_load_balanced_nonblocking_collective(t_router_opts *opts, struct 
 				} 
 
 				--mpi.num_broadcasts_required;
-				assert(mpi.num_broadcasts_required > 0);
+				assert(mpi.num_broadcasts_required >= 0);
 
 				auto progress_start = clock::now();
 
@@ -807,15 +802,19 @@ bool mpi_route_load_balanced_nonblocking_collective(t_router_opts *opts, struct 
 			int data_index = get_free_buffer(&mpi, 1);
 
 			int *buffer = mpi.pending_send_data_nbc[data_index]->data();
-			buffer[0] = get_header(PacketID::NO_OP, 0);
+			buffer[0] = encode_header(PacketID::NO_OP, 0);
 
 			broadcast_dynamic(data_index, 1, &mpi);
 			--mpi.num_broadcasts_required;
+			progress_broadcast(nets, congestion, partitioner.orig_g, params.pres_fac, net_route_trees, &mpi);
+
+			zlog_level(delta_log, ROUTER_V3, "Num broadcasts required %d\n", mpi.num_broadcasts_required);
 		}
 		last_sync_time += clock::now()-last_sync_start;
 
+		assert(q_empty(&mpi.pending_bcast_data_q));
+
 		auto last_progress_start = clock::now();
-		progress_broadcast_waitall(nets, congestion, partitioner.orig_g, params.pres_fac, net_route_trees, &mpi);
 		last_progress_time += clock::now()-last_progress_start;
 
 		//for (int pid = 0; pid < mpi.comm_size; ++pid) {
@@ -828,10 +827,6 @@ bool mpi_route_load_balanced_nonblocking_collective(t_router_opts *opts, struct 
 		//}
 		//int error = MPI_Waitall(mpi.comm_size, mpi.pending_recv_req_flat.data(), MPI_STATUSES_IGNORE);
 		//assert(error == MPI_SUCCESS);
-
-		for (int i = 0; i < mpi.pending_send_req.size(); ++i) {
-			assert(mpi.pending_send_req[i] == MPI_REQUEST_NULL);
-		}
 
 		//vector<MPI_Request> requests;
 		//for (int pid = 0; pid < mpi.comm_size; ++pid) {
@@ -1025,8 +1020,8 @@ bool mpi_route_load_balanced_nonblocking_collective(t_router_opts *opts, struct 
 
 		bool valid = true;
 		for (int i = 0; i < num_vertices(partitioner.orig_g); ++i) {
-			sprintf_rr_node_impl(i, buffer);
 			if (congestion[i].recalc_occ != congestion[i].occ) {
+				sprintf_rr_node_impl(i, buffer);
 				printf("[%d] Node %s occ mismatch, recalc: %d original: %d\n", mpi.rank, buffer, congestion[i].recalc_occ, congestion[i].occ);
 				valid = false;
 			}
@@ -1215,6 +1210,8 @@ bool mpi_route_load_balanced_nonblocking_collective(t_router_opts *opts, struct 
 						//old_partitions[i].insert(net);
 					//}
 				//}
+				//
+				update_num_broadcasts = true;
 				
 				auto combine_start = clock::now();
 
@@ -1276,7 +1273,7 @@ bool mpi_route_load_balanced_nonblocking_collective(t_router_opts *opts, struct 
 				//++current_level;
 				//assert(current_level < partitioner.result_pid_by_level.size());
 			//}
-        }
+        } /* feasible_routing */
 
         iter_time += clock::now()-iter_start;
 
