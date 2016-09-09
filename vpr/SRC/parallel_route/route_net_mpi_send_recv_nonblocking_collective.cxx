@@ -262,8 +262,10 @@ void progress_broadcast(const vector<net_t> &nets, congestion_t *congestion, con
 		return;
 	}
 
-	while (mpi->active_req != MPI_REQUEST_NULL) {
-		int flag;
+	zlog_level(delta_log, ROUTER_V3, "Progressing broadcast\n");
+
+	int flag = 1;
+	while (mpi->active_req != MPI_REQUEST_NULL && flag) {
 		int error = MPI_Test(&mpi->active_req, &flag, MPI_STATUS_IGNORE);
 
 		assert(error == MPI_SUCCESS);
@@ -271,6 +273,7 @@ void progress_broadcast(const vector<net_t> &nets, congestion_t *congestion, con
 		if (flag) {
 			assert(mpi->active_req == MPI_REQUEST_NULL);
 
+			/* might start actual broadcast and modifies active_req and active_bcast_data */
 			handle_packet(mpi->active_bcast_data, nets, congestion, g, pres_fac, net_route_trees, mpi);
 
 			start_meta_broadcast(mpi);
@@ -278,25 +281,24 @@ void progress_broadcast(const vector<net_t> &nets, congestion_t *congestion, con
 	}
 }
 
-void progress_broadcast_waitall(const vector<net_t> &nets, congestion_t *congestion, const RRGraph &g, float pres_fac, vector<vector<RRNode>> &net_route_trees, mpi_context_t *mpi)
+void progress_broadcast_blocking(const vector<net_t> &nets, congestion_t *congestion, const RRGraph &g, float pres_fac, vector<vector<RRNode>> &net_route_trees, mpi_context_t *mpi)
 {
-	//if (mpi->comm_size < 2) {
-		//return;
-	//}
+	if (mpi->comm_size < 2) {
+		return;
+	}
 
-	//vector<MPI_Status> statuses();
+	while (mpi->active_req != MPI_REQUEST_NULL) {
+		int error = MPI_Wait(&mpi->active_req, MPI_STATUS_IGNORE);
 
-	//int error = MPI_Waitall(mpi->pending_send_req.size(), mpi->pending_send_req.data(), statuses.data());
+		assert(error == MPI_SUCCESS);
 
-	//assert(error == MPI_SUCCESS);
+		assert(mpi->active_req == MPI_REQUEST_NULL);
 
-	//for (int i = 0; i < statuses.size(); ++i) {
-		//if (statuses[i].MPI_TAG == MPI_ANY_TAG && statuses[i].MPI_SOURCE == MPI_ANY_SOURCE && statuses[i].MPI_ERROR == MPI_SUCCESS) {
-			//[> empty status <]
-		//} else {
-			//handle_packet(mpi->completed_send_indices[i], nets, congestion, g, pres_fac, net_route_trees, mpi);
-		//}
-	//}
+		/* might start actual broadcast and modifies active_req and active_bcast_data */
+		handle_packet(mpi->active_bcast_data, nets, congestion, g, pres_fac, net_route_trees, mpi);
+
+		start_meta_broadcast(mpi);
+	}
 }
 
 void broadcast_dynamic(int data_index, int size, mpi_context_t *mpi)
@@ -342,8 +344,6 @@ void broadcast_rip_up_all_collective(int net_id, mpi_context_t *mpi)
 	if (mpi->comm_size < 2) {
 		return;
 	}
-
-	zlog_level(delta_log, ROUTER_V3, "MPI sent rip up all");
 
 	int data_index = get_free_buffer(mpi, 1); /* 1 byte for header */
 	int *buffer = mpi->pending_send_data_nbc[data_index]->data();
@@ -591,6 +591,9 @@ void route_net_mpi_send_recv_nonblocking_collective(const RRGraph &g, int vpr_id
 		} else {
 			int data_index = get_free_buffer(mpi, 128);
 
+			sprintf_rr_node(sink->rr_node, buffer);
+			zlog_level(delta_log, ROUTER_V3, "Adding %s to route tree\n", buffer);
+
 			RouteTreeNode rt_node = route_tree_add_rr_node(rt, sink->rr_node, g);
 			assert(rt_node != RouteTree::null_vertex());
 			route_tree_set_node_properties(rt, rt_node, false, state[sink->rr_node].upstream_R, state[sink->rr_node].delay);
@@ -602,9 +605,6 @@ void route_net_mpi_send_recv_nonblocking_collective(const RRGraph &g, int vpr_id
 			data[1] = sink->rr_node;
 
 			zlog_level(delta_log, ROUTER_V3, "Route packet header %d pid %d net_id %d\n", data[0], static_cast<int>(PacketID::ROUTE), net_id);
-
-			sprintf_rr_node(sink->rr_node, buffer);
-			zlog_level(delta_log, ROUTER_V3, "Adding %s to route tree\n", buffer);
 
 			RRNode child_rr_node = sink->rr_node;
 
@@ -618,6 +618,9 @@ void route_net_mpi_send_recv_nonblocking_collective(const RRGraph &g, int vpr_id
 
 					bool bcast_node = false;
 
+					sprintf_rr_node(parent_rr_node, buffer);
+					zlog_level(delta_log, ROUTER_V3, "Adding %s to route tree\n", buffer);
+
 					RouteTreeNode rt_node = route_tree_add_rr_node(rt, parent_rr_node, g);
 					if (rt_node != RouteTree::null_vertex()) {
 						route_tree_set_node_properties(rt, rt_node, parent_rr_node_p.type != IPIN && parent_rr_node_p.type != SINK, state[parent_rr_node].upstream_R, state[parent_rr_node].delay);
@@ -628,9 +631,6 @@ void route_net_mpi_send_recv_nonblocking_collective(const RRGraph &g, int vpr_id
 						update_one_cost_internal(parent_rr_node, g, congestion, 1, params.pres_fac);
 						bcast_node = true;
 					}
-
-					sprintf_rr_node(parent_rr_node, buffer);
-					zlog_level(delta_log, ROUTER_V3, "Adding %s to route tree\n", buffer);
 
 					assert(child_rr_node == get_target(g, edge));
 

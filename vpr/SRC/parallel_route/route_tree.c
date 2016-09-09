@@ -24,10 +24,10 @@ void route_tree_clear(route_tree_t &rt)
 
 bool route_tree_empty(const route_tree_t &rt)
 {
-	int num_rt_nodes = 0;
-	for (const auto &n : route_tree_get_nodes(rt)) {
-		++num_rt_nodes;
-	}
+	/*int num_rt_nodes = 0;*/
+	/*for (const auto &n : route_tree_get_nodes(rt)) {*/
+		/*++num_rt_nodes;*/
+	/*}*/
 
 	int num_rt_edges = num_edges(rt.graph);
 	/*assert((num_rt_nodes > 0 && num_rt_edges > 0)*/
@@ -38,9 +38,15 @@ bool route_tree_empty(const route_tree_t &rt)
 		/*assert(num_rt_nodes > 0);*/
 	/*}*/
 	/*return rt.root_rt_node_id == -1;*/
-	assert(num_rt_nodes == rt.num_nodes);
 
-	return num_rt_nodes == 0 && num_rt_edges == 0;
+	/*assert(num_rt_nodes == rt.num_nodes);*/
+
+	return rt.num_nodes == 0 && num_rt_edges == 0;
+}
+
+int route_tree_num_nodes(const route_tree_t &rt)
+{
+	return rt.num_nodes;
 }
 
 boost::iterator_range<boost::filter_iterator<valid_rt_node, route_tree_t::vertex_iterator>>
@@ -423,7 +429,7 @@ void route_tree_mark_all_nodes_to_be_ripped(route_tree_t &rt, const RRGraph &g)
 	}
 }
 
-void route_tree_remove_edge(route_tree_t &rt, const RouteTreeEdge &rt_edge, const RRGraph &g)
+void route_tree_remove_edge(route_tree_t &rt, const RouteTreeEdge &rt_edge)
 {
 	RouteTreeNode from = get_source(rt.graph, rt_edge);
 	RouteTreeNode to = get_target(rt.graph, rt_edge);
@@ -520,7 +526,7 @@ void route_tree_rip_up_marked(route_tree_t &rt, const RRGraph &g, congestion_t *
 					update_one_cost_internal(parent_rt_node_p.rr_node, g, congestion, -1, pres_fac); 
 				}
 
-				route_tree_remove_edge(rt, edge, g);
+				route_tree_remove_edge(rt, edge);
 
 				assert(!valid(edge));
 			} 
@@ -572,7 +578,7 @@ void route_tree_rip_up_marked(route_tree_t &rt, const RRGraph &g, congestion_loc
 					update_one_cost_internal(parent_rt_node_p.rr_node, g, congestion, -1, pres_fac, lock, lock_perf); 
 				}
 
-				route_tree_remove_edge(rt, edge, g);
+				route_tree_remove_edge(rt, edge);
 
 				assert(!valid(edge));
 			} 
@@ -624,7 +630,7 @@ void route_tree_rip_up_marked(route_tree_t &rt, const RRGraph &g, congestion_loc
 					update_one_cost_internal(parent_rt_node_p.rr_node, g, congestion, -1, pres_fac); 
 				}
 
-				route_tree_remove_edge(rt, edge, g);
+				route_tree_remove_edge(rt, edge);
 
 				assert(!valid(edge));
 			} 
@@ -676,7 +682,7 @@ void route_tree_rip_up_marked_mpi_rma(route_tree_t &rt, const RRGraph &g, const 
 					update_one_cost_internal_mpi_rma(parent_rt_node_p.rr_node, g, pid, this_pid, congestion, win, -1, pres_fac); 
 				}
 
-				route_tree_remove_edge(rt, edge, g);
+				route_tree_remove_edge(rt, edge);
 
 				assert(!valid(edge));
 			} 
@@ -743,7 +749,7 @@ void route_tree_rip_up_marked_mpi_send_recv(route_tree_t &rt, const RRGraph &g, 
 					/*trans.data->push_back(d);*/
 				/*}*/
 
-				route_tree_remove_edge(rt, edge, g);
+				route_tree_remove_edge(rt, edge);
 
 				assert(!valid(edge));
 			} 

@@ -44,7 +44,7 @@ void recv_route_tree(net_t *net, const RRGraph &g, vector<route_tree_t> &route_t
 void init_route_structs(const RRGraph &g, const vector<net_t> &nets, const vector<net_t> &global_nets, route_state_t **states, congestion_t **congestion, vector<route_tree_t> &route_trees, t_net_timing **net_timing);
 void broadcast_rip_up_all_collective(int net_id, mpi_context_t *mpi);
 void progress_broadcast(const vector<net_t> &nets, congestion_t *congestion, const RRGraph &g, float pres_fac, vector<vector<RRNode>> &net_route_trees, mpi_context_t *mpi);
-void progress_broadcast_waitall(const vector<net_t> &nets, congestion_t *congestion, const RRGraph &g, float pres_fac, vector<vector<RRNode>> &net_route_trees, mpi_context_t *mpi);
+void progress_broadcast_blocking(const vector<net_t> &nets, congestion_t *congestion, const RRGraph &g, float pres_fac, vector<vector<RRNode>> &net_route_trees, mpi_context_t *mpi);
 void route_net_mpi_send_recv_nonblocking_collective(const RRGraph &g, int vpr_id, int net_id, const source_t *source, const vector<sink_t *> &sinks, const route_parameters_t &params, const vector<net_t> &nets, route_state_t *state, congestion_t *congestion, route_tree_t &rt, t_net_timing &net_timing, vector<vector<RRNode>> &net_route_trees, mpi_context_t *mpi, perf_t *perf, mpi_perf_t *mpi_perf, bool delayed_progress);
 int get_free_buffer(mpi_context_t *mpi, int size);
 void broadcast_dynamic(int data_index, int size, mpi_context_t *mpi);
@@ -485,7 +485,7 @@ bool mpi_route_load_balanced_nonblocking_collective(t_router_opts *opts, struct 
 	mpi.active_bcast_data.is_meta = false;
 	mpi.active_bcast_data.data_ref = -1;
 	mpi.active_bcast_data.meta_ref = -1;
-	q_init(&mpi.pending_bcast_data_q, 256);
+	q_init(&mpi.pending_bcast_data_q, 65536);
 
     bool routed = false;
 	bool idling = false;
@@ -540,7 +540,7 @@ bool mpi_route_load_balanced_nonblocking_collective(t_router_opts *opts, struct 
 					num_broadcasts += net->sinks.size();
 				}
 
-				zlog_level(delta_log, ROUTER_V3, "Rank %d num broadcasts %d", i, num_broadcasts);
+				zlog_level(delta_log, ROUTER_V3, "Rank %d num broadcasts %d\n", i, num_broadcasts);
 
 				max_num_broadcasts = std::max(max_num_broadcasts, num_broadcasts);
 			}
@@ -622,7 +622,6 @@ bool mpi_route_load_balanced_nonblocking_collective(t_router_opts *opts, struct 
 			//}
 		//}
 		//
-		vector<int> net_indices;
 
 		if (iter == 1 && opts->load_balanced) {
 			clock::rep min_net_route_time = std::numeric_limits<clock::rep>::max();
@@ -708,49 +707,49 @@ bool mpi_route_load_balanced_nonblocking_collective(t_router_opts *opts, struct 
 			//}
 
 			//route_tree_mark_paths_to_be_ripped(route_trees[net->local_id], partitioner.orig_g, partitioner.result_pid_by_level[current_level], mpi.rank, sinks_to_mark);
-			if (opts->rip_up_always && current_level == 0) {
-				route_tree_mark_all_nodes_to_be_ripped(route_trees[net->local_id], partitioner.orig_g);
-			} else {
-				route_tree_mark_congested_nodes_to_be_ripped(route_trees[net->local_id], partitioner.orig_g, congestion);
-			}
-
-			int route_tree_size = 0;
-			for (const auto &n : route_tree_get_nodes(route_trees[net->local_id])) {
-				++route_tree_size;
-			}
-
-			queue<RRNode> cost_update_q;
-			route_tree_rip_up_marked_mpi_send_recv(route_trees[net->local_id], partitioner.orig_g, congestion, params.pres_fac, cost_update_q);
-
-			zlog_level(delta_log, ROUTER_V3, "Ripped up net %d route tree of size %lu\n", net->vpr_id, cost_update_q.size());
 
 			if (iter > 0) {
-				bool should_progress = true;
+				int route_tree_size = route_tree_num_nodes(route_trees[net->local_id]);
+				int num_marked = 0;
+
 				if (opts->rip_up_always && current_level == 0) {
-					assert(cost_update_q.size() == route_tree_size);
+					route_tree_mark_all_nodes_to_be_ripped(route_trees[net->local_id], partitioner.orig_g);
+					num_marked = route_tree_size;
+				} else {
+					num_marked = route_tree_mark_congested_nodes_to_be_ripped(route_trees[net->local_id], partitioner.orig_g, congestion);
+				}
+
+				int data_index = get_free_buffer(&mpi, num_marked+1);
+				int *buffer = mpi.pending_send_data_nbc[data_index]->data();
+				buffer[0] = encode_header(PacketID::RIP_UP, net->local_id);
+
+				int num_nodes_ripped = 0;
+
+				route_tree_rip_up_marked_mpi_collective(route_trees[net->local_id], partitioner.orig_g, congestion, params.pres_fac, [&] (const RRNode &rr_node) -> void {
+						update_one_cost_internal(rr_node, partitioner.orig_g, congestion, -1, params.pres_fac); 
+
+						buffer[1+num_nodes_ripped] = rr_node;
+
+						++num_nodes_ripped;
+						}
+						);
+
+				assert(num_nodes_ripped == num_marked);
+
+				zlog_level(delta_log, ROUTER_V3, "Ripped up net %d route tree\n", net->vpr_id);
+
+				if (opts->rip_up_always && current_level == 0) {
+					assert(num_nodes_ripped == route_tree_size);
+
 					auto broadcast_start = clock::now();
 
 					broadcast_rip_up_all_collective(net->local_id, &mpi);
 
 					mpi_perf.total_broadcast_time += clock::now()-broadcast_start;
 				} else {
-					vector<RRNode> removed_nodes;
-					while (!cost_update_q.empty()) {
-						removed_nodes.push_back(cost_update_q.front());
-						cost_update_q.pop();
-					}
 					auto broadcast_start = clock::now();
 
-					int data_index = get_free_buffer(&mpi, 1+removed_nodes.size());
-
-					int *buffer = mpi.pending_send_data_nbc[data_index]->data();
-					buffer[0] = encode_header(PacketID::RIP_UP, net->local_id);
-					
-					for (int i = 0; i < removed_nodes.size(); ++i) {
-						buffer[1+i] = removed_nodes[i];
-					}
-
-					broadcast_dynamic(data_index, 1+removed_nodes.size(), &mpi);
+					broadcast_dynamic(data_index, 1+num_nodes_ripped, &mpi);
 
 					mpi_perf.total_broadcast_time += clock::now()-broadcast_start;
 				} 
@@ -763,9 +762,7 @@ bool mpi_route_load_balanced_nonblocking_collective(t_router_opts *opts, struct 
 				progress_broadcast(nets, congestion, partitioner.orig_g, params.pres_fac, net_route_trees, &mpi);
 
 				mpi_perf.total_send_testsome_time += clock::now()-progress_start;
-			} else {
-				assert(cost_update_q.empty());
-			}
+			} 
 
 			vector<sink_t *> sinks;	
 			get_sinks_to_route(net, route_trees[net->local_id], sinks);
@@ -777,7 +774,6 @@ bool mpi_route_load_balanced_nonblocking_collective(t_router_opts *opts, struct 
 			if (!sinks.empty()) {
 				route_net_mpi_send_recv_nonblocking_collective(partitioner.orig_g, net->vpr_id, net->local_id, &net->source, sinks, params, nets, states, congestion, route_trees[net->local_id], net_timing[net->vpr_id], net_route_trees, &mpi, &perf, &mpi_perf, false);
 
-
 				++thread_num_nets_routed;
 				++thread_num_nets_to_route;
 
@@ -788,8 +784,6 @@ bool mpi_route_load_balanced_nonblocking_collective(t_router_opts *opts, struct 
 			}
 
 			net_route_time[iter][net->local_id] = clock::now()-net_route_start;
-
-			net_indices.push_back(net->local_id);
 
 			//local_perf.total_route_time += clock::now()-rip_up_start;
 		}
@@ -812,10 +806,15 @@ bool mpi_route_load_balanced_nonblocking_collective(t_router_opts *opts, struct 
 		}
 		last_sync_time += clock::now()-last_sync_start;
 
-		assert(q_empty(&mpi.pending_bcast_data_q));
-
 		auto last_progress_start = clock::now();
+		/* although the queue is empty, there might be a last active broadcast req */
+		while (mpi.active_req != MPI_REQUEST_NULL || !q_empty(&mpi.pending_bcast_data_q)) {
+			zlog_level(delta_log, ROUTER_V3, "Queue size %d\n", q_size(&mpi.pending_bcast_data_q));
+			progress_broadcast_blocking(nets, congestion, partitioner.orig_g, params.pres_fac, net_route_trees, &mpi);
+		}
 		last_progress_time += clock::now()-last_progress_start;
+
+		assert(mpi.active_req == MPI_REQUEST_NULL);
 
 		//for (int pid = 0; pid < mpi.comm_size; ++pid) {
 			//if (pid == mpi.rank) {
