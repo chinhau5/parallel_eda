@@ -80,35 +80,37 @@ set(srcs
 	SRC/parallel_route/route_tree_timing_local.c
 	SRC/parallel_route/route_common_local.c
 	SRC/parallel_route/fine.cxx
-	SRC/parallel_route/locking_route.cxx
-	SRC/parallel_route/locking_route_deterministic.cxx
+	#SRC/parallel_route/locking_route.cxx
+	#SRC/parallel_route/locking_route_deterministic.cxx
 	#SRC/parallel_route/locking_route_optimized.cxx
 	#SRC/parallel_route/phased.cxx
 	SRC/parallel_route/congestion.cxx
 	SRC/parallel_route/router.cxx
-	SRC/parallel_route/route_net_mpi_send_recv.cxx
-	SRC/parallel_route/route_net_mpi_send_recv_improved.cxx
-	SRC/parallel_route/route_net_mpi_send_recv_reduced_comm.cxx
-	SRC/parallel_route/route_net_mpi_send_recv_nonblocking.cxx
-	SRC/parallel_route/route_net_mpi_send_recv_nonblocking_collective.cxx
-	SRC/parallel_route/route_net_with_fine_grain_lock.cxx
-	SRC/parallel_route/route_net_deterministic.cxx
+	#SRC/parallel_route/route_net_mpi_send_recv.cxx
+	#SRC/parallel_route/route_net_mpi_send_recv_improved.cxx
+	#SRC/parallel_route/route_net_mpi_send_recv_reduced_comm.cxx
+	#SRC/parallel_route/route_net_mpi_send_recv_nonblocking.cxx
+	#SRC/parallel_route/route_net_mpi_send_recv_nonblocking_collective.cxx
+	SRC/parallel_route/route_net_mpi_ibcast.cxx
+	#SRC/parallel_route/route_net_with_fine_grain_lock.cxx
+	#SRC/parallel_route/route_net_deterministic.cxx
 	SRC/parallel_route/init.cxx
 	SRC/parallel_route/log.cxx
 	SRC/parallel_route/spatial.cxx
-	SRC/parallel_route/spatial_route.cxx
-	SRC/parallel_route/spatial_route_2.cxx
-	SRC/parallel_route/spatial_route_3.cxx
-	SRC/parallel_route/mpi_spatial_route_flat_with_net_partitioning.cxx
-	SRC/parallel_route/mpi_spatial_route_flat.cxx
-	SRC/parallel_route/mpi_spatial_route_flat_improved.cxx
-	SRC/parallel_route/mpi_spatial_route_flat_reduced_comm.cxx
-	SRC/parallel_route/mpi_spatial_route_partitioned.cxx
-	SRC/parallel_route/mpi_spatial_route_rma.cxx
-	SRC/parallel_route/mpi_spatial_route_simulated.cxx
-	SRC/parallel_route/mpi_route_load_balanced.cxx
-	SRC/parallel_route/mpi_route_load_balanced_nonblocking.cxx
-	SRC/parallel_route/mpi_route_load_balanced_nonblocking_collective.cxx
+	#SRC/parallel_route/spatial_route.cxx
+	#SRC/parallel_route/spatial_route_2.cxx
+	#SRC/parallel_route/spatial_route_3.cxx
+	#SRC/parallel_route/mpi_spatial_route_flat_with_net_partitioning.cxx
+	#SRC/parallel_route/mpi_spatial_route_flat.cxx
+	#SRC/parallel_route/mpi_spatial_route_flat_improved.cxx
+	#SRC/parallel_route/mpi_spatial_route_flat_reduced_comm.cxx
+	#SRC/parallel_route/mpi_spatial_route_partitioned.cxx
+	#SRC/parallel_route/mpi_spatial_route_rma.cxx
+	#SRC/parallel_route/mpi_spatial_route_simulated.cxx
+	#SRC/parallel_route/mpi_route_load_balanced.cxx
+	#SRC/parallel_route/mpi_route_load_balanced_nonblocking.cxx
+	#SRC/parallel_route/mpi_route_load_balanced_nonblocking_collective.cxx
+	SRC/parallel_route/mpi_route_load_balanced_ibcast.cxx
 	#SRC/parallel_route/astar.cxx
 	#SRC/parallel_route/partitioning_route.c
 	SRC/parallel_route/route_tree.c

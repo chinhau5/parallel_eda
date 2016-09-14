@@ -26,28 +26,31 @@
 #include "partition.h"
 #include "fm.h"
 #include "rr_graph_partitioner.h"
-#include "route_net_mpi_send_recv_reduced_comm.h"
+#include "route_net_mpi_ibcast.h"
 #include "clock.h"
+#include "queue.h"
 
 void init_datatypes();
 
-void sync_iprobe(const vector<net_t> &nets, congestion_t *congestion, const RRGraph &g, float pres_fac, vector<vector<RRNode>> &net_route_trees, mpi_context_t *mpi, mpi_perf_t *mpi_perf);
-void sync_irecv(const vector<net_t> &nets, congestion_t *congestion, const RRGraph &g, float pres_fac, vector<vector<RRNode>> &net_route_trees, mpi_context_t *mpi, mpi_perf_t *mpi_perf);
 void sync_recalc_occ(congestion_t *congestion, int num_vertices, int procid, int num_procs, MPI_Comm comm);
 void sync_nets(vector<net_t> &nets, vector<net_t> &global_nets, int procid, MPI_Comm comm);
 void sync_net_delay(const vector<vector<net_t *>> &partitions, int procid, int num_procs, int *recvcounts, int *displs, int current_level, MPI_Comm comm, t_net_timing *net_timing);
 void free_circuit();
 void init_displ(const vector<vector<net_t*>> &partitions, int **recvcounts, int **displs);
 void init_displ_nets(const vector<vector<net_t*>> &partitions, int **recvcounts, int **displs);
-void get_sinks_to_route(net_t *net, const route_tree_t &rt, const vector<sink_t *> &unroutable_sinks, vector<sink_t *> &sinks_to_route);
-void send_route_tree(const net_t *net, const vector<vector<sink_t *>> &routed_sinks, const vector<route_tree_t> &route_trees, int to_procid, MPI_Comm comm);
-void recv_route_tree(net_t *net, const RRGraph &g, vector<vector<sink_t *>> &routed_sinks, vector<route_tree_t> &route_trees, t_net_timing *net_timing, int from_procid, MPI_Comm comm);
+void get_sinks_to_route(net_t *net, const route_tree_t &rt, vector<sink_t *> &sinks_to_route);
+void send_route_tree(const net_t *net, const vector<route_tree_t> &route_trees, int to_procid, MPI_Comm comm);
+void recv_route_tree(net_t *net, const RRGraph &g, vector<route_tree_t> &route_trees, t_net_timing *net_timing, int from_procid, MPI_Comm comm);
 void init_route_structs(const RRGraph &g, const vector<net_t> &nets, const vector<net_t> &global_nets, route_state_t **states, congestion_t **congestion, vector<route_tree_t> &route_trees, t_net_timing **net_timing);
-void broadcast_rip_up(int net_id, mpi_context_t *mpi);
-void broadcast_pending_cost_updates_reduced(const vector<RRNode> &added_nodes, int net_id, int delta, mpi_context_t *mpi);
-void progress_sends(mpi_context_t *mpi);
-void route_net_mpi_send_recv_reduced_comm(const RRGraph &g, int vpr_id, int net_id, const source_t *source, const vector<sink_t *> &sinks, const route_parameters_t &params, const vector<net_t> &nets, route_state_t *state, congestion_t *congestion, route_tree_t &rt, t_net_timing &net_timing, vector<vector<RRNode>> &net_route_trees, vector<sink_t *> &routed_sinks, vector<sink_t *> &unrouted_sinks, mpi_context_t *mpi, perf_t *perf, mpi_perf_t *mpi_perf, bool sync_only_once, bool delayed_progress);
-bool all_done(mpi_context_t *mpi);
+void broadcast_rip_up_all_ibcast(int net_id, mpi_context_t *mpi);
+void progress_ibcast(const vector<net_t> &nets, congestion_t *congestion, const RRGraph &g, float pres_fac, vector<vector<RRNode>> &net_route_trees, mpi_context_t *mpi);
+void progress_ibcast_blocking(const vector<net_t> &nets, congestion_t *congestion, const RRGraph &g, float pres_fac, vector<vector<RRNode>> &net_route_trees, mpi_context_t *mpi);
+void route_net_mpi_ibcast(const RRGraph &g, int vpr_id, int net_id, const source_t *source, const vector<sink_t *> &sinks, const t_router_opts *params, float pres_fac, const vector<net_t> &nets, const vector<vector<net_t *>> &partition_nets, int current_net_index, route_state_t *state, congestion_t *congestion, route_tree_t &rt, t_net_timing &net_timing, vector<vector<RRNode>> &net_route_trees, mpi_context_t *mpi, perf_t *perf, mpi_perf_t *mpi_perf, bool delayed_progress);
+int get_ibcast_buffer(mpi_context_t *mpi);
+void bootstrap_ibcast(mpi_context_t *mpi);
+void broadcast_as_root_large(int data_index, int count, mpi_context_t *mpi);
+
+void write_header(int *packet, IbcastPacketID packet_id, unsigned int payload_size, int net_id);
 
 struct net_graph_vertex_prop {
 	int weight;
@@ -59,6 +62,12 @@ struct net_graph_edge_prop {
 
 static void partition(vector<net_t> &nets, vector<pair<box, net_t *>> &sorted_nets, const fast_graph_t<net_graph_vertex_prop, net_graph_edge_prop> &net_g, bool load_balanced, int num_partitions, int current_level, int initial_comm_size, vector<int> &net_partition_id, vector<vector<net_t *>> &partition_nets)
 {
+	assert(partition_nets.size() == num_partitions);
+
+	for (int i = 0; i < num_partitions; ++i) {
+		assert(partition_nets[i].empty());
+	}
+
 	if (load_balanced) {
 		assert(nets.size() == num_vertices(net_g));
 
@@ -67,31 +76,28 @@ static void partition(vector<net_t> &nets, vector<pair<box, net_t *>> &sorted_ne
 		} else {
 			std::fill(begin(net_partition_id), end(net_partition_id), 0);
 		}
+
+		for (int i = 0; i < nets.size(); ++i) {
+			assert(net_partition_id[i] < partition_nets.size() && net_partition_id[i] >= 0);
+			assert(i == nets[i].local_id);
+			partition_nets[net_partition_id[i]].push_back(&nets[i]);
+		}
 	} else {
 		for (int rank = 0; rank < num_partitions; ++rank) {
 			for (int i = rank*pow(2, current_level); i < sorted_nets.size(); i += initial_comm_size) {
 				for (int j = 0; j < pow(2, current_level) && i+j < sorted_nets.size(); ++j) {
-					zlog_level(delta_log, ROUTER_V3, "Rank %d net index %d\n", rank, i+j);
+					zlog_level(delta_log, ROUTER_V3, "Rank %d net index %d num sinks %d\n", rank, i+j, sorted_nets[i+j].second->sinks.size());
+
 					net_partition_id[sorted_nets[i+j].second->local_id] = rank;
+
+					partition_nets[rank].push_back(sorted_nets[i+j].second);
 				}
 			}
 		}
 	}
-
-	assert(partition_nets.size() == num_partitions);
-
-	for (int i = 0; i < num_partitions; ++i) {
-		assert(partition_nets[i].empty());
-	}
-
-	for (int i = 0; i < nets.size(); ++i) {
-		assert(net_partition_id[i] < partition_nets.size() && net_partition_id[i] >= 0);
-		assert(i == nets[i].local_id);
-		partition_nets[net_partition_id[i]].push_back(&nets[i]);
-	}
 }
 
-static void repartition(bool load_balanced, vector<net_t> &nets, vector<pair<box, net_t *>> &sorted_nets, const fast_graph_t<net_graph_vertex_prop, net_graph_edge_prop> &net_g, vector<int> &net_partition_id, vector<vector<net_t *>> &partition_nets, const RRGraph &g, vector<route_tree_t> &route_trees, vector<vector<RRNode>> &net_route_trees, vector<vector<sink_t *>> &routed_sinks, t_net_timing *net_timing, mpi_context_t &mpi, int current_level, int initial_comm_size)
+static void repartition(bool load_balanced, vector<net_t> &nets, vector<pair<box, net_t *>> &sorted_nets, const fast_graph_t<net_graph_vertex_prop, net_graph_edge_prop> &net_g, vector<int> &net_partition_id, vector<vector<net_t *>> &partition_nets, const RRGraph &g, vector<route_tree_t> &route_trees, vector<vector<RRNode>> &net_route_trees, t_net_timing *net_timing, mpi_context_t &mpi, int current_level, int initial_comm_size)
 {
 	vector<int> old_net_partition_id = net_partition_id;
 
@@ -107,7 +113,7 @@ static void repartition(bool load_balanced, vector<net_t> &nets, vector<pair<box
 			if (mpi.rank == old_net_partition_id[net.local_id]) { 
 				zlog_level(delta_log, ROUTER_V3, "Sending net %d from %d\n", net.vpr_id, mpi.rank);
 
-				send_route_tree(&net, routed_sinks, route_trees, net_partition_id[net.local_id], mpi.comm);
+				send_route_tree(&net, route_trees, net_partition_id[net.local_id], mpi.comm);
 
 				assert(net_route_trees[net.local_id].empty());
 
@@ -116,12 +122,11 @@ static void repartition(bool load_balanced, vector<net_t> &nets, vector<pair<box
 					net_route_trees[net.local_id].push_back(rt_node_p.rr_node);
 				}
 
-				routed_sinks[net.local_id].clear();
 				route_tree_clear(route_trees[net.local_id]);
 			} else if (mpi.rank == net_partition_id[net.local_id]) {
 				zlog_level(delta_log, ROUTER_V3, "Recving net %d from %d\n", net.vpr_id, old_net_partition_id[net.local_id]);
 
-				recv_route_tree(&net, g, routed_sinks, route_trees, net_timing, old_net_partition_id[net.local_id], mpi.comm);
+				recv_route_tree(&net, g, route_trees, net_timing, old_net_partition_id[net.local_id], mpi.comm);
 
 				assert(!net_route_trees[net.local_id].empty());
 
@@ -163,7 +168,39 @@ static void repartition(bool load_balanced, vector<net_t> &nets, vector<pair<box
 	//
 }
 
-bool mpi_route_load_balanced(t_router_opts *opts, struct s_det_routing_arch det_routing_arch, t_direct_inf *directs, int num_directs, t_segment_inf *segment_inf, t_timing_inf timing_inf)
+void test_queue()
+{
+	queue_t<int> q;
+	q_init(&q, 5);
+	assert(q_empty(&q));
+	assert(q_size(&q) == 0);
+
+	assert(q_push(&q, 5));
+	assert(!q_empty(&q));
+	assert(q_size(&q) == 1);
+	assert(q_front(&q) == 5);
+
+	assert(q_push(&q, 6));
+	assert(q_front(&q) == 5);
+	assert(q_size(&q) == 2);
+
+	assert(q_pop(&q));
+	assert(q_front(&q) == 6);
+
+	assert(q_pop(&q));
+	assert(q_size(&q) == 0);
+
+	assert(!q_pop(&q));
+
+	for (int i = 0; i < 5; ++i) {
+		assert(q_size(&q) == i);
+		assert(q_push(&q, i));
+	}
+	assert(!q_push(&q, 100));
+	assert(q_size(&q) == 5);
+}
+
+bool mpi_route_load_balanced_ibcast(t_router_opts *opts, struct s_det_routing_arch det_routing_arch, t_direct_inf *directs, int num_directs, t_segment_inf *segment_inf, t_timing_inf timing_inf)
 {
     using std::chrono::duration_cast;
     using std::chrono::nanoseconds;
@@ -356,6 +393,17 @@ bool mpi_route_load_balanced(t_router_opts *opts, struct s_det_routing_arch det_
         net->bb_area_rank = rank++;
     }
 
+	vector<int> num_sinks(nets.size());
+	for (int i = 0; i < nets.size(); ++i) {
+		num_sinks[i] = nets[i].sinks.size();
+	}
+	sort(begin(num_sinks), end(num_sinks));
+	float total_num_sinks = 0;
+	for (const auto &n : num_sinks) {
+		total_num_sinks += n;
+	}
+	printf("Num sinks, min: %d max: %d mean: %g\n", num_sinks.front(), num_sinks.back(), total_num_sinks / nets.size());
+
 	/* per process */
 	route_state_t *states;
 
@@ -375,7 +423,8 @@ bool mpi_route_load_balanced(t_router_opts *opts, struct s_det_routing_arch det_
     params.astar_fac = opts->astar_fac;
     params.max_criticality = opts->max_criticality;
     params.bend_cost = opts->bend_cost;
-	params.pres_fac = opts->first_iter_pres_fac; /* Typically 0 -> ignore cong. */
+
+	float pres_fac = opts->first_iter_pres_fac; /* Typically 0 -> ignore cong. */
 
 	if (mpi.rank != 0) {
 		free_circuit();
@@ -434,6 +483,7 @@ bool mpi_route_load_balanced(t_router_opts *opts, struct s_det_routing_arch det_
 		//}
 	//}
 	//orig_num_recvs_required = num_recvs_required;
+	//
 
     bool routed = false;
 	bool idling = false;
@@ -441,10 +491,7 @@ bool mpi_route_load_balanced(t_router_opts *opts, struct s_det_routing_arch det_
     int iter;
     float crit_path_delay;
 
-	vector<vector<sink_t *>> unroutable_sinks(nets.size());
 	//vector<vector<sink_t *>> fixed_sinks(nets.size());
-	vector<vector<sink_t *>> routed_sinks(nets.size());
-	bool has_unroutable_sinks = false;
 	unsigned long prev_num_overused_nodes = std::numeric_limits<unsigned long>::max();
 
     clock::duration total_actual_route_time = clock::duration::zero();
@@ -454,13 +501,35 @@ bool mpi_route_load_balanced(t_router_opts *opts, struct s_det_routing_arch det_
     clock::duration total_iter_time = clock::duration::zero();
     clock::duration total_wait_time = clock::duration::zero();
     clock::duration total_combine_time = clock::duration::zero();
-    clock::duration total_sync_time = clock::duration::zero();
-    clock::duration total_iprobe_time = clock::duration::zero();
-    clock::duration total_update_time = clock::duration::zero();
-	int total_calls = 0;
-    clock::duration total_recv_time = clock::duration::zero();
-    clock::duration total_broadcast_time = clock::duration::zero();
     clock::duration total_last_sync_time = clock::duration::zero();
+    clock::duration total_last_progress_time = clock::duration::zero();
+	 //mpi 
+    clock::duration total_sync_time = clock::duration::zero();
+    clock::duration total_broadcast_time = clock::duration::zero();
+    clock::duration total_send_testsome_time = clock::duration::zero();
+	int total_calls = 0;
+
+	int max_num_broadcasts;
+
+	mpi.ibcast_comm.resize(mpi.comm_size);
+	for (int i = 0; i < mpi.comm_size; ++i) {
+		int error = MPI_Comm_dup(mpi.comm, &mpi.ibcast_comm[i]);
+		assert(error == MPI_SUCCESS);
+	}
+
+	mpi.max_ibcast_count.resize(mpi.comm_size);
+	std::fill(begin(mpi.max_ibcast_count), end(mpi.max_ibcast_count), 2+3);
+
+	for (int i = 0; i < mpi.comm_size; ++i) {
+		zlog_level(delta_log, ROUTER_V3, "Preallocating buffer size %d for rank %d\n", mpi.max_ibcast_count[i], i);
+		mpi.pending_send_data_nbc.emplace_back(new vector<int>(mpi.max_ibcast_count[i]));
+		mpi.pending_send_data_ref_count.emplace_back(0);
+	}
+
+	mpi.pending_send_req.resize(mpi.comm_size, MPI_REQUEST_NULL);
+	mpi.pending_req_meta.resize(mpi.comm_size, { -1, -1 });
+	mpi.num_pending_reqs = 0;
+	mpi.received_last_update.resize(mpi.comm_size);
 
     for (iter = 0; iter < opts->max_router_iterations && !routed && !idling; ++iter) {
         clock::duration actual_route_time = clock::duration::zero();
@@ -471,6 +540,7 @@ bool mpi_route_load_balanced(t_router_opts *opts, struct s_det_routing_arch det_
         clock::duration wait_time = clock::duration::zero();
         clock::duration combine_time = clock::duration::zero();
         clock::duration last_sync_time = clock::duration::zero();
+        clock::duration last_progress_time = clock::duration::zero();
 
         //for (int i = 0; i < opts->num_threads; ++i) {
             //sprintf(buffer, LOG_PATH_PREFIX"iter_%d_tid_%d.log", iter, i);
@@ -489,9 +559,10 @@ bool mpi_route_load_balanced(t_router_opts *opts, struct s_det_routing_arch det_
         int thread_num_sinks_to_route = 0;
 		//vector<vector<RRNode>> net_sinks(nets.size());
 		//
-		mpi.pending_recv_data.resize(mpi.comm_size);
-		mpi.pending_recv_req.resize(mpi.comm_size);
-		mpi.received_last_update.resize(mpi.comm_size);
+		mpi.max_send_data_size = 0;
+		mpi.total_send_count = 0;
+		mpi.total_send_data_size = 0;
+		mpi.max_send_req_size = 0;
 
 		std::fill(begin(mpi.received_last_update), end(mpi.received_last_update), false);
 
@@ -501,8 +572,23 @@ bool mpi_route_load_balanced(t_router_opts *opts, struct s_det_routing_arch det_
 		sprintf(buffer, "%d", mpi.rank);
 		zlog_put_mdc("tid", buffer);
 
+		//extern map<string, FILE *> log_files;
+
+		//char fname_buf[256];
+		//sprintf(fname_buf, "iter_%d_tid_%d.log", iter, mpi.rank);
+
+		//auto file_iter = log_files.find(fname_buf);
+		//assert(file_iter != log_files.end());
+		//pair<string, FILE *> file = *file_iter;
+		//int fd = fileno(file.second);
+		//assert(fd != -1);
+
+		//assert(dup2(fd, 1) != -1);
+
         zlog_info(delta_log, "Routing iteration: %d\n", iter);
-        printf("Routing iteration: %d\n", iter);
+		if (mpi.rank == 0) {
+			printf("Routing iteration: %d\n", iter);
+		}
 
 		MPI_Barrier(mpi.comm);
         
@@ -515,11 +601,9 @@ bool mpi_route_load_balanced(t_router_opts *opts, struct s_det_routing_arch det_
 		perf.num_neighbor_visits = 0;
 
 		mpi_perf.total_sync_time = clock::duration::zero();
-		mpi_perf.total_recv_time = clock::duration::zero();
-		mpi_perf.total_iprobe_time = clock::duration::zero();
-		mpi_perf.total_update_time = clock::duration::zero();
-		mpi_perf.total_calls = 0;
 		mpi_perf.total_broadcast_time = clock::duration::zero();
+		mpi_perf.total_send_testsome_time = clock::duration::zero();
+		mpi_perf.total_calls = 0;
 
 		//for (int i = 0; i < mpi.comm_size; ++i) {
 			//num_recvs_called[i] = 0;
@@ -531,7 +615,6 @@ bool mpi_route_load_balanced(t_router_opts *opts, struct s_det_routing_arch det_
 			//}
 		//}
 		//
-		vector<int> net_indices;
 
 		if (iter == 1 && opts->load_balanced) {
 			clock::rep min_net_route_time = std::numeric_limits<clock::rep>::max();
@@ -584,7 +667,7 @@ bool mpi_route_load_balanced(t_router_opts *opts, struct s_det_routing_arch det_
 				//fclose(file);
 			//}
 
-			repartition(opts->load_balanced, nets, nets_to_route, net_g, net_partition_id, partition_nets, partitioner.orig_g, route_trees, net_route_trees, routed_sinks, net_timing, mpi, current_level, initial_comm_size);
+			repartition(opts->load_balanced, nets, nets_to_route, net_g, net_partition_id, partition_nets, partitioner.orig_g, route_trees, net_route_trees, net_timing, mpi, current_level, initial_comm_size);
 
 			for (int i = 0; i < mpi.comm_size; ++i) {
 				int total_weight = 0;
@@ -595,6 +678,10 @@ bool mpi_route_load_balanced(t_router_opts *opts, struct s_det_routing_arch det_
 			}
 
 		}
+
+		bootstrap_ibcast(&mpi);
+
+		int current_net_index = 0;
 
 		for (auto &net : partition_nets[mpi.rank]) {
 			auto net_route_start = clock::now();
@@ -615,122 +702,140 @@ bool mpi_route_load_balanced(t_router_opts *opts, struct s_det_routing_arch det_
 			//}
 
 			//route_tree_mark_paths_to_be_ripped(route_trees[net->local_id], partitioner.orig_g, partitioner.result_pid_by_level[current_level], mpi.rank, sinks_to_mark);
-			if (opts->rip_up_always && current_level == 0) {
-				route_tree_mark_all_nodes_to_be_ripped(route_trees[net->local_id], partitioner.orig_g);
-			} else {
-				route_tree_mark_congested_nodes_to_be_ripped(route_trees[net->local_id], partitioner.orig_g, congestion);
-			}
-
-			int route_tree_size = 0;
-			for (const auto &n : route_tree_get_nodes(route_trees[net->local_id])) {
-				++route_tree_size;
-			}
-
-			queue<RRNode> cost_update_q;
-			route_tree_rip_up_marked_mpi_send_recv(route_trees[net->local_id], partitioner.orig_g, congestion, params.pres_fac, cost_update_q);
-
-			zlog_level(delta_log, ROUTER_V3, "Ripped up net %d route tree of size %lu\n", net->vpr_id, cost_update_q.size());
 
 			if (iter > 0) {
-				if (cost_update_q.size() == route_tree_size) {
-					auto broadcast_start = clock::now();
-					broadcast_rip_up(net->local_id, &mpi);
-					mpi_perf.total_broadcast_time += clock::now()-broadcast_start;
-				} else if (!cost_update_q.empty()) {
-					vector<RRNode> removed_nodes;
-					while (!cost_update_q.empty()) {
-						removed_nodes.push_back(cost_update_q.front());
-						cost_update_q.pop();
-					}
-					auto broadcast_start = clock::now();
-					broadcast_pending_cost_updates_reduced(removed_nodes, net->local_id, -1, &mpi);
-					mpi_perf.total_broadcast_time += clock::now()-broadcast_start;
-				}
-			}
+				int route_tree_size = route_tree_num_nodes(route_trees[net->local_id]);
+				int num_marked = 0;
 
-			auto sync_start	= clock::now();
-			sync_iprobe(nets, congestion, partitioner.orig_g, params.pres_fac, net_route_trees, &mpi, &mpi_perf);
-			mpi_perf.total_sync_time += clock::now()-sync_start;
-
-			routed_sinks[net->local_id].clear();
-			for (auto &sink : net->sinks) {
-				if (route_tree_get_rt_node(route_trees[net->local_id], sink.rr_node) != RouteTree::null_vertex()) {
-					routed_sinks[net->local_id].push_back(&sink);
+				if (opts->rip_up_always && current_level == 0) {
+					route_tree_mark_all_nodes_to_be_ripped(route_trees[net->local_id], partitioner.orig_g);
+					num_marked = route_tree_size;
+				} else {
+					num_marked = route_tree_mark_congested_nodes_to_be_ripped(route_trees[net->local_id], partitioner.orig_g, congestion);
 				}
-			}
+
+				int data_index = get_ibcast_buffer(&mpi);
+				vector<int> &data = *mpi.pending_send_data_nbc[data_index];
+
+				int num_nodes_ripped = 0;
+
+				route_tree_rip_up_marked_mpi_collective(route_trees[net->local_id], partitioner.orig_g, congestion, pres_fac, [&] (const RRNode &rr_node) -> void {
+						update_one_cost_internal(rr_node, partitioner.orig_g, congestion, -1, pres_fac); 
+
+						if (num_marked < route_tree_size) {
+							if (data.size() <= 2+num_nodes_ripped) {
+								data.resize((2+num_nodes_ripped)*2);
+							}
+
+							data[2+num_nodes_ripped] = rr_node;
+						}
+
+						++num_nodes_ripped;
+						}
+						);
+
+				assert(num_nodes_ripped == num_marked);
+
+				zlog_level(delta_log, ROUTER_V3, "Ripped up net %d route tree\n", net->vpr_id);
+
+				if (mpi.comm_size > 1) {
+					int count;
+					if (num_nodes_ripped == route_tree_size) {
+						write_header(&data[0], IbcastPacketID::RIP_UP_ALL, 0, net->local_id);
+						count = 2;
+					} else {
+						write_header(&data[0], IbcastPacketID::RIP_UP, num_nodes_ripped, net->local_id);
+						count = 2+num_nodes_ripped;
+					} 
+
+					auto broadcast_start = clock::now();
+
+					broadcast_as_root_large(data_index, count, &mpi);
+
+					mpi_perf.total_broadcast_time += clock::now()-broadcast_start;
+
+					auto progress_start = clock::now();
+
+					progress_ibcast(nets, congestion, partitioner.orig_g, pres_fac, net_route_trees, &mpi);
+
+					mpi_perf.total_send_testsome_time += clock::now()-progress_start;
+				} else {
+					assert(mpi.pending_send_data_ref_count[data_index] == 0);
+					mpi.free_send_data_index.push(data_index);
+				}
+			} 
 
 			vector<sink_t *> sinks;	
-			get_sinks_to_route(net, route_trees[net->local_id], unroutable_sinks[net->local_id], sinks);
+			get_sinks_to_route(net, route_trees[net->local_id], sinks);
 
 			//local_perf.total_rip_up_time += clock::now()-rip_up_start;
 
 			//auto route_start = clock::now();
 
 			if (!sinks.empty()) {
-				int previous_num_unroutable_sinks = unroutable_sinks[net->local_id].size();
-
-				int previous_num_routed_sinks = routed_sinks[net->local_id].size();
-
-				route_net_mpi_send_recv_reduced_comm(partitioner.orig_g, net->vpr_id, net->local_id, &net->source, sinks, params, nets, states, congestion, route_trees[net->local_id], net_timing[net->vpr_id], net_route_trees, routed_sinks[net->local_id], unroutable_sinks[net->local_id], &mpi, &perf, &mpi_perf, opts->sync_only_once, true);
-
-				assert(routed_sinks[net->local_id].size() + unroutable_sinks[net->local_id].size() == net->sinks.size());
-
-				if (!unroutable_sinks[net->local_id].empty() && previous_num_unroutable_sinks > 0) {
-					assert(previous_num_unroutable_sinks == unroutable_sinks[net->local_id].size());
-				}
-
-				if (!has_unroutable_sinks) {
-					has_unroutable_sinks = !unroutable_sinks[net->local_id].empty();
-				}
+				route_net_mpi_ibcast(partitioner.orig_g, net->vpr_id, net->local_id, &net->source, sinks, opts, pres_fac, nets, partition_nets, current_net_index, states, congestion, route_trees[net->local_id], net_timing[net->vpr_id], net_route_trees, &mpi, &perf, &mpi_perf, false);
 
 				++thread_num_nets_routed;
 				++thread_num_nets_to_route;
 
 				thread_num_sinks_to_route += sinks.size();
-				thread_num_sinks_routed += routed_sinks[net->local_id].size() - previous_num_routed_sinks;
+				thread_num_sinks_routed += sinks.size();
 			} else {
-				assert(routed_sinks[net->local_id].size() + unroutable_sinks[net->local_id].size() == net->sinks.size());
-				zlog_level(delta_log, ROUTER_V2, "Net %d has no sinks in the current iteration because there are %lu/%lu non-routable/all sinks\n", net->vpr_id, unroutable_sinks[net->local_id].size(), net->sinks.size());
+				zlog_level(delta_log, ROUTER_V2, "Net %d has no sinks in the current iteration\n", net->vpr_id);
 			}
 
 			net_route_time[iter][net->local_id] = clock::now()-net_route_start;
 
-			net_indices.push_back(net->local_id);
-
 			//local_perf.total_route_time += clock::now()-rip_up_start;
+			++current_net_index;
 		}
-
-		for (int pid = 0; pid < mpi.comm_size; ++pid) {
-			if (pid != mpi.rank) {
-				/* very hackish just to make sure we have persistent storage 
-				 * for the trailer INT */
-				zlog_level(delta_log, ROUTER_V2, "Sent trailer packet from %d to %d\n", mpi.rank, pid);
-				mpi.pending_send_req.push_back(MPI_Request());
-				mpi.pending_send_data.push_back(nullptr);
-
-				int error = MPI_Isend(nullptr, 0, MPI_INT, pid, LAST_TAG, mpi.comm, &mpi.pending_send_req.back());
-				assert(error == MPI_SUCCESS);
-			}
-		}
-
-		progress_sends(&mpi);
 
 		actual_route_time = clock::now() - route_start;
 
-		auto last_sync_start = clock::now();
 		int num_last_syncs = 0;
-		while (!all_done(&mpi)) {
-			sync_iprobe(nets, congestion, partitioner.orig_g, params.pres_fac, net_route_trees, &mpi, nullptr);
-			++num_last_syncs;
-		}
-		last_sync_time += clock::now()-last_sync_start;
 
-		for (int pid = 0; pid < mpi.comm_size; ++pid) {
-			assert(mpi.pending_recv_data[pid].empty());
-			assert(mpi.pending_recv_req[pid].empty());
+		if (mpi.comm_size > 1) {
+			auto last_sync_start = clock::now();
+
+			int data_index = get_ibcast_buffer(&mpi);
+
+			int *data = mpi.pending_send_data_nbc[data_index]->data();
+			write_header(data, IbcastPacketID::TRAILER, 0, 0);
+
+			zlog_level(delta_log, ROUTER_V2, "Sent trailer packet\n");
+
+			broadcast_as_root_large(data_index, 2, &mpi);
+
+			last_sync_time += clock::now()-last_sync_start;
+
+			auto last_progress_start = clock::now();
+			progress_ibcast_blocking(nets, congestion, partitioner.orig_g, pres_fac, net_route_trees, &mpi);
+			last_progress_time += clock::now()-last_progress_start;
 		}
-		assert(mpi.pending_send_data.empty());
-		assert(mpi.pending_send_req.empty());
+
+		/* checking */
+		for (int i = 0; i < mpi.pending_send_req.size(); ++i) {
+			assert(mpi.pending_send_req[i] == MPI_REQUEST_NULL);
+		}
+		assert(mpi.num_pending_reqs == 0);
+		for (int i = 0; i < mpi.pending_send_data_ref_count.size(); ++i) {
+			assert(mpi.pending_send_data_ref_count[i] == 0);
+		}
+		zlog_level(delta_log, ROUTER_V2, "free data %d free req %d\n", mpi.free_send_data_index.size(), mpi.free_send_req_index.size());
+		zlog_level(delta_log, ROUTER_V2, "data %d req %d\n", mpi.pending_send_data_nbc.size(), mpi.pending_send_req.size());
+		assert(mpi.free_send_data_index.size() == mpi.pending_send_data_nbc.size()-mpi.comm_size);
+		assert(mpi.free_send_req_index.size() == mpi.pending_send_req.size()-mpi.comm_size);
+
+		//for (int pid = 0; pid < mpi.comm_size; ++pid) {
+			//if (pid == mpi.rank) {
+				//assert(mpi.pending_recv_req_flat[pid] == MPI_REQUEST_NULL);
+			//} else {
+				//assert(mpi.pending_recv_req_flat[pid] != MPI_REQUEST_NULL);
+				//MPI_Cancel(&mpi.pending_recv_req_flat[pid]);
+			//}
+		//}
+		//int error = MPI_Waitall(mpi.comm_size, mpi.pending_recv_req_flat.data(), MPI_STATUSES_IGNORE);
+		//assert(error == MPI_SUCCESS);
 
 		//vector<MPI_Request> requests;
 		//for (int pid = 0; pid < mpi.comm_size; ++pid) {
@@ -767,7 +872,7 @@ bool mpi_route_load_balanced(t_router_opts *opts, struct s_det_routing_arch det_
 							//added_nodes.push_back(node.rr_node_id);
 						//}
 					//}
-					//update_one_cost(partitioner.orig_g, congestion, added_nodes.begin(), added_nodes.end(), 1, params.pres_fac, false, nullptr);
+					//update_one_cost(partitioner.orig_g, congestion, added_nodes.begin(), added_nodes.end(), 1, pres_fac, false, nullptr);
 				//}
 			//}
 		//}
@@ -791,12 +896,11 @@ bool mpi_route_load_balanced(t_router_opts *opts, struct s_det_routing_arch det_
 		//fclose(net_route_time_f);
 
 		total_sync_time += mpi_perf.total_sync_time;
-		total_recv_time += mpi_perf.total_recv_time;
-		total_iprobe_time += mpi_perf.total_iprobe_time;
-		total_update_time += mpi_perf.total_update_time;
-		total_calls += mpi_perf.total_calls;
 		total_broadcast_time += mpi_perf.total_broadcast_time;
+		total_send_testsome_time += mpi_perf.total_send_testsome_time;
+		total_last_progress_time += last_progress_time;
 		total_last_sync_time += last_sync_time;
+		total_calls += mpi_perf.total_calls;
 
 		int total_num_sinks_to_route;
 		if (mpi.rank == 0) {
@@ -871,6 +975,30 @@ bool mpi_route_load_balanced(t_router_opts *opts, struct s_det_routing_arch det_
 			printf("total_num_heap_pushes: %lu\n", total_num_heap_pushes);
 			printf("total_num_heap_pops: %lu\n", total_num_heap_pops); 
 			printf("total_num_neighbor_visits: %lu\n", total_num_neighbor_visits);
+
+			printf("max send data size: %d ", mpi.max_send_data_size*sizeof(int));
+			for (int i = 1; i < mpi.comm_size; ++i) {
+				int tmp_max_send_data_size;
+				MPI_Recv(&tmp_max_send_data_size, 1, MPI_INT, i, i, mpi.comm, MPI_STATUS_IGNORE);
+				printf("%d ", tmp_max_send_data_size*sizeof(int));
+			}
+			printf("\n");
+			printf("total send size/count/average: %lu/%lu/%g ", mpi.total_send_data_size*sizeof(int), mpi.total_send_count, (float)mpi.total_send_data_size*sizeof(int)/mpi.total_send_count);
+			for (int i = 1; i < mpi.comm_size; ++i) {
+				unsigned long tmp_total_send_data_size;
+				unsigned long tmp_total_send_count;
+				MPI_Recv(&tmp_total_send_data_size, 1, MPI_UNSIGNED_LONG, i, i, mpi.comm, MPI_STATUS_IGNORE);
+				MPI_Recv(&tmp_total_send_count, 1, MPI_UNSIGNED_LONG, i, i, mpi.comm, MPI_STATUS_IGNORE);
+				printf("%lu/%lu/%g ", tmp_total_send_data_size*sizeof(int), tmp_total_send_count, (float)tmp_total_send_data_size*sizeof(int)/tmp_total_send_count);
+			}
+			printf("\n");
+			printf("max send req size: %d ", mpi.max_send_req_size);
+			for (int i = 1; i < mpi.comm_size; ++i) {
+				int tmp_max_send_req_size;
+				MPI_Recv(&tmp_max_send_req_size, 1, MPI_INT, i, i, mpi.comm, MPI_STATUS_IGNORE);
+				printf("%d ", tmp_max_send_req_size);
+			}
+			printf("\n");
 		} else {
 			MPI_Send(&thread_num_nets_to_route, 1, MPI_INT, 0, mpi.rank, mpi.comm);
 			MPI_Send(&thread_num_nets_routed, 1, MPI_INT, 0, mpi.rank, mpi.comm);
@@ -880,6 +1008,11 @@ bool mpi_route_load_balanced(t_router_opts *opts, struct s_det_routing_arch det_
 			MPI_Send(&perf.num_heap_pushes, 1, MPI_UNSIGNED_LONG, 0, mpi.rank, mpi.comm);
 			MPI_Send(&perf.num_heap_pops, 1, MPI_UNSIGNED_LONG, 0, mpi.rank, mpi.comm);
 			MPI_Send(&perf.num_neighbor_visits, 1, MPI_UNSIGNED_LONG, 0, mpi.rank, mpi.comm);
+
+			MPI_Send(&mpi.max_send_data_size, 1, MPI_INT, 0, mpi.rank, mpi.comm);
+			MPI_Send(&mpi.total_send_data_size, 1, MPI_UNSIGNED_LONG, 0, mpi.rank, mpi.comm);
+			MPI_Send(&mpi.total_send_count, 1, MPI_UNSIGNED_LONG, 0, mpi.rank, mpi.comm);
+			MPI_Send(&mpi.max_send_req_size, 1, MPI_INT, 0, mpi.rank, mpi.comm);
 		}
 
 		/* checking */
@@ -888,7 +1021,7 @@ bool mpi_route_load_balanced(t_router_opts *opts, struct s_det_routing_arch det_
         }
 
 		for (auto &net : partition_nets[mpi.rank]) {
-			check_route_tree(route_trees[net->local_id], *net, routed_sinks[net->local_id], partitioner.orig_g);
+			check_route_tree(route_trees[net->local_id], *net, partitioner.orig_g);
 			recalculate_occ(route_trees[net->local_id], partitioner.orig_g, congestion);
 		}
 
@@ -896,8 +1029,8 @@ bool mpi_route_load_balanced(t_router_opts *opts, struct s_det_routing_arch det_
 
 		bool valid = true;
 		for (int i = 0; i < num_vertices(partitioner.orig_g); ++i) {
-			sprintf_rr_node_impl(i, buffer);
 			if (congestion[i].recalc_occ != congestion[i].occ) {
+				sprintf_rr_node_impl(i, buffer);
 				printf("[%d] Node %s occ mismatch, recalc: %d original: %d\n", mpi.rank, buffer, congestion[i].recalc_occ, congestion[i].occ);
 				valid = false;
 			}
@@ -991,17 +1124,17 @@ bool mpi_route_load_balanced(t_router_opts *opts, struct s_det_routing_arch det_
 		auto update_cost_start = clock::now();
 
 		if (iter == 0) {
-			params.pres_fac = opts->initial_pres_fac;
-			//update_costs_mpi(partitioner.orig_g[0], partitioner.result_pid_by_level[current_level], mpi.rank, congestion, win, params.pres_fac, 0);
-			update_costs(partitioner.orig_g, congestion, params.pres_fac, 0);
+			pres_fac = opts->initial_pres_fac;
+			//update_costs_mpi(partitioner.orig_g[0], partitioner.result_pid_by_level[current_level], mpi.rank, congestion, win, pres_fac, 0);
+			update_costs(partitioner.orig_g, congestion, pres_fac, 0);
 		} else {
-			params.pres_fac *= opts->pres_fac_mult;
+			pres_fac *= opts->pres_fac_mult;
 
 			/* Avoid overflow for high iteration counts, even if acc_cost is big */
-			params.pres_fac = std::min(params.pres_fac, static_cast<float>(HUGE_POSITIVE_FLOAT / 1e5));
+			pres_fac = std::min(pres_fac, static_cast<float>(HUGE_POSITIVE_FLOAT / 1e5));
 
-			//update_costs_mpi(partitioner.orig_g[0], partitioner.result_pid_by_level[current_level], mpi.rank, congestion, win, params.pres_fac, opts->acc_fac);
-			update_costs(partitioner.orig_g, congestion, params.pres_fac, opts->acc_fac);
+			//update_costs_mpi(partitioner.orig_g[0], partitioner.result_pid_by_level[current_level], mpi.rank, congestion, win, pres_fac, opts->acc_fac);
+			update_costs(partitioner.orig_g, congestion, pres_fac, opts->acc_fac);
 		}
 
 		update_cost_time = clock::now()-update_cost_start;
@@ -1012,13 +1145,7 @@ bool mpi_route_load_balanced(t_router_opts *opts, struct s_det_routing_arch det_
         total_analyze_timing_time += analyze_timing_time;
         total_update_cost_time += update_cost_time;
 
-		int m_routed = (feasible_routing(partitioner.orig_g, congestion) && !has_unroutable_sinks) ? 1 : 0;
-		int reduced_routed;
-		MPI_Allreduce(&m_routed, &reduced_routed, 1, MPI_INT, MPI_LAND, mpi.comm);
-
-        zlog_level(delta_log, ROUTER_V1, "m_routed: %d reduced_routed: %d\n", m_routed, reduced_routed);
-
-        if (reduced_routed) {
+        if (feasible_routing(partitioner.orig_g, congestion)) {
             //dump_route(*current_traces_ptr, "route.txt");
 			routed = true;	
         } else {
@@ -1074,15 +1201,15 @@ bool mpi_route_load_balanced(t_router_opts *opts, struct s_det_routing_arch det_
 			int not_decreasing = (num_overused_nodes >= prev_num_overused_nodes && iter > 10) ? 1 : 0;
 			//int not_decreasing = current_level+1 < partitioner.result_pid_by_level.size(); [> testing <]
 			//int not_decreasing = current_level+1 <= std::log2(initial_comm_size); [> testing <]
-			int reduced_not_decreasing;
-			MPI_Allreduce(&not_decreasing, &reduced_not_decreasing, 1, MPI_INT, MPI_LOR, mpi.comm);
+			//int reduced_not_decreasing;
+			//MPI_Allreduce(&not_decreasing, &reduced_not_decreasing, 1, MPI_INT, MPI_LOR, mpi.comm);
 			//int reduced_not_decreasing = iter > 1;
 
 			prev_num_overused_nodes = num_overused_nodes;
 
 			zlog_level(delta_log, ROUTER_V1, "not_decreasing: %d reduced_not_decreasing: %d\n", not_decreasing, reduced_not_decreasing);
 
-			if (reduced_not_decreasing && initial_comm_size > 1 && current_level < (int)std::log2(initial_comm_size)) {
+			if (not_decreasing && initial_comm_size > 1 && current_level < (int)std::log2(initial_comm_size)) {
 				/* need to send route tree over */
 
 
@@ -1092,7 +1219,7 @@ bool mpi_route_load_balanced(t_router_opts *opts, struct s_det_routing_arch det_
 						//old_partitions[i].insert(net);
 					//}
 				//}
-				
+				//
 				auto combine_start = clock::now();
 
 				assert(mpi.comm_size % 2 == 0);
@@ -1100,7 +1227,12 @@ bool mpi_route_load_balanced(t_router_opts *opts, struct s_det_routing_arch det_
 
 				++current_level;
 
-				repartition(opts->load_balanced, nets, nets_to_route, net_g, net_partition_id, partition_nets, partitioner.orig_g, route_trees, net_route_trees, routed_sinks, net_timing, mpi, current_level, initial_comm_size);
+				repartition(opts->load_balanced, nets, nets_to_route, net_g, net_partition_id, partition_nets, partitioner.orig_g, route_trees, net_route_trees, net_timing, mpi, current_level, initial_comm_size);
+
+				for (int i = 0; i < mpi.comm_size; ++i) {
+					int error = MPI_Comm_free(&mpi.ibcast_comm[i]);
+					assert(error == MPI_SUCCESS);
+				}
 
 				idling = mpi.rank >= mpi.comm_size;
 
@@ -1108,6 +1240,9 @@ bool mpi_route_load_balanced(t_router_opts *opts, struct s_det_routing_arch det_
 				MPI_Comm_split(mpi.comm, idling ? 1 : 0, mpi.rank, &new_comm);
 				mpi.comm = new_comm;
 				MPI_Comm_rank(mpi.comm, &mpi.rank);
+				int new_comm_size;
+				MPI_Comm_size(mpi.comm, &new_comm_size);
+				assert(mpi.comm_size == new_comm_size);
 
 				combine_time = clock::now()-combine_start;
 
@@ -1117,35 +1252,17 @@ bool mpi_route_load_balanced(t_router_opts *opts, struct s_det_routing_arch det_
 					zlog_level(delta_log, ROUTER_V1, "Transitioned to level %d at iteration %d\n", current_level, iter);
 					zlog_level(delta_log, ROUTER_V1, "New pid %d for initial pid %d\n", mpi.rank, initial_rank);
 
-					for (const auto &net : partition_nets[mpi.rank]) {
-
-						unroutable_sinks[net->local_id].clear();
-
-						//for (const auto &rs : routed_sinks[net->local_id]) {
-						//assert(find(begin(fixed_sinks[net->local_id]), end(fixed_sinks[net->local_id]), rs) == end(fixed_sinks[net->local_id]));
-
-						//zlog_level(delta_log, ROUTER_V3, "Fixing net %d sink %d\n", net->vpr_id, rs->id);
-
-						//fixed_sinks[net->local_id].push_back(rs);
-						//}
-					}
-
 					prev_num_overused_nodes = std::numeric_limits<unsigned long>::max();
-					has_unroutable_sinks = false;
 
 					for (int i = 0; i < num_vertices(partitioner.orig_g); ++i) {
 						congestion[i].recalc_occ = 0; 
 					}
 
 					for (const auto &net : partition_nets[mpi.rank]) {
-						if (!routed_sinks[net->local_id].empty()) {
-							zlog_level(delta_log, ROUTER_V3, "Checking net vpr id %d\n", net->vpr_id);
+						zlog_level(delta_log, ROUTER_V3, "Checking net vpr id %d\n", net->vpr_id);
 
-							check_route_tree(route_trees[net->local_id], *net, routed_sinks[net->local_id], partitioner.orig_g);
-							recalculate_occ(route_trees[net->local_id], partitioner.orig_g, congestion);
-						} else {
-							zlog_level(delta_log, ROUTER_V3, "Not checking net vpr id %d because of empty route tree\n", net->vpr_id);
-						}
+						check_route_tree(route_trees[net->local_id], *net, partitioner.orig_g);
+						recalculate_occ(route_trees[net->local_id], partitioner.orig_g, congestion);
 					}
 
 					sync_recalc_occ(congestion, num_vertices(partitioner.orig_g),  mpi.rank, mpi.comm_size, mpi.comm);
@@ -1161,6 +1278,18 @@ bool mpi_route_load_balanced(t_router_opts *opts, struct s_det_routing_arch det_
 						}
 						assert(valid);
 					}
+
+					for (int i = 0; i < mpi.comm_size; ++i) {
+						int error = MPI_Comm_dup(mpi.comm, &mpi.ibcast_comm[i]);
+						assert(error == MPI_SUCCESS);
+					}
+
+					for (int i = mpi.comm_size; i < mpi.comm_size*2; ++i) {
+						assert(mpi.pending_send_req[i] == MPI_REQUEST_NULL);
+						mpi.free_send_req_index.push(i);
+						assert(mpi.pending_send_data_ref_count[i] == 0);
+						mpi.free_send_data_index.push(i);
+					}
 				}
 			} 
 
@@ -1168,7 +1297,7 @@ bool mpi_route_load_balanced(t_router_opts *opts, struct s_det_routing_arch det_
 				//++current_level;
 				//assert(current_level < partitioner.result_pid_by_level.size());
 			//}
-        }
+        } /* feasible_routing */
 
         iter_time += clock::now()-iter_start;
 
@@ -1180,7 +1309,7 @@ bool mpi_route_load_balanced(t_router_opts *opts, struct s_det_routing_arch det_
 
 			vector<float> all_route_time(prev_comm_size, 0);
 
-			printf("\tRoute time: %lld %g ", route_time.count(), duration_cast<nanoseconds>(route_time).count() / 1e9);
+			printf("\tRoute time: %g ", duration_cast<nanoseconds>(route_time).count() / 1e9);
 			for (int i = 1; i < prev_comm_size; ++i) {
 				float f_route_time;
 				MPI_Recv(&f_route_time, 1, MPI_FLOAT, i, i, prev_comm, MPI_STATUS_IGNORE);
@@ -1191,7 +1320,7 @@ bool mpi_route_load_balanced(t_router_opts *opts, struct s_det_routing_arch det_
 			}
 			printf("\n");
 
-			printf("\t\tActual route time: %lld %g (%g) ", actual_route_time.count(), duration_cast<nanoseconds>(actual_route_time).count() / 1e9, duration_cast<nanoseconds>(actual_route_time).count() * 100.0 / duration_cast<nanoseconds>(route_time).count());
+			printf("\t\tActual route time: %g (%g) ", duration_cast<nanoseconds>(actual_route_time).count() / 1e9, duration_cast<nanoseconds>(actual_route_time).count() * 100.0 / duration_cast<nanoseconds>(route_time).count());
 			for (int i = 1; i < prev_comm_size; ++i) {
 				float f_actual_route_time;
 				MPI_Recv(&f_actual_route_time, 1, MPI_FLOAT, i, i, prev_comm, MPI_STATUS_IGNORE);
@@ -1209,37 +1338,51 @@ bool mpi_route_load_balanced(t_router_opts *opts, struct s_det_routing_arch det_
 			}
 			printf("\n");
 
-			float f_recv_time = duration_cast<nanoseconds>(mpi_perf.total_recv_time).count() / 1e9;
-			printf("\t\t\t\tRecv time: %g (%g) ", f_recv_time, f_recv_time * 100.0 / (duration_cast<nanoseconds>(route_time).count() / 1e9));
-			for (int i = 1; i < prev_comm_size; ++i) {
-				MPI_Recv(&f_recv_time, 1, MPI_FLOAT, i, i, prev_comm, MPI_STATUS_IGNORE);
-				printf("%g (%g) ", f_recv_time, f_recv_time * 100 / all_route_time[i]);
-			}
-			printf("\n");
+			//float f_recv_time = duration_cast<nanoseconds>(mpi_perf.total_recv_time).count() / 1e9;
+			//printf("\t\t\t\tRecv time: %g (%g) ", f_recv_time, f_recv_time * 100.0 / (duration_cast<nanoseconds>(route_time).count() / 1e9));
+			//for (int i = 1; i < prev_comm_size; ++i) {
+				//MPI_Recv(&f_recv_time, 1, MPI_FLOAT, i, i, prev_comm, MPI_STATUS_IGNORE);
+				//printf("%g (%g) ", f_recv_time, f_recv_time * 100 / all_route_time[i]);
+			//}
+			//printf("\n");
 
-			float f_iprobe_time = duration_cast<nanoseconds>(mpi_perf.total_iprobe_time).count() / 1e9;
-			printf("\t\t\t\tIprobe time: %g (%g) ", f_iprobe_time, f_iprobe_time * 100.0 / (duration_cast<nanoseconds>(route_time).count() / 1e9));
-			for (int i = 1; i < prev_comm_size; ++i) {
-				MPI_Recv(&f_iprobe_time, 1, MPI_FLOAT, i, i, prev_comm, MPI_STATUS_IGNORE);
-				printf("%g (%g) ", f_iprobe_time, f_iprobe_time * 100 / all_route_time[i]);
-			}
-			printf("\n");
+			//float f_iprobe_time = duration_cast<nanoseconds>(mpi_perf.total_iprobe_time).count() / 1e9;
+			//printf("\t\t\t\tIprobe time: %g (%g) ", f_iprobe_time, f_iprobe_time * 100.0 / (duration_cast<nanoseconds>(route_time).count() / 1e9));
+			//for (int i = 1; i < prev_comm_size; ++i) {
+				//MPI_Recv(&f_iprobe_time, 1, MPI_FLOAT, i, i, prev_comm, MPI_STATUS_IGNORE);
+				//printf("%g (%g) ", f_iprobe_time, f_iprobe_time * 100 / all_route_time[i]);
+			//}
+			//printf("\n");
 
-			float f_update_time = duration_cast<nanoseconds>(mpi_perf.total_update_time).count() / 1e9;
-			printf("\t\t\t\tUpdate time: %g (%g) ", f_update_time, f_update_time * 100.0 / (duration_cast<nanoseconds>(route_time).count() / 1e9));
-			for (int i = 1; i < prev_comm_size; ++i) {
-				MPI_Recv(&f_update_time, 1, MPI_FLOAT, i, i, prev_comm, MPI_STATUS_IGNORE);
-				printf("%g (%g) ", f_update_time, f_update_time * 100 / all_route_time[i]);
-			}
-			printf("\n");
-
-			printf("Total calls %d\n", mpi_perf.total_calls);
+			//float f_update_time = duration_cast<nanoseconds>(mpi_perf.total_update_time).count() / 1e9;
+			//printf("\t\t\t\tUpdate time: %g (%g) ", f_update_time, f_update_time * 100.0 / (duration_cast<nanoseconds>(route_time).count() / 1e9));
+			//for (int i = 1; i < prev_comm_size; ++i) {
+				//MPI_Recv(&f_update_time, 1, MPI_FLOAT, i, i, prev_comm, MPI_STATUS_IGNORE);
+				//printf("%g (%g) ", f_update_time, f_update_time * 100 / all_route_time[i]);
+			//}
+			//printf("\n");
 
 			float f_broadcast_time = duration_cast<nanoseconds>(mpi_perf.total_broadcast_time).count() / 1e9;
 			printf("\t\t\tBroadcast time: %g (%g) ", f_broadcast_time, f_broadcast_time * 100.0 / (duration_cast<nanoseconds>(route_time).count() / 1e9));
 			for (int i = 1; i < prev_comm_size; ++i) {
 				MPI_Recv(&f_broadcast_time, 1, MPI_FLOAT, i, i, prev_comm, MPI_STATUS_IGNORE);
 				printf("%g (%g) ", f_broadcast_time, f_broadcast_time * 100 / all_route_time[i]);
+			}
+			printf("\n");
+
+			float f_testsome_time = duration_cast<nanoseconds>(mpi_perf.total_send_testsome_time).count() / 1e9;
+			printf("\t\t\tSend testsome time: %g (%g) ", f_testsome_time, f_testsome_time * 100.0 / (duration_cast<nanoseconds>(route_time).count() / 1e9));
+			for (int i = 1; i < prev_comm_size; ++i) {
+				MPI_Recv(&f_testsome_time, 1, MPI_FLOAT, i, i, prev_comm, MPI_STATUS_IGNORE);
+				printf("%g (%g) ", f_testsome_time, f_testsome_time * 100 / all_route_time[i]);
+			}
+			printf("\n");
+
+			float f_last_progress_time = duration_cast<nanoseconds>(last_progress_time).count() / 1e9;
+			printf("\t\tLast progress time: %g (%g) ", f_last_progress_time, f_last_progress_time * 100.0 / (duration_cast<nanoseconds>(route_time).count() / 1e9));
+			for (int i = 1; i < prev_comm_size; ++i) {
+				MPI_Recv(&f_last_progress_time, 1, MPI_FLOAT, i, i, prev_comm, MPI_STATUS_IGNORE);
+				printf("%g (%g) ", f_last_progress_time, f_last_progress_time * 100 / all_route_time[i]);
 			}
 			printf("\n");
 
@@ -1287,17 +1430,23 @@ bool mpi_route_load_balanced(t_router_opts *opts, struct s_det_routing_arch det_
 			float f_sync_time = duration_cast<nanoseconds>(mpi_perf.total_sync_time).count() / 1e9;
 			MPI_Send(&f_sync_time, 1, MPI_FLOAT, 0, prev_rank, prev_comm);
 
-			float f_recv_time = duration_cast<nanoseconds>(mpi_perf.total_recv_time).count() / 1e9;
-			MPI_Send(&f_recv_time, 1, MPI_FLOAT, 0, prev_rank, prev_comm);
+			//float f_recv_time = duration_cast<nanoseconds>(mpi_perf.total_recv_time).count() / 1e9;
+			//MPI_Send(&f_recv_time, 1, MPI_FLOAT, 0, prev_rank, prev_comm);
 
-			float f_iprobe_time = duration_cast<nanoseconds>(mpi_perf.total_iprobe_time).count() / 1e9;
-			MPI_Send(&f_iprobe_time, 1, MPI_FLOAT, 0, prev_rank, prev_comm);
+			//float f_iprobe_time = duration_cast<nanoseconds>(mpi_perf.total_iprobe_time).count() / 1e9;
+			//MPI_Send(&f_iprobe_time, 1, MPI_FLOAT, 0, prev_rank, prev_comm);
 
-			float f_update_time = duration_cast<nanoseconds>(mpi_perf.total_update_time).count() / 1e9;
-			MPI_Send(&f_update_time, 1, MPI_FLOAT, 0, prev_rank, prev_comm);
+			//float f_update_time = duration_cast<nanoseconds>(mpi_perf.total_update_time).count() / 1e9;
+			//MPI_Send(&f_update_time, 1, MPI_FLOAT, 0, prev_rank, prev_comm);
 
 			float f_broadcast_time = duration_cast<nanoseconds>(mpi_perf.total_broadcast_time).count() / 1e9;
 			MPI_Send(&f_broadcast_time, 1, MPI_FLOAT, 0, prev_rank, prev_comm);
+
+			float f_testsome_time = duration_cast<nanoseconds>(mpi_perf.total_send_testsome_time).count() / 1e9;
+			MPI_Send(&f_testsome_time, 1, MPI_FLOAT, 0, prev_rank, prev_comm);
+
+			float f_last_progress_time = duration_cast<nanoseconds>(last_progress_time).count() / 1e9;
+			MPI_Send(&f_last_progress_time, 1, MPI_FLOAT, 0, prev_rank, prev_comm);
 
 			float f_last_sync_time = duration_cast<nanoseconds>(last_sync_time).count() / 1e9;
 			MPI_Send(&f_last_sync_time, 1, MPI_FLOAT, 0, prev_rank, prev_comm);
@@ -1357,33 +1506,47 @@ bool mpi_route_load_balanced(t_router_opts *opts, struct s_det_routing_arch det_
 			printf("%g (%g) ", f_total_sync_time, f_total_sync_time * 100.0 / all_total_route_time[i]);
 		}
 		printf("\n");
-		printf("\t\t\t\tTotal recv time: %g (%g) ", duration_cast<nanoseconds>(total_recv_time).count() / 1e9, duration_cast<nanoseconds>(total_recv_time).count() * 100.0 / duration_cast<nanoseconds>(total_route_time).count());
-		for (int i = 1; i < initial_comm_size; ++i) {
-			float f_total_recv_time;
-			MPI_Recv(&f_total_recv_time, 1, MPI_FLOAT, i, i, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
-			printf("%g (%g) ", f_total_recv_time, f_total_recv_time * 100.0 / all_total_route_time[i]);
-		}
-		printf("\n");
-		printf("\t\t\t\tTotal probe time: %g (%g) ", duration_cast<nanoseconds>(total_iprobe_time).count() / 1e9, duration_cast<nanoseconds>(total_iprobe_time).count() * 100.0 / duration_cast<nanoseconds>(total_route_time).count());
-		for (int i = 1; i < initial_comm_size; ++i) {
-			float f_total_iprobe_time;
-			MPI_Recv(&f_total_iprobe_time, 1, MPI_FLOAT, i, i, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
-			printf("%g (%g) ", f_total_iprobe_time, f_total_iprobe_time * 100.0 / all_total_route_time[i]);
-		}
-		printf("\n");
-		printf("\t\t\t\tTotal update time: %g (%g) ", duration_cast<nanoseconds>(total_update_time).count() / 1e9, duration_cast<nanoseconds>(total_update_time).count() * 100.0 / duration_cast<nanoseconds>(total_route_time).count());
-		for (int i = 1; i < initial_comm_size; ++i) {
-			float f_total_update_time;
-			MPI_Recv(&f_total_update_time, 1, MPI_FLOAT, i, i, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
-			printf("%g (%g) ", f_total_update_time, f_total_update_time * 100.0 / all_total_route_time[i]);
-		}
-		printf("\n");
+		//printf("\t\t\t\tTotal recv time: %g (%g) ", duration_cast<nanoseconds>(total_recv_time).count() / 1e9, duration_cast<nanoseconds>(total_recv_time).count() * 100.0 / duration_cast<nanoseconds>(total_route_time).count());
+		//for (int i = 1; i < initial_comm_size; ++i) {
+			//float f_total_recv_time;
+			//MPI_Recv(&f_total_recv_time, 1, MPI_FLOAT, i, i, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+			//printf("%g (%g) ", f_total_recv_time, f_total_recv_time * 100.0 / all_total_route_time[i]);
+		//}
+		//printf("\n");
+		//printf("\t\t\t\tTotal probe time: %g (%g) ", duration_cast<nanoseconds>(total_iprobe_time).count() / 1e9, duration_cast<nanoseconds>(total_iprobe_time).count() * 100.0 / duration_cast<nanoseconds>(total_route_time).count());
+		//for (int i = 1; i < initial_comm_size; ++i) {
+			//float f_total_iprobe_time;
+			//MPI_Recv(&f_total_iprobe_time, 1, MPI_FLOAT, i, i, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+			//printf("%g (%g) ", f_total_iprobe_time, f_total_iprobe_time * 100.0 / all_total_route_time[i]);
+		//}
+		//printf("\n");
+		//printf("\t\t\t\tTotal update time: %g (%g) ", duration_cast<nanoseconds>(total_update_time).count() / 1e9, duration_cast<nanoseconds>(total_update_time).count() * 100.0 / duration_cast<nanoseconds>(total_route_time).count());
+		//for (int i = 1; i < initial_comm_size; ++i) {
+			//float f_total_update_time;
+			//MPI_Recv(&f_total_update_time, 1, MPI_FLOAT, i, i, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+			//printf("%g (%g) ", f_total_update_time, f_total_update_time * 100.0 / all_total_route_time[i]);
+		//}
+		//printf("\n");
 		printf("Total calls %d\n", total_calls);
 		printf("\t\t\tTotal broadcast time: %g (%g) ", duration_cast<nanoseconds>(total_broadcast_time).count() / 1e9, duration_cast<nanoseconds>(total_broadcast_time).count() * 100.0 / duration_cast<nanoseconds>(total_route_time).count());
 		for (int i = 1; i < initial_comm_size; ++i) {
 			float f_total_broadcast_time;
 			MPI_Recv(&f_total_broadcast_time, 1, MPI_FLOAT, i, i, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
 			printf("%g (%g) ", f_total_broadcast_time, f_total_broadcast_time * 100.0 / all_total_route_time[i]);
+		}
+		printf("\n");
+		printf("\t\t\tTotal send testsome time: %g (%g) ", duration_cast<nanoseconds>(total_send_testsome_time).count() / 1e9, duration_cast<nanoseconds>(total_send_testsome_time).count() * 100.0 / duration_cast<nanoseconds>(total_route_time).count());
+		for (int i = 1; i < initial_comm_size; ++i) {
+			float f_total_send_testsome_time;
+			MPI_Recv(&f_total_send_testsome_time, 1, MPI_FLOAT, i, i, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+			printf("%g (%g) ", f_total_send_testsome_time, f_total_send_testsome_time * 100.0 / all_total_route_time[i]);
+		}
+		printf("\n");
+		printf("\t\tTotal last progress time: %g (%g) ", duration_cast<nanoseconds>(total_last_progress_time).count() / 1e9, duration_cast<nanoseconds>(total_last_progress_time).count() * 100.0 / duration_cast<nanoseconds>(total_route_time).count());
+		for (int i = 1; i < initial_comm_size; ++i) {
+			float f_total_last_progress_time;
+			MPI_Recv(&f_total_last_progress_time, 1, MPI_FLOAT, i, i, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+			printf("%g (%g) ", f_total_last_progress_time, f_total_last_progress_time * 100.0 / all_total_route_time[i]);
 		}
 		printf("\n");
 		printf("\t\tTotal last sync time: %g (%g) ", duration_cast<nanoseconds>(total_last_sync_time).count() / 1e9, duration_cast<nanoseconds>(total_last_sync_time).count() * 100.0 / duration_cast<nanoseconds>(total_route_time).count());
@@ -1417,17 +1580,23 @@ bool mpi_route_load_balanced(t_router_opts *opts, struct s_det_routing_arch det_
 		float f_total_sync_time = duration_cast<nanoseconds>(total_sync_time).count() / 1e9;
 		MPI_Send(&f_total_sync_time, 1, MPI_FLOAT, 0, initial_rank, MPI_COMM_WORLD);
 
-		float f_total_recv_time = duration_cast<nanoseconds>(total_recv_time).count() / 1e9;
-		MPI_Send(&f_total_recv_time, 1, MPI_FLOAT, 0, initial_rank, MPI_COMM_WORLD);
+		//float f_total_recv_time = duration_cast<nanoseconds>(total_recv_time).count() / 1e9;
+		//MPI_Send(&f_total_recv_time, 1, MPI_FLOAT, 0, initial_rank, MPI_COMM_WORLD);
 
-		float f_total_iprobe_time = duration_cast<nanoseconds>(total_iprobe_time).count() / 1e9;
-		MPI_Send(&f_total_iprobe_time, 1, MPI_FLOAT, 0, initial_rank, MPI_COMM_WORLD);
+		//float f_total_iprobe_time = duration_cast<nanoseconds>(total_iprobe_time).count() / 1e9;
+		//MPI_Send(&f_total_iprobe_time, 1, MPI_FLOAT, 0, initial_rank, MPI_COMM_WORLD);
 
-		float f_total_update_time = duration_cast<nanoseconds>(total_update_time).count() / 1e9;
-		MPI_Send(&f_total_update_time, 1, MPI_FLOAT, 0, initial_rank, MPI_COMM_WORLD);
+		//float f_total_update_time = duration_cast<nanoseconds>(total_update_time).count() / 1e9;
+		//MPI_Send(&f_total_update_time, 1, MPI_FLOAT, 0, initial_rank, MPI_COMM_WORLD);
 
 		float f_total_broadcast_time = duration_cast<nanoseconds>(total_broadcast_time).count() / 1e9;
 		MPI_Send(&f_total_broadcast_time, 1, MPI_FLOAT, 0, initial_rank, MPI_COMM_WORLD);
+
+		float f_total_send_testsome_time = duration_cast<nanoseconds>(total_send_testsome_time).count() / 1e9;
+		MPI_Send(&f_total_send_testsome_time, 1, MPI_FLOAT, 0, initial_rank, MPI_COMM_WORLD);
+
+		float f_total_last_progress_time = duration_cast<nanoseconds>(total_last_progress_time).count() / 1e9;
+		MPI_Send(&f_total_last_progress_time, 1, MPI_FLOAT, 0, initial_rank, MPI_COMM_WORLD);
 
 		float f_total_last_sync_time = duration_cast<nanoseconds>(total_last_sync_time).count() / 1e9;
 		MPI_Send(&f_total_last_sync_time, 1, MPI_FLOAT, 0, initial_rank, MPI_COMM_WORLD);

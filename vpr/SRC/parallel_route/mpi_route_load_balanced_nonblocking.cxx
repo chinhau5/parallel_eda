@@ -59,7 +59,7 @@ struct net_graph_edge_prop {
 	int weight;
 };
 
-void partition(vector<net_t> &nets, vector<pair<box, net_t *>> &sorted_nets, const fast_graph_t<net_graph_vertex_prop, net_graph_edge_prop> &net_g, bool load_balanced, int num_partitions, int current_level, int initial_comm_size, vector<int> &net_partition_id, vector<vector<net_t *>> &partition_nets)
+static void partition(vector<net_t> &nets, vector<pair<box, net_t *>> &sorted_nets, const fast_graph_t<net_graph_vertex_prop, net_graph_edge_prop> &net_g, bool load_balanced, int num_partitions, int current_level, int initial_comm_size, vector<int> &net_partition_id, vector<vector<net_t *>> &partition_nets)
 {
 	if (load_balanced) {
 		assert(nets.size() == num_vertices(net_g));
@@ -93,7 +93,7 @@ void partition(vector<net_t> &nets, vector<pair<box, net_t *>> &sorted_nets, con
 	}
 }
 
-void repartition(bool load_balanced, vector<net_t> &nets, vector<pair<box, net_t *>> &sorted_nets, const fast_graph_t<net_graph_vertex_prop, net_graph_edge_prop> &net_g, vector<int> &net_partition_id, vector<vector<net_t *>> &partition_nets, const RRGraph &g, vector<route_tree_t> &route_trees, vector<vector<RRNode>> &net_route_trees, vector<vector<sink_t *>> &routed_sinks, t_net_timing *net_timing, mpi_context_t &mpi, int current_level, int initial_comm_size)
+static void repartition(bool load_balanced, vector<net_t> &nets, vector<pair<box, net_t *>> &sorted_nets, const fast_graph_t<net_graph_vertex_prop, net_graph_edge_prop> &net_g, vector<int> &net_partition_id, vector<vector<net_t *>> &partition_nets, const RRGraph &g, vector<route_tree_t> &route_trees, vector<vector<RRNode>> &net_route_trees, vector<vector<sink_t *>> &routed_sinks, t_net_timing *net_timing, mpi_context_t &mpi, int current_level, int initial_comm_size)
 {
 	vector<int> old_net_partition_id = net_partition_id;
 

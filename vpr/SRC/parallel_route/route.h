@@ -225,13 +225,36 @@ typedef struct broadcast_data_t {
 	int data_ref;
 } broadcast_data_t;
 
+typedef struct request_meta_t {
+	int data_index;
+	int data_offset;
+	int data_count;
+} request_meta_t;
+
 typedef struct mpi_context_t {
 	MPI_Comm comm;
 	int rank;
 	int comm_size;
 
-	vector<int> all_data_sizes;
+	vector<MPI_Comm> ibcast_comm;
+	vector<int> max_ibcast_count;
+
 	vector<vector<int> *> pending_send_data_nbc;
+	vector<int> pending_send_data_ref_count;
+
+	vector<MPI_Request> pending_send_req;
+	vector<request_meta_t> pending_req_meta;
+	vector<int> completed_indices;
+	int num_pending_reqs;
+
+	vector<bool> received_last_update; 
+
+	queue<int> free_send_data_index;
+	queue<int> free_send_req_index;
+
+	// -----------
+
+	vector<int> all_data_sizes;
 	vector<int> packet_id;
 
 	int num_broadcasts_required;
@@ -243,7 +266,6 @@ typedef struct mpi_context_t {
 	int max_send_req_size;
 
 	vector<std::shared_ptr<vector<node_update_t>>> pending_send_data;
-	vector<MPI_Request> pending_send_req;
 	int send_req_queue_size;
 	int send_req_queue_head;
 	int send_req_queue_tail;
@@ -255,12 +277,9 @@ typedef struct mpi_context_t {
 	vector<vector<int>> pending_send_req_refs;
 
 	vector<pair<vector<int> *, int>> pending_send_data_raw;
-	vector<int> pending_send_req_data_ref;
 	vector<int> pending_send_req_meta_data_ref;
 
 	vector<int> completed_send_indices;
-	queue<int> free_send_data_index;
-	queue<int> free_send_req_index;
 
 	vector<vector<std::shared_ptr<vector<node_update_t>>>> pending_recv_data; 
 	vector<vector<MPI_Request>> pending_recv_req; 
@@ -270,8 +289,6 @@ typedef struct mpi_context_t {
 
 	vector<int> completed_recv_indices;
 	vector<MPI_Status> completed_recv_statuses;
-
-	vector<bool> received_last_update; 
 
 	int buffer_size;
 } mpi_context_t;

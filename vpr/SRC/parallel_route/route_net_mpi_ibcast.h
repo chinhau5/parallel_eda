@@ -1,0 +1,12 @@
+#ifndef ROUTE_NONBLOCKING_COLLECTIVE
+#define ROUTE_NONBLOCKING_COLLECTIVE
+
+enum class IbcastPacketID : unsigned int {
+	RIP_UP_ALL,
+	RIP_UP,
+	ROUTE,
+	TRAILER,
+	NUM_PACKET_IDS
+};
+
+#endif

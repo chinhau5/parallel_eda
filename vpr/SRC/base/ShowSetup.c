@@ -245,6 +245,7 @@ static void ShowRouterOpts(INP struct s_router_opts RouterOpts) {
 		vpr_printf(TIO_MESSAGE_INFO, "RouterOpts.rip_up_always: %s\n", RouterOpts.rip_up_always ? "on" : "off");
 		vpr_printf(TIO_MESSAGE_INFO, "RouterOpts.load_balanced: %s\n", RouterOpts.load_balanced ? "on" : "off");
 		vpr_printf(TIO_MESSAGE_INFO, "RouterOpts.sync_only_once: %s\n", RouterOpts.sync_only_once ? "on" : "off");
+		vpr_printf(TIO_MESSAGE_INFO, "RouterOpts.progress_freq: %d\n", RouterOpts.progress_freq);
 
 		vpr_printf(TIO_MESSAGE_INFO, "RouterOpts.scheduler: ");
 		switch (RouterOpts.scheduler) {

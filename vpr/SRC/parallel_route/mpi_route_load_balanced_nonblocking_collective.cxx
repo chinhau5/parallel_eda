@@ -45,7 +45,7 @@ void init_route_structs(const RRGraph &g, const vector<net_t> &nets, const vecto
 void broadcast_rip_up_all_collective(int net_id, mpi_context_t *mpi);
 void progress_broadcast(const vector<net_t> &nets, congestion_t *congestion, const RRGraph &g, float pres_fac, vector<vector<RRNode>> &net_route_trees, mpi_context_t *mpi);
 void progress_broadcast_blocking(const vector<net_t> &nets, congestion_t *congestion, const RRGraph &g, float pres_fac, vector<vector<RRNode>> &net_route_trees, mpi_context_t *mpi);
-void route_net_mpi_send_recv_nonblocking_collective(const RRGraph &g, int vpr_id, int net_id, const source_t *source, const vector<sink_t *> &sinks, const route_parameters_t &params, const vector<net_t> &nets, route_state_t *state, congestion_t *congestion, route_tree_t &rt, t_net_timing &net_timing, vector<vector<RRNode>> &net_route_trees, mpi_context_t *mpi, perf_t *perf, mpi_perf_t *mpi_perf, bool delayed_progress);
+void route_net_mpi_send_recv_nonblocking_collective(const RRGraph &g, int vpr_id, int net_id, const source_t *source, const vector<sink_t *> &sinks, const t_router_opts *params, float pres_fac, const vector<net_t> &nets, const vector<vector<net_t *>> &partition_nets, int current_net_index, route_state_t *state, congestion_t *congestion, route_tree_t &rt, t_net_timing &net_timing, vector<vector<RRNode>> &net_route_trees, mpi_context_t *mpi, perf_t *perf, mpi_perf_t *mpi_perf, bool delayed_progress);
 int get_free_buffer(mpi_context_t *mpi, int size);
 void broadcast_dynamic(int data_index, int size, mpi_context_t *mpi);
 
@@ -59,8 +59,14 @@ struct net_graph_edge_prop {
 	int weight;
 };
 
-void partition(vector<net_t> &nets, vector<pair<box, net_t *>> &sorted_nets, const fast_graph_t<net_graph_vertex_prop, net_graph_edge_prop> &net_g, bool load_balanced, int num_partitions, int current_level, int initial_comm_size, vector<int> &net_partition_id, vector<vector<net_t *>> &partition_nets)
+static void partition(vector<net_t> &nets, vector<pair<box, net_t *>> &sorted_nets, const fast_graph_t<net_graph_vertex_prop, net_graph_edge_prop> &net_g, bool load_balanced, int num_partitions, int current_level, int initial_comm_size, vector<int> &net_partition_id, vector<vector<net_t *>> &partition_nets)
 {
+	assert(partition_nets.size() == num_partitions);
+
+	for (int i = 0; i < num_partitions; ++i) {
+		assert(partition_nets[i].empty());
+	}
+
 	if (load_balanced) {
 		assert(nets.size() == num_vertices(net_g));
 
@@ -69,31 +75,28 @@ void partition(vector<net_t> &nets, vector<pair<box, net_t *>> &sorted_nets, con
 		} else {
 			std::fill(begin(net_partition_id), end(net_partition_id), 0);
 		}
+
+		for (int i = 0; i < nets.size(); ++i) {
+			assert(net_partition_id[i] < partition_nets.size() && net_partition_id[i] >= 0);
+			assert(i == nets[i].local_id);
+			partition_nets[net_partition_id[i]].push_back(&nets[i]);
+		}
 	} else {
 		for (int rank = 0; rank < num_partitions; ++rank) {
 			for (int i = rank*pow(2, current_level); i < sorted_nets.size(); i += initial_comm_size) {
 				for (int j = 0; j < pow(2, current_level) && i+j < sorted_nets.size(); ++j) {
-					zlog_level(delta_log, ROUTER_V3, "Rank %d net index %d\n", rank, i+j);
+					zlog_level(delta_log, ROUTER_V3, "Rank %d net index %d num sinks %d\n", rank, i+j, sorted_nets[i+j].second->sinks.size());
+
 					net_partition_id[sorted_nets[i+j].second->local_id] = rank;
+
+					partition_nets[rank].push_back(sorted_nets[i+j].second);
 				}
 			}
 		}
 	}
-
-	assert(partition_nets.size() == num_partitions);
-
-	for (int i = 0; i < num_partitions; ++i) {
-		assert(partition_nets[i].empty());
-	}
-
-	for (int i = 0; i < nets.size(); ++i) {
-		assert(net_partition_id[i] < partition_nets.size() && net_partition_id[i] >= 0);
-		assert(i == nets[i].local_id);
-		partition_nets[net_partition_id[i]].push_back(&nets[i]);
-	}
 }
 
-void repartition(bool load_balanced, vector<net_t> &nets, vector<pair<box, net_t *>> &sorted_nets, const fast_graph_t<net_graph_vertex_prop, net_graph_edge_prop> &net_g, vector<int> &net_partition_id, vector<vector<net_t *>> &partition_nets, const RRGraph &g, vector<route_tree_t> &route_trees, vector<vector<RRNode>> &net_route_trees, t_net_timing *net_timing, mpi_context_t &mpi, int current_level, int initial_comm_size)
+static void repartition(bool load_balanced, vector<net_t> &nets, vector<pair<box, net_t *>> &sorted_nets, const fast_graph_t<net_graph_vertex_prop, net_graph_edge_prop> &net_g, vector<int> &net_partition_id, vector<vector<net_t *>> &partition_nets, const RRGraph &g, vector<route_tree_t> &route_trees, vector<vector<RRNode>> &net_route_trees, t_net_timing *net_timing, mpi_context_t &mpi, int current_level, int initial_comm_size)
 {
 	vector<int> old_net_partition_id = net_partition_id;
 
@@ -421,7 +424,8 @@ bool mpi_route_load_balanced_nonblocking_collective(t_router_opts *opts, struct 
     params.astar_fac = opts->astar_fac;
     params.max_criticality = opts->max_criticality;
     params.bend_cost = opts->bend_cost;
-	params.pres_fac = opts->first_iter_pres_fac; /* Typically 0 -> ignore cong. */
+
+	float pres_fac = opts->first_iter_pres_fac; /* Typically 0 -> ignore cong. */
 
 	if (mpi.rank != 0) {
 		free_circuit();
@@ -688,6 +692,8 @@ bool mpi_route_load_balanced_nonblocking_collective(t_router_opts *opts, struct 
 
 		}
 
+		int current_net_index = 0;
+
 		for (auto &net : partition_nets[mpi.rank]) {
 			auto net_route_start = clock::now();
 
@@ -725,8 +731,8 @@ bool mpi_route_load_balanced_nonblocking_collective(t_router_opts *opts, struct 
 
 				int num_nodes_ripped = 0;
 
-				route_tree_rip_up_marked_mpi_collective(route_trees[net->local_id], partitioner.orig_g, congestion, params.pres_fac, [&] (const RRNode &rr_node) -> void {
-						update_one_cost_internal(rr_node, partitioner.orig_g, congestion, -1, params.pres_fac); 
+				route_tree_rip_up_marked_mpi_collective(route_trees[net->local_id], partitioner.orig_g, congestion, pres_fac, [&] (const RRNode &rr_node) -> void {
+						update_one_cost_internal(rr_node, partitioner.orig_g, congestion, -1, pres_fac); 
 
 						buffer[1+num_nodes_ripped] = rr_node;
 
@@ -759,7 +765,7 @@ bool mpi_route_load_balanced_nonblocking_collective(t_router_opts *opts, struct 
 
 				auto progress_start = clock::now();
 
-				progress_broadcast(nets, congestion, partitioner.orig_g, params.pres_fac, net_route_trees, &mpi);
+				progress_broadcast(nets, congestion, partitioner.orig_g, pres_fac, net_route_trees, &mpi);
 
 				mpi_perf.total_send_testsome_time += clock::now()-progress_start;
 			} 
@@ -772,7 +778,7 @@ bool mpi_route_load_balanced_nonblocking_collective(t_router_opts *opts, struct 
 			//auto route_start = clock::now();
 
 			if (!sinks.empty()) {
-				route_net_mpi_send_recv_nonblocking_collective(partitioner.orig_g, net->vpr_id, net->local_id, &net->source, sinks, params, nets, states, congestion, route_trees[net->local_id], net_timing[net->vpr_id], net_route_trees, &mpi, &perf, &mpi_perf, false);
+				route_net_mpi_send_recv_nonblocking_collective(partitioner.orig_g, net->vpr_id, net->local_id, &net->source, sinks, opts, pres_fac, nets, partition_nets, current_net_index, states, congestion, route_trees[net->local_id], net_timing[net->vpr_id], net_route_trees, &mpi, &perf, &mpi_perf, false);
 
 				++thread_num_nets_routed;
 				++thread_num_nets_to_route;
@@ -786,6 +792,7 @@ bool mpi_route_load_balanced_nonblocking_collective(t_router_opts *opts, struct 
 			net_route_time[iter][net->local_id] = clock::now()-net_route_start;
 
 			//local_perf.total_route_time += clock::now()-rip_up_start;
+			++current_net_index;
 		}
 
 		actual_route_time = clock::now() - route_start;
@@ -800,7 +807,7 @@ bool mpi_route_load_balanced_nonblocking_collective(t_router_opts *opts, struct 
 
 			broadcast_dynamic(data_index, 1, &mpi);
 			--mpi.num_broadcasts_required;
-			progress_broadcast(nets, congestion, partitioner.orig_g, params.pres_fac, net_route_trees, &mpi);
+			progress_broadcast(nets, congestion, partitioner.orig_g, pres_fac, net_route_trees, &mpi);
 
 			zlog_level(delta_log, ROUTER_V3, "Num broadcasts required %d\n", mpi.num_broadcasts_required);
 		}
@@ -810,7 +817,7 @@ bool mpi_route_load_balanced_nonblocking_collective(t_router_opts *opts, struct 
 		/* although the queue is empty, there might be a last active broadcast req */
 		while (mpi.active_req != MPI_REQUEST_NULL || !q_empty(&mpi.pending_bcast_data_q)) {
 			zlog_level(delta_log, ROUTER_V3, "Queue size %d\n", q_size(&mpi.pending_bcast_data_q));
-			progress_broadcast_blocking(nets, congestion, partitioner.orig_g, params.pres_fac, net_route_trees, &mpi);
+			progress_broadcast_blocking(nets, congestion, partitioner.orig_g, pres_fac, net_route_trees, &mpi);
 		}
 		last_progress_time += clock::now()-last_progress_start;
 
@@ -862,7 +869,7 @@ bool mpi_route_load_balanced_nonblocking_collective(t_router_opts *opts, struct 
 							//added_nodes.push_back(node.rr_node_id);
 						//}
 					//}
-					//update_one_cost(partitioner.orig_g, congestion, added_nodes.begin(), added_nodes.end(), 1, params.pres_fac, false, nullptr);
+					//update_one_cost(partitioner.orig_g, congestion, added_nodes.begin(), added_nodes.end(), 1, pres_fac, false, nullptr);
 				//}
 			//}
 		//}
@@ -1114,17 +1121,17 @@ bool mpi_route_load_balanced_nonblocking_collective(t_router_opts *opts, struct 
 		auto update_cost_start = clock::now();
 
 		if (iter == 0) {
-			params.pres_fac = opts->initial_pres_fac;
-			//update_costs_mpi(partitioner.orig_g[0], partitioner.result_pid_by_level[current_level], mpi.rank, congestion, win, params.pres_fac, 0);
-			update_costs(partitioner.orig_g, congestion, params.pres_fac, 0);
+			pres_fac = opts->initial_pres_fac;
+			//update_costs_mpi(partitioner.orig_g[0], partitioner.result_pid_by_level[current_level], mpi.rank, congestion, win, pres_fac, 0);
+			update_costs(partitioner.orig_g, congestion, pres_fac, 0);
 		} else {
-			params.pres_fac *= opts->pres_fac_mult;
+			pres_fac *= opts->pres_fac_mult;
 
 			/* Avoid overflow for high iteration counts, even if acc_cost is big */
-			params.pres_fac = std::min(params.pres_fac, static_cast<float>(HUGE_POSITIVE_FLOAT / 1e5));
+			pres_fac = std::min(pres_fac, static_cast<float>(HUGE_POSITIVE_FLOAT / 1e5));
 
-			//update_costs_mpi(partitioner.orig_g[0], partitioner.result_pid_by_level[current_level], mpi.rank, congestion, win, params.pres_fac, opts->acc_fac);
-			update_costs(partitioner.orig_g, congestion, params.pres_fac, opts->acc_fac);
+			//update_costs_mpi(partitioner.orig_g[0], partitioner.result_pid_by_level[current_level], mpi.rank, congestion, win, pres_fac, opts->acc_fac);
+			update_costs(partitioner.orig_g, congestion, pres_fac, opts->acc_fac);
 		}
 
 		update_cost_time = clock::now()-update_cost_start;
@@ -1336,8 +1343,6 @@ bool mpi_route_load_balanced_nonblocking_collective(t_router_opts *opts, struct 
 				//printf("%g (%g) ", f_update_time, f_update_time * 100 / all_route_time[i]);
 			//}
 			//printf("\n");
-
-			printf("Total calls %d\n", mpi_perf.total_calls);
 
 			float f_broadcast_time = duration_cast<nanoseconds>(mpi_perf.total_broadcast_time).count() / 1e9;
 			printf("\t\t\tBroadcast time: %g (%g) ", f_broadcast_time, f_broadcast_time * 100.0 / (duration_cast<nanoseconds>(route_time).count() / 1e9));

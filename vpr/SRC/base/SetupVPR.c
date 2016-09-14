@@ -526,6 +526,11 @@ static void SetupRouterOpts(INP t_options Options, INP boolean TimingEnabled,
 	if (Options.Count[OT_SYNC_ONLY_ONCE]) {
 		RouterOpts->sync_only_once = Options.sync_only_once;
 	}
+
+	RouterOpts->progress_freq = 8;
+	if (Options.Count[OT_PROGRESS_FREQ]) {
+		RouterOpts->progress_freq = Options.progress_freq;
+	}
 }
 
 static void SetupAnnealSched(INP t_options Options,
