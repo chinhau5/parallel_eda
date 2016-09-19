@@ -2823,7 +2823,7 @@ void sync_net_delay(const vector<pair<box, net_t *>> &nets_to_route, int procid,
 	delete [] all_delays;
 }
 
-void recv_route_tree(net_t *net, const RRGraph &g, vector<route_tree_t> &route_trees, t_net_timing *net_timing, int from_procid, MPI_Comm comm)
+void recv_route_tree(const net_t *net, const RRGraph &g, vector<route_tree_t> &route_trees, t_net_timing *net_timing, int from_procid, MPI_Comm comm)
 {
 	assert(route_tree_empty(route_trees[net->local_id]));
 

@@ -13,6 +13,8 @@ struct myclock {
 		timespec time;
 #ifdef __linux__
 		assert(!clock_gettime(CLOCK_MONOTONIC, &time));
+#else
+		assert(false);
 #endif
 		return time_point(chrono::nanoseconds((time.tv_sec * (int)1e9) + time.tv_nsec));
 	}

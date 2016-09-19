@@ -238,6 +238,7 @@ typedef struct mpi_context_t {
 
 	vector<MPI_Comm> ibcast_comm;
 	vector<int> max_ibcast_count;
+	int bit_width;
 
 	vector<vector<int> *> pending_send_data_nbc;
 	vector<int> pending_send_data_ref_count;

@@ -287,6 +287,8 @@ int main(int argc, char **argv) {
 	t_arch Arch;
 	t_vpr_setup vpr_setup;
 	clock_t entire_flow_begin,entire_flow_end;
+	
+	print_context(getpid());
 
 #if defined(__linux__) && defined(WITH_NUMA)
 	vector<int> cpuset;
@@ -362,7 +364,8 @@ int main(int argc, char **argv) {
 #endif
 	int rank;
 	MPI_Comm_rank(MPI_COMM_WORLD, &rank);
-	print_context(rank);
+
+	print_context(getpid());
 
 	/*mtrace();*/
 

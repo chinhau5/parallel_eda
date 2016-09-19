@@ -520,6 +520,14 @@ const fast_edge_t<EdgeProperties> &get_edge(const fast_graph_t<VertexProperties,
 }
 
 template<typename VertexProperties, typename EdgeProperties>
+const fast_edge_t<EdgeProperties> &get_edge_by_index(const fast_graph_t<VertexProperties, EdgeProperties> &g, int n, int i)
+{
+	const auto &v = g.vertices[n];
+	assert(i < v.edges.size());
+	return v.edges[i];
+}
+
+template<typename VertexProperties, typename EdgeProperties>
 bool has_edge(const fast_graph_t<VertexProperties, EdgeProperties> &g, int a, int b)
 {
 	const auto &v_a = g.vertices[a];
