@@ -34,6 +34,7 @@
 #endif
 #include <unistd.h>
 #include <malloc.h>
+#include <sys/resource.h>
 #endif
 
 /*#include "vt_user.h"*/
@@ -340,6 +341,17 @@ int main(int argc, char **argv) {
 		printf("malloc_hook before mpi_init: %s (%lX)\n", func_name.c_str(), __malloc_hook);
 	} else {
 		printf("malloc_hook before mpi_init not found: %lX\n", __malloc_hook);
+	}
+#endif
+
+#if defined(__linux__) 
+	struct rlimit lim;
+	lim.rlim_cur = 10240*1024;
+	lim.rlim_max = 10240*1024;
+
+	if (setrlimit(RLIMIT_STACK, &lim) != 0) {
+		printf("failed to set limit\n");
+		return -1;
 	}
 #endif
 

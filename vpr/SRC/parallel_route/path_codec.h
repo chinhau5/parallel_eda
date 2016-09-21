@@ -53,7 +53,7 @@ int encoder_get_num_words(path_encoder_t &enc)
 }
 
 typedef struct path_decoder_t  {
-	unsigned int *buffer;
+	const unsigned int *buffer;
 	int word_offset;
 	int bit_offset;
 	int bit_width;
@@ -61,7 +61,7 @@ typedef struct path_decoder_t  {
 	bool has_data;
 } path_decoder_t;
 
-void decoder_init(path_decoder_t &enc, unsigned int *buffer, int bit_width)
+void decoder_init(path_decoder_t &enc, const unsigned int *buffer, int bit_width)
 {
 	enc.buffer = buffer;
 	enc.word_offset = 0;
@@ -106,6 +106,11 @@ unsigned int decoder_read(path_decoder_t &enc)
 	}
 
 	return val;
+}
+
+int decoder_get_num_words(path_decoder_t &enc)
+{
+	return enc.bit_offset == 0 ? enc.word_offset : enc.word_offset+1;
 }
 
 //bool decoder_has_data(path_decoder_t &enc)

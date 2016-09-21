@@ -507,7 +507,7 @@ static void SetupRouterOpts(INP t_options Options, INP boolean TimingEnabled,
 		RouterOpts->work_conserving = Options.work_conserving;
 	}
 
-	RouterOpts->large_bb = FALSE;
+	RouterOpts->large_bb = TRUE;
 	if (Options.Count[OT_LARGE_BB]) {
 		RouterOpts->large_bb = Options.large_bb;
 	}
@@ -517,7 +517,7 @@ static void SetupRouterOpts(INP t_options Options, INP boolean TimingEnabled,
 		RouterOpts->rip_up_always = Options.rip_up_always;
 	}
 
-	RouterOpts->load_balanced = TRUE;
+	RouterOpts->load_balanced = FALSE;
 	if (Options.Count[OT_LOAD_BALANCED]) {
 		RouterOpts->load_balanced = Options.load_balanced;
 	}

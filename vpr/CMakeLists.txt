@@ -92,6 +92,7 @@ set(srcs
 	#SRC/parallel_route/route_net_mpi_send_recv_nonblocking.cxx
 	#SRC/parallel_route/route_net_mpi_send_recv_nonblocking_collective.cxx
 	SRC/parallel_route/route_net_mpi_ibcast.cxx
+	SRC/parallel_route/route_net_mpi_nonblocking_send_recv_encoded.cxx
 	#SRC/parallel_route/route_net_with_fine_grain_lock.cxx
 	#SRC/parallel_route/route_net_deterministic.cxx
 	SRC/parallel_route/init.cxx
@@ -111,6 +112,7 @@ set(srcs
 	#SRC/parallel_route/mpi_route_load_balanced_nonblocking.cxx
 	#SRC/parallel_route/mpi_route_load_balanced_nonblocking_collective.cxx
 	SRC/parallel_route/mpi_route_load_balanced_ibcast.cxx
+	SRC/parallel_route/mpi_route_load_balanced_nonblocking_send_recv_encoded.cxx
 	#SRC/parallel_route/astar.cxx
 	#SRC/parallel_route/partitioning_route.c
 	SRC/parallel_route/route_tree.c

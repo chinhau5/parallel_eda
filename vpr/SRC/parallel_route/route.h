@@ -244,6 +244,7 @@ typedef struct mpi_context_t {
 	vector<int> pending_send_data_ref_count;
 
 	vector<MPI_Request> pending_send_req;
+	vector<int> pending_send_req_data_ref;
 	vector<request_meta_t> pending_req_meta;
 	vector<int> completed_indices;
 	int num_pending_reqs;
