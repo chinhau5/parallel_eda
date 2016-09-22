@@ -249,7 +249,7 @@ string find_func_name(const mem_map_entry_t *entry, unsigned long addr)
 #endif
 
 /*extern void *(*__malloc_hook)(size_t size, const void *caller);*/
-void print_context(int rank)
+void print_context(int pid, int rank)
 {
 #if defined(__linux__)
 	/*pid_t pid = getpid();*/
@@ -264,12 +264,12 @@ void print_context(int rank)
 		/*printf("%s", buffer);*/
 	/*}*/
 
-	printf("[%d] LSB_BIND_CPU_LIST: %s\n", rank, getenv("LSB_BIND_CPU_LIST"));
+	printf("[%d,%d] LSB_BIND_CPU_LIST: %s\n", pid, rank, getenv("LSB_BIND_CPU_LIST"));
 
 	cpu_set_t cpuset;
 	assert(sched_getaffinity(0, sizeof(cpu_set_t), &cpuset) == 0);
 
-	printf("[%d] cpu affinity [count %d max %d]: ", rank, CPU_COUNT(&cpuset), CPU_SETSIZE);
+	printf("[%d,%d] cpu affinity [count %d max %d]: ", pid, rank, CPU_COUNT(&cpuset), CPU_SETSIZE);
 	for (int i = 0; i < CPU_SETSIZE; ++i) {
 		if (CPU_ISSET(i, &cpuset)) {
 			printf("%d ", i);
@@ -279,7 +279,7 @@ void print_context(int rank)
 
 	char hostname[256];
 	gethostname(hostname, 256);
-	printf("[%d] hostname: %s\n", rank, hostname);
+	printf("[%d,%d] hostname: %s\n", pid, rank, hostname);
 #endif
 }
 
@@ -289,7 +289,7 @@ int main(int argc, char **argv) {
 	t_vpr_setup vpr_setup;
 	clock_t entire_flow_begin,entire_flow_end;
 	
-	print_context(getpid());
+	print_context(getpid(), -1);
 
 #if defined(__linux__) && defined(WITH_NUMA)
 	vector<int> cpuset;
@@ -377,7 +377,7 @@ int main(int argc, char **argv) {
 	int rank;
 	MPI_Comm_rank(MPI_COMM_WORLD, &rank);
 
-	print_context(getpid());
+	print_context(getpid(), rank);
 
 	/*mtrace();*/
 

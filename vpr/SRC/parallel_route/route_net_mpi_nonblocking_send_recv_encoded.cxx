@@ -10,11 +10,25 @@
 #include "router.h"
 #include "filtered_graph.h"
 #include "log.h"
-#include "route_net_mpi_send_recv_reduced_comm.h"
+#include "route_net_mpi_nonblocking_send_recv_encoded.h"
 #include "clock.h"
 #include "path_codec.h"
 
 float get_timing_driven_expected_cost(const rr_node_property_t &current, const rr_node_property_t &target, float criticality_fac, float R_upstream);
+
+void read_header_sr(unsigned int *packet, NBSRPacketID &packet_id, int &net_id)
+{
+	packet_id = static_cast<NBSRPacketID>(packet[0] & 0xF);
+	net_id = packet[0] >> 4;
+}
+
+void write_header_sr(int *packet, NBSRPacketID packet_id, unsigned int net_id)
+{
+	assert(sizeof(unsigned int) == 4);
+	assert((net_id & 0xFFFFFFF) == net_id);
+
+	packet[0] = (net_id << 4) | static_cast<unsigned int>(packet_id);
+}
 
 int get_free_buffer(mpi_context_t *mpi, int size)
 {
@@ -96,7 +110,11 @@ void bootstrap_irecv_combined(mpi_context_t *mpi)
 			assert(!mpi->received_last_update[pid]);
 			assert(mpi->pending_send_req[pid] == MPI_REQUEST_NULL);
 
+#ifdef USE_FIXED_TAG
+			int error = MPI_Irecv(mpi->pending_send_data_nbc[pid]->data(), mpi->pending_send_data_nbc[pid]->size(), MPI_INT, pid, FIXED_TAG, mpi->comm, &mpi->pending_send_req[pid]);
+#else
 			int error = MPI_Irecv(mpi->pending_send_data_nbc[pid]->data(), mpi->pending_send_data_nbc[pid]->size(), MPI_INT, pid, MPI_ANY_TAG, mpi->comm, &mpi->pending_send_req[pid]);
+#endif
 
 			assert(error == MPI_SUCCESS);
 		}
@@ -105,6 +123,8 @@ void bootstrap_irecv_combined(mpi_context_t *mpi)
 
 void broadcast_nonblocking(int data_index, int size, int tag, mpi_context_t *mpi)
 {
+	assert(size <= mpi->buffer_size);
+
 	mpi->max_send_data_size = std::max(mpi->max_send_data_size, size);
 
 	for (int i = 0; i < mpi->comm_size; ++i) {
@@ -140,14 +160,32 @@ void broadcast_trailer_nonblocking(mpi_context_t *mpi)
 {
 	zlog_level(delta_log, ROUTER_V2, "Sending trailer packet\n");
 
+#ifdef USE_FIXED_TAG
+	int data_index = get_free_buffer(mpi, 1);
+	int *data = mpi->pending_send_data_nbc[data_index]->data();
+
+	write_header_sr(data, NBSRPacketID::TRAILER, 0);
+
+	broadcast_nonblocking(data_index, 1, FIXED_TAG, mpi);
+#else
 	broadcast_nonblocking(-1, 0, LAST_TAG, mpi);
+#endif
 }
 
 void broadcast_rip_up_nonblocking(int net_id, mpi_context_t *mpi)
 {
 	zlog_level(delta_log, ROUTER_V3, "MPI sent rip up");
 
+#ifdef USE_FIXED_TAG
+	int data_index = get_free_buffer(mpi, 1);
+	int *data = mpi->pending_send_data_nbc[data_index]->data();
+
+	write_header_sr(data, NBSRPacketID::RIP_UP, net_id);
+
+	broadcast_nonblocking(data_index, 1, FIXED_TAG, mpi);
+#else
 	broadcast_nonblocking(-1, 0, RIP_UP_TAG + net_id, mpi);
+#endif
 }
 
 void complete_send_request(mpi_context_t *mpi, int completed_index)
@@ -216,6 +254,117 @@ void progress_sends_testsome(mpi_context_t *mpi)
 
 	for (int i = 0; i < num_completed; ++i) {
 		complete_send_request(mpi, mpi->completed_send_indices[i]);
+	}
+}
+
+static void handle_packet_fixed_tag(const int *data, const MPI_Status &status, const vector<net_t> &nets, congestion_t *congestion, const RRGraph &g, float pres_fac, vector<vector<RRNode>> &net_route_trees, mpi_context_t *mpi, mpi_perf_t *mpi_perf)
+{
+	//auto update_start = clock::now();
+
+	int num_recvd;
+	int error = MPI_Get_count(&status, MPI_INT, &num_recvd);
+
+	assert(error == MPI_SUCCESS);
+	assert(status.MPI_TAG == FIXED_TAG);
+
+	//if (mpi_perf) {
+		//mpi_perf->total_update_time += clock::now()-update_start;
+	//}
+	
+	NBSRPacketID packet_id;
+	int net_id;
+	read_header_sr((unsigned int *)data, packet_id, net_id);
+
+	switch (packet_id) {
+		case NBSRPacketID::TRAILER:
+			assert(num_recvd == 1);
+			assert(net_id == 0);
+
+			zlog_level(delta_log, ROUTER_V3, "Trailer packet from %d\n", status.MPI_SOURCE);
+
+			assert(!mpi->received_last_update[status.MPI_SOURCE]);
+			mpi->received_last_update[status.MPI_SOURCE] = true;
+
+			//if (mpi_perf) {
+			//mpi_perf->total_update_time += clock::now()-update_start;
+			//}
+			break;
+
+		case NBSRPacketID::ROUTE:
+		//#define RIP_UP_TAG LAST_TAG+1
+		//#define COST_UPDATE_TAG RIP_UP_TAG+0x1000000 //support for up to 16M nets
+		//
+		{
+			assert(net_id >= 0 && net_id < net_route_trees.size());
+			assert(nets[net_id].local_id == net_id);
+
+			zlog_level(delta_log, ROUTER_V3, "Cost update of net %d from %d\n", nets[net_id].vpr_id, status.MPI_SOURCE);
+
+			//auto update_start = clock::now();
+
+			//update_start = clock::now();
+
+			int rr_node = data[1];
+			unsigned int val;
+			path_decoder_t dec;
+			decoder_init(dec, (unsigned int *)&data[2], mpi->bit_width);
+			do {
+				update_one_cost_internal(rr_node, g, congestion, 1, pres_fac);
+				//zlog_level(delta_log, ROUTER_V3, "MPI update, source %d node %d delta %d\n", status.MPI_SOURCE, rr_node, delta);
+
+				//if (delta > 0) {
+					//assert(find(begin(net_route_trees[net_id]), end(net_route_trees[net_id]), rr_node) == end(net_route_trees[net_id]));
+				
+					net_route_trees[net_id].push_back(rr_node);
+				//} else {
+					//assert(delta < 0);
+					//assert(find(begin(net_route_trees[net_id]), end(net_route_trees[net_id]), rr_node) != end(net_route_trees[net_id]));
+					//net_route_trees[net_id].erase(std::remove(begin(net_route_trees[net_id]), end(net_route_trees[net_id]), rr_node), end(net_route_trees[net_id]));
+				//}
+
+				val = decoder_read(dec);
+				zlog_level(delta_log, ROUTER_V3, "switch id: %u\n", val);
+				if (val != dec.bit_mask) {
+					rr_node = get_target(g, get_edge_by_index(g, rr_node, val));
+				}
+			} while (val != dec.bit_mask);
+
+			zlog_level(delta_log, ROUTER_V3, "address %X num recv %d word offset: %d bit offset %d\n", data, num_recvd, dec.word_offset, dec.bit_offset);
+
+			assert(num_recvd == 1+1+decoder_get_num_words(dec));
+
+			//if (mpi_perf) {
+				//mpi_perf->total_update_time += clock::now()-update_start;
+			//}
+			break;
+		} 
+
+		case NBSRPacketID::RIP_UP:
+			assert(num_recvd == 1);
+			assert(net_id >= 0 && net_id < net_route_trees.size());
+
+			zlog_level(delta_log, ROUTER_V3, "MPI ripping up net %d route tree of size %lu from %d\n", nets[net_id].vpr_id, net_route_trees[net_id].size(), status.MPI_SOURCE);
+
+			//auto update_start = clock::now();
+
+			assert(!net_route_trees[net_id].empty());
+
+			for (const auto &node : net_route_trees[net_id]) {
+				update_one_cost_internal(node, g, congestion, -1, pres_fac);
+				//zlog_level(delta_log, ROUTER_V3, "MPI rip up, source %d node %d delta -1\n", status.MPI_SOURCE, node);
+				//assert(find(begin(net_route_trees[net_id]), end(net_route_trees[net_id]), node) != end(net_route_trees[net_id]));
+			}
+
+			net_route_trees[net_id].clear();
+
+			//if (mpi_perf) {
+				//mpi_perf->total_update_time += clock::now()-update_start;
+			//}
+			break;
+
+		default:
+			assert(false);
+			break;
 	}
 }
 
@@ -329,10 +478,18 @@ void handle_completed_request(int completed_index, const MPI_Status &status, con
 
 		zlog_level(delta_log, ROUTER_V3, "Handling received packet, completed_index %d source %d\n", completed_index, status.MPI_SOURCE);
 
+#ifdef USE_FIXED_TAG
+		handle_packet_fixed_tag(mpi->pending_send_data_nbc[completed_index]->data(), status, nets, congestion, g, pres_fac, net_route_trees, mpi, mpi_perf);
+#else 
 		handle_packet(mpi->pending_send_data_nbc[completed_index]->data(), status, nets, congestion, g, pres_fac, net_route_trees, mpi, mpi_perf);
+#endif
 
 		if (!mpi->received_last_update[completed_index]) {
+#ifdef USE_FIXED_TAG
+			int error = MPI_Irecv(mpi->pending_send_data_nbc[completed_index]->data(), mpi->pending_send_data_nbc[completed_index]->size(), MPI_INT, completed_index, FIXED_TAG, mpi->comm, &mpi->pending_send_req[completed_index]);
+#else 
 			int error = MPI_Irecv(mpi->pending_send_data_nbc[completed_index]->data(), mpi->pending_send_data_nbc[completed_index]->size(), MPI_INT, completed_index, MPI_ANY_TAG, mpi->comm, &mpi->pending_send_req[completed_index]);
+#endif
 
 			assert(error == MPI_SUCCESS);
 		}
@@ -612,6 +769,8 @@ void route_net_mpi_nonblocking_send_recv_encoded(const RRGraph &g, int vpr_id, i
 
 		int count = 0;
 
+		unsigned long old_num_heap_pops = perf ? perf->num_heap_pops : 0;
+
 		bool found_sink = false;
 		while (!heap.empty() && !found_sink) {
 			auto item = heap.top();
@@ -673,20 +832,28 @@ void route_net_mpi_nonblocking_send_recv_encoded(const RRGraph &g, int vpr_id, i
 
 					return true;
 				}, heap, perf);
+
+				if (count > 0 && count % params->progress_freq == 0 && mpi->comm_size > 1) {
+					auto progress_start = clock::now();
+					sync_combined(nets, congestion, g, pres_fac, net_route_trees, mpi, mpi_perf);
+					//progress_sends_testsome(mpi);
+					if (mpi_perf) {
+						mpi_perf->total_sync_time += clock::now()-progress_start;
+						++mpi_perf->num_syncs_while_expanding;
+					}
+				}
+
+				++count;
 			} else {
 				zlog_level(delta_log, ROUTER_V3, "\tNot expanding neighbor because known_cost %g > %g or cost %g > %g\n", item.known_cost, state[item.rr_node].known_cost, item.cost, state[item.rr_node].cost);
 			}
+		}
 
-			if (count % params->progress_freq == 0 && mpi->comm_size > 1) {
-				auto progress_start = clock::now();
-				sync_combined(nets, congestion, g, pres_fac, net_route_trees, mpi, mpi_perf);
-				//progress_sends_testsome(mpi);
-				if (mpi_perf) {
-					mpi_perf->total_sync_time += clock::now()-progress_start;
-				}
-			}
+		unsigned long num_heap_pops_per_sink = perf ? (perf->num_heap_pops - old_num_heap_pops) : 0;
 
-			++count;
+		if (perf) {
+			perf->max_num_heap_pops_per_sink = std::max(perf->max_num_heap_pops_per_sink, num_heap_pops_per_sink);
+			perf->min_num_heap_pops_per_sink = std::min(perf->min_num_heap_pops_per_sink, num_heap_pops_per_sink);
 		}
 
 		//bool sync_costs = (isink % sync_freq) == 0;
@@ -770,27 +937,43 @@ void route_net_mpi_nonblocking_send_recv_encoded(const RRGraph &g, int vpr_id, i
 			if (mpi->comm_size > 1) {
 				int payload_size = 1 + (int)ceil((float)((edges.size()+1)*mpi->bit_width) / 32);
 
+#ifdef USE_FIXED_TAG
+				int data_index = get_free_buffer(mpi, 1+payload_size);
+#else
 				int data_index = get_free_buffer(mpi, payload_size);
+#endif
 				assert(data_index >= mpi->comm_size);
 				vector<int> &data = *mpi->pending_send_data_nbc[data_index];
 
+#ifdef USE_FIXED_TAG
+				write_header_sr(&data[0], NBSRPacketID::ROUTE, net_id);
+
+				//zlog_level(delta_log, ROUTER_V3, "Route packet header %08X,%08X pid %d net_id %d\n", data[0], data[1], static_cast<int>(IbcastPacketID::ROUTE), net_id);
+				data[1] = first_rr_node;
+#else
 				data[0] = first_rr_node;
+#endif
 
 				path_encoder_t enc;
+#ifdef USE_FIXED_TAG
+				encoder_init(enc, (unsigned int *)&data[2], mpi->bit_width);
+#else
 				encoder_init(enc, (unsigned int *)&data[1], mpi->bit_width);
+#endif
 				for (auto i = edges.crbegin(); i != edges.crend(); ++i) {
 					encoder_write(enc, *i);
 				}
 				encoder_write_trailer(enc);
-				//write_header(&data[0], IbcastPacketID::ROUTE, payload_size, net_id);
-
-				//zlog_level(delta_log, ROUTER_V3, "Route packet header %08X,%08X pid %d net_id %d\n", data[0], data[1], static_cast<int>(IbcastPacketID::ROUTE), net_id);
 
 				assert(encoder_get_num_words(enc) == payload_size-1);
 
 				auto broadcast_start = clock::now();
 
+#ifdef USE_FIXED_TAG
+				broadcast_nonblocking(data_index, 1+payload_size, FIXED_TAG, mpi);
+#else
 				broadcast_nonblocking(data_index, payload_size, COST_UPDATE_TAG+net_id, mpi);
+#endif
 
 				if (mpi_perf) {
 					mpi_perf->total_broadcast_time += clock::now()-broadcast_start;

@@ -18,6 +18,8 @@ typedef struct perf_t {
 	unsigned long num_heap_pushes;
 	unsigned long num_heap_pops;
 	unsigned long num_neighbor_visits;
+	unsigned long max_num_heap_pops_per_sink;
+	unsigned long min_num_heap_pops_per_sink;
 	std::chrono::high_resolution_clock::duration total_wait_time;
 	std::chrono::high_resolution_clock::duration total_rip_up_time;
 	std::chrono::high_resolution_clock::duration total_route_time;
@@ -33,8 +35,9 @@ typedef struct perf_t {
 typedef struct mpi_perf_t {
 	std::chrono::high_resolution_clock::duration total_sync_time;
 	std::chrono::high_resolution_clock::duration total_broadcast_time;
-	std::chrono::high_resolution_clock::duration total_send_testsome_time;
+	int num_syncs_while_expanding;
 
+	std::chrono::high_resolution_clock::duration total_send_testsome_time;
 	std::chrono::high_resolution_clock::duration total_testsome_time;
 	std::chrono::high_resolution_clock::duration total_iprobe_time;
 	std::chrono::high_resolution_clock::duration total_probe_time;
