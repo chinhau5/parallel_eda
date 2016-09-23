@@ -1317,7 +1317,7 @@ std::shared_ptr<vector<path_node_t>> get_path(int sink_rr_node_id, const route_s
 	//[>check_route_tree(rt, net, g);<]
 //}
 //
-void route_net_one_pass(const RRGraph &g, int vpr_id, const source_t *source, const vector<sink_t *> &sinks, const route_parameters_t &params, route_state_t *state, congestion_t *congestion, route_tree_t &rt, t_net_timing &net_timing, vector<sink_t *> &routed_sinks, vector<sink_t *> &unrouted_sinks, perf_t *perf)
+void route_net_one_pass(const RRGraph &g, int vpr_id, const source_t *source, const vector<sink_t *> &sinks, const route_parameters_t &params, float pres_fac, route_state_t *state, congestion_t *congestion, route_tree_t &rt, t_net_timing &net_timing, vector<sink_t *> &routed_sinks, vector<sink_t *> &unrouted_sinks, perf_t *perf)
 {
 	std::priority_queue<route_state_t> heap;
 
@@ -1472,7 +1472,7 @@ void route_net_one_pass(const RRGraph &g, int vpr_id, const source_t *source, co
 				} 
 			}
 
-			update_one_cost(g, congestion, added_nodes.begin(), added_nodes.end(), 1, params.pres_fac);
+			update_one_cost(g, congestion, added_nodes.begin(), added_nodes.end(), 1, pres_fac);
 
 			if (sink->id != -1) {
 				net_timing.delay[sink->id+1] = get_vertex_props(rt.graph, route_tree_get_rt_node(rt, sink->rr_node)).delay;
@@ -1500,7 +1500,7 @@ void route_net_one_pass(const RRGraph &g, int vpr_id, const source_t *source, co
 	/*check_route_tree(rt, net, g);*/
 }
 
-void route_net_with_partitioned_fine_grain_lock(const RRGraph &g, const vector<int> &pid, int this_pid, int vpr_id, const source_t *source, const vector<sink_t *> &sinks, const route_parameters_t &params, route_state_t *state, congestion_locked_t *congestion, route_tree_t &rt, t_net_timing &net_timing, vector<sink_t *> &routed_sinks, vector<sink_t *> &unrouted_sinks, bool lock, perf_t *perf, lock_perf_t *lock_perf)
+void route_net_with_partitioned_fine_grain_lock(const RRGraph &g, const vector<int> &pid, int this_pid, int vpr_id, const source_t *source, const vector<sink_t *> &sinks, const route_parameters_t &params, float pres_fac, route_state_t *state, congestion_locked_t *congestion, route_tree_t &rt, t_net_timing &net_timing, vector<sink_t *> &routed_sinks, vector<sink_t *> &unrouted_sinks, bool lock, perf_t *perf, lock_perf_t *lock_perf)
 {
 	std::priority_queue<route_state_t> heap;
 
@@ -1641,7 +1641,7 @@ void route_net_with_partitioned_fine_grain_lock(const RRGraph &g, const vector<i
 				} 
 			}
 
-			update_one_cost(g, congestion, added_nodes.begin(), added_nodes.end(), 1, params.pres_fac, lock, lock_perf);
+			update_one_cost(g, congestion, added_nodes.begin(), added_nodes.end(), 1, pres_fac, lock, lock_perf);
 
 			net_timing.delay[sink->id+1] = get_vertex_props(rt.graph, route_tree_get_rt_node(rt, sink->rr_node)).delay;
 
@@ -1692,7 +1692,7 @@ void broadcast_costs(const vector<RRNode>::const_iterator &rr_nodes_begin, const
 	transactions.push_back(trans);
 }
 
-void route_net_lockless(const RRGraph &g, const vector<int> &pid, int this_pid, int vpr_id, const source_t *source, const vector<sink_t *> &sinks, const route_parameters_t &params, route_state_t *state, congestion_t *congestion, route_tree_t &rt, t_net_timing &net_timing, vector<sink_t *> &routed_sinks, vector<sink_t *> &unrouted_sinks, perf_t *perf)
+void route_net_lockless(const RRGraph &g, const vector<int> &pid, int this_pid, int vpr_id, const source_t *source, const vector<sink_t *> &sinks, const route_parameters_t &params, float pres_fac, route_state_t *state, congestion_t *congestion, route_tree_t &rt, t_net_timing &net_timing, vector<sink_t *> &routed_sinks, vector<sink_t *> &unrouted_sinks, perf_t *perf)
 {
 	std::priority_queue<route_state_t> heap;
 
@@ -1834,7 +1834,7 @@ void route_net_lockless(const RRGraph &g, const vector<int> &pid, int this_pid, 
 				} 
 			}
 
-			update_one_cost(g, congestion, added_nodes.begin(), added_nodes.end(), 1, params.pres_fac);
+			update_one_cost(g, congestion, added_nodes.begin(), added_nodes.end(), 1, pres_fac);
 
 			if (sink->id != -1) {
 				net_timing.delay[sink->id+1] = get_vertex_props(rt.graph, route_tree_get_rt_node(rt, sink->rr_node)).delay;
@@ -1861,7 +1861,7 @@ void route_net_lockless(const RRGraph &g, const vector<int> &pid, int this_pid, 
 	/*check_route_tree(rt, net, g);*/
 }
 
-void route_net_mpi_rma(const RRGraph &g, const vector<int> &pid, int this_pid, MPI_Win win, int vpr_id, const source_t *source, const vector<sink_t *> &sinks, const route_parameters_t &params, route_state_t *state, congestion_t *congestion, route_tree_t &rt, t_net_timing &net_timing, vector<interpartition_sink_t> &interpartition_sinks, perf_t *perf)
+void route_net_mpi_rma(const RRGraph &g, const vector<int> &pid, int this_pid, MPI_Win win, int vpr_id, const source_t *source, const vector<sink_t *> &sinks, const route_parameters_t &params, float pres_fac, route_state_t *state, congestion_t *congestion, route_tree_t &rt, t_net_timing &net_timing, vector<interpartition_sink_t> &interpartition_sinks, perf_t *perf)
 {
 	std::priority_queue<route_state_t> heap;
 
@@ -1973,7 +1973,7 @@ void route_net_mpi_rma(const RRGraph &g, const vector<int> &pid, int this_pid, M
 				state[item.rr_node] = item;
 				modified.push_back(item.rr_node);
 
-				expand_neighbors_mpi_rma(g, item.rr_node, state, congestion, win, sink_rr_node, sink->criticality_fac, params.astar_fac, params.pres_fac,
+				expand_neighbors_mpi_rma(g, item.rr_node, state, congestion, win, sink_rr_node, sink->criticality_fac, params.astar_fac, pres_fac,
 						[&g, &sink, &sink_rr_node, &v, &pid, &boundary_node_heap, &item, &this_pid, &congestion] (const RRNode &n) -> bool {
 					const auto &prop = get_vertex_props(g, n);
 
@@ -2031,7 +2031,7 @@ void route_net_mpi_rma(const RRGraph &g, const vector<int> &pid, int this_pid, M
 				} 
 			}
 
-			update_one_cost_mpi_rma(added_nodes.begin(), added_nodes.end(), g, pid, this_pid, congestion, win, 1, params.pres_fac);
+			update_one_cost_mpi_rma(added_nodes.begin(), added_nodes.end(), g, pid, this_pid, congestion, win, 1, pres_fac);
 
 			if (!expanded_interpartition_node) {
 			} else {
@@ -2068,7 +2068,7 @@ void route_net_mpi_rma(const RRGraph &g, const vector<int> &pid, int this_pid, M
 	/*check_route_tree(rt, net, g);*/
 }
 
-void route_net_with_high_interpartition_cost(const RRGraph &g, const vector<int> &pid, int this_pid, int vpr_id, const source_t *source, const vector<sink_t *> &sinks, const route_parameters_t &params, route_state_t *state, congestion_locked_t *congestion, route_tree_t &rt, t_net_timing &net_timing, vector<interpartition_sink_t> &interpartition_sinks, bool lock, perf_t *perf, lock_perf_t *lock_perf)
+void route_net_with_high_interpartition_cost(const RRGraph &g, const vector<int> &pid, int this_pid, int vpr_id, const source_t *source, const vector<sink_t *> &sinks, const route_parameters_t &params, float pres_fac, route_state_t *state, congestion_locked_t *congestion, route_tree_t &rt, t_net_timing &net_timing, vector<interpartition_sink_t> &interpartition_sinks, bool lock, perf_t *perf, lock_perf_t *lock_perf)
 {
 	std::priority_queue<route_state_t> heap;
 
@@ -2238,7 +2238,7 @@ void route_net_with_high_interpartition_cost(const RRGraph &g, const vector<int>
 				} 
 			}
 
-			update_one_cost(g, congestion, added_nodes.begin(), added_nodes.end(), 1, params.pres_fac, lock, lock_perf);
+			update_one_cost(g, congestion, added_nodes.begin(), added_nodes.end(), 1, pres_fac, lock, lock_perf);
 
 			if (!expanded_interpartition_node) {
 			} else {
@@ -2275,7 +2275,7 @@ void route_net_with_high_interpartition_cost(const RRGraph &g, const vector<int>
 	/*check_route_tree(rt, net, g);*/
 }
 
-void route_net_with_partition_hopping(const RRGraph &g, const vector<int> &pid, int this_pid, int vpr_id, const source_t *source, const vector<sink_t *> &sinks, const route_parameters_t &params, route_state_t *state, congestion_locked_t *congestion, route_tree_t &rt, t_net_timing &net_timing, unrouted_t &unrouted, int num_partitions, bool lock, perf_t *perf, lock_perf_t *lock_perf)
+void route_net_with_partition_hopping(const RRGraph &g, const vector<int> &pid, int this_pid, int vpr_id, const source_t *source, const vector<sink_t *> &sinks, const route_parameters_t &params, float pres_fac, route_state_t *state, congestion_locked_t *congestion, route_tree_t &rt, t_net_timing &net_timing, unrouted_t &unrouted, int num_partitions, bool lock, perf_t *perf, lock_perf_t *lock_perf)
 {
 	std::priority_queue<route_state_t> heap;
 
@@ -2410,7 +2410,7 @@ void route_net_with_partition_hopping(const RRGraph &g, const vector<int> &pid, 
 				} 
 			}
 
-			update_one_cost(g, congestion, added_nodes.begin(), added_nodes.end(), 1, params.pres_fac, lock, lock_perf);
+			update_one_cost(g, congestion, added_nodes.begin(), added_nodes.end(), 1, pres_fac, lock, lock_perf);
 
 			if (sink->id != -1) {
 				net_timing.delay[sink->id+1] = get_vertex_props(rt.graph, route_tree_get_rt_node(rt, sink->rr_node)).delay;

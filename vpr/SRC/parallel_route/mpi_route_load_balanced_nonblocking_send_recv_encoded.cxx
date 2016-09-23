@@ -624,8 +624,6 @@ bool mpi_route_load_balanced_nonblocking_send_recv_encoded(t_router_opts *opts, 
 	int total_num_syncs_while_expanding = 0;
     clock::duration total_send_testsome_time = clock::duration::zero();
 
-	int max_num_broadcasts;
-
 	mpi.buffer_size = 1024;
 #if 0
 	mpi.pending_recv_data_flat.resize(mpi.comm_size);
@@ -644,8 +642,12 @@ bool mpi_route_load_balanced_nonblocking_send_recv_encoded(t_router_opts *opts, 
 	mpi.pending_send_data_ref_count.resize(mpi.comm_size, 0);
 	mpi.pending_send_req.resize(mpi.comm_size, MPI_REQUEST_NULL);
 	mpi.pending_send_req_data_ref.resize(mpi.comm_size, -1);
+	mpi.pending_send_req_dst.resize(mpi.comm_size, -1);
 #endif
+	mpi.num_pending_reqs = 0;
 	mpi.received_last_update.resize(mpi.comm_size);
+	mpi.num_pending_reqs_by_rank.resize(mpi.comm_size, 0);
+	mpi.max_pending_send_reqs_by_rank.resize(mpi.comm_size);
 
     for (iter = 0; iter < opts->max_router_iterations && !routed && !idling; ++iter) {
         clock::duration actual_route_time = clock::duration::zero();
@@ -678,9 +680,11 @@ bool mpi_route_load_balanced_nonblocking_send_recv_encoded(t_router_opts *opts, 
 		mpi.max_send_data_size = 0;
 		mpi.total_send_count = 0;
 		mpi.total_send_data_size = 0;
-		mpi.max_send_req_size = 0;
+		mpi.max_req_buffer_size = 0;
+		mpi.max_active_reqs = 0;
 
 		std::fill(begin(mpi.received_last_update), end(mpi.received_last_update), false);
+		std::fill(begin(mpi.max_pending_send_reqs_by_rank), end(mpi.max_pending_send_reqs_by_rank), 0);
 
 		sprintf(buffer, "%d", iter);
 		zlog_put_mdc("iter", buffer);
@@ -950,24 +954,6 @@ bool mpi_route_load_balanced_nonblocking_send_recv_encoded(t_router_opts *opts, 
 			//last_progress_time += clock::now()-last_progress_start;
 		}
 
-		/* checking */
-		for (int i = 0; i < mpi.pending_send_req.size(); ++i) {
-			zlog_level(delta_log, ROUTER_V2, "req %d\n", i);
-			assert(mpi.pending_send_req[i] == MPI_REQUEST_NULL);
-			int data_index = mpi.pending_send_req_data_ref[i];
-			if (data_index >= 0) {
-				assert(mpi.pending_send_data_ref_count[data_index] == 0);
-			}
-		}
-		for (int i = 0; i < mpi.pending_send_data_ref_count.size(); ++i) {
-			assert(mpi.pending_send_data_ref_count[i] == 0);
-		}
-		//for (const auto &req : mpi.pending_recv_req_flat) {
-			//assert(req == MPI_REQUEST_NULL);
-		//}
-		assert(mpi.free_send_data_index.size() == mpi.pending_send_data_nbc.size()-mpi.comm_size);
-		assert(mpi.free_send_req_index.size() == mpi.pending_send_req.size()-mpi.comm_size);
-
 		//for (int pid = 0; pid < mpi.comm_size; ++pid) {
 			//if (pid == mpi.rank) {
 				//assert(mpi.pending_recv_req_flat[pid] == MPI_REQUEST_NULL);
@@ -1028,6 +1014,29 @@ bool mpi_route_load_balanced_nonblocking_send_recv_encoded(t_router_opts *opts, 
         //route_time = clock::now()-route_start;
 
         iter_time = clock::now()-iter_start;
+
+		/* checking */
+		assert(mpi.num_pending_reqs == 0);
+		for (int i = 0; i < mpi.comm_size; ++i) {
+			assert(mpi.num_pending_reqs_by_rank[i] == 0);
+		}
+		assert(mpi.num_pending_reqs == 0);
+		for (int i = 0; i < mpi.pending_send_req.size(); ++i) {
+			zlog_level(delta_log, ROUTER_V2, "req %d\n", i);
+			assert(mpi.pending_send_req[i] == MPI_REQUEST_NULL);
+			int data_index = mpi.pending_send_req_data_ref[i];
+			if (data_index >= 0) {
+				assert(mpi.pending_send_data_ref_count[data_index] == 0);
+			}
+		}
+		for (int i = 0; i < mpi.pending_send_data_ref_count.size(); ++i) {
+			assert(mpi.pending_send_data_ref_count[i] == 0);
+		}
+		//for (const auto &req : mpi.pending_recv_req_flat) {
+			//assert(req == MPI_REQUEST_NULL);
+		//}
+		assert(mpi.free_send_data_index.size() == mpi.pending_send_data_nbc.size()-mpi.comm_size);
+		assert(mpi.free_send_req_index.size() == mpi.pending_send_req.size()-mpi.comm_size);
 
 		sprintf(buffer, "net_route_time_iter_%d_%d.txt", iter, mpi.rank);
 		FILE *net_route_time_f = fopen(buffer, "w");
@@ -1119,14 +1128,14 @@ bool mpi_route_load_balanced_nonblocking_send_recv_encoded(t_router_opts *opts, 
 			printf("total_num_heap_pops: %lu\n", total_num_heap_pops); 
 			printf("total_num_neighbor_visits: %lu\n", total_num_neighbor_visits);
 
-			printf("max send data size: %d ", mpi.max_send_data_size*sizeof(int));
+			printf("max send data size (bytes): %d ", mpi.max_send_data_size*sizeof(int));
 			for (int i = 1; i < mpi.comm_size; ++i) {
 				int tmp_max_send_data_size;
 				MPI_Recv(&tmp_max_send_data_size, 1, MPI_INT, i, i, mpi.comm, MPI_STATUS_IGNORE);
 				printf("%d ", tmp_max_send_data_size*sizeof(int));
 			}
 			printf("\n");
-			printf("total send size/count/average: %lu/%lu/%g ", mpi.total_send_data_size*sizeof(int), mpi.total_send_count, (float)mpi.total_send_data_size*sizeof(int)/mpi.total_send_count);
+			printf("total send size/count/average (bytes): %lu/%lu/%g ", mpi.total_send_data_size*sizeof(int), mpi.total_send_count, (float)mpi.total_send_data_size*sizeof(int)/mpi.total_send_count);
 			for (int i = 1; i < mpi.comm_size; ++i) {
 				unsigned long tmp_total_send_data_size;
 				unsigned long tmp_total_send_count;
@@ -1135,11 +1144,19 @@ bool mpi_route_load_balanced_nonblocking_send_recv_encoded(t_router_opts *opts, 
 				printf("%lu/%lu/%g ", tmp_total_send_data_size*sizeof(int), tmp_total_send_count, (float)tmp_total_send_data_size*sizeof(int)/tmp_total_send_count);
 			}
 			printf("\n");
-			printf("max send req size: %d ", mpi.max_send_req_size);
+			printf("max req buffer size: %d ", mpi.max_req_buffer_size);
 			for (int i = 1; i < mpi.comm_size; ++i) {
-				int tmp_max_send_req_size;
-				MPI_Recv(&tmp_max_send_req_size, 1, MPI_INT, i, i, mpi.comm, MPI_STATUS_IGNORE);
-				printf("%d ", tmp_max_send_req_size);
+				int tmp_max_req_buffer_size;
+				MPI_Recv(&tmp_max_req_buffer_size, 1, MPI_INT, i, i, mpi.comm, MPI_STATUS_IGNORE);
+				printf("%d ", tmp_max_req_buffer_size);
+			}
+			printf("\n");
+
+			printf("max active reqs: %d ", mpi.max_active_reqs);
+			for (int i = 1; i < mpi.comm_size; ++i) {
+				int tmp_max_active_reqs;
+				MPI_Recv(&tmp_max_active_reqs, 1, MPI_INT, i, i, mpi.comm, MPI_STATUS_IGNORE);
+				printf("%d ", tmp_max_active_reqs);
 			}
 			printf("\n");
 		} else {
@@ -1155,7 +1172,21 @@ bool mpi_route_load_balanced_nonblocking_send_recv_encoded(t_router_opts *opts, 
 			MPI_Send(&mpi.max_send_data_size, 1, MPI_INT, 0, mpi.rank, mpi.comm);
 			MPI_Send(&mpi.total_send_data_size, 1, MPI_UNSIGNED_LONG, 0, mpi.rank, mpi.comm);
 			MPI_Send(&mpi.total_send_count, 1, MPI_UNSIGNED_LONG, 0, mpi.rank, mpi.comm);
-			MPI_Send(&mpi.max_send_req_size, 1, MPI_INT, 0, mpi.rank, mpi.comm);
+			MPI_Send(&mpi.max_req_buffer_size, 1, MPI_INT, 0, mpi.rank, mpi.comm);
+			MPI_Send(&mpi.max_active_reqs, 1, MPI_INT, 0, mpi.rank, mpi.comm);
+		}
+
+		vector<int> all_max_pending_reqs_by_rank(mpi.comm_size*mpi.comm_size);
+		MPI_Gather(mpi.max_pending_send_reqs_by_rank.data(), mpi.comm_size, MPI_INT, all_max_pending_reqs_by_rank.data(), mpi.comm_size, MPI_INT, 0, mpi.comm);
+
+		if (mpi.rank == 0) {
+			for (int rank = 0; rank < mpi.comm_size; ++rank) {
+				printf("max pending send reqs of rank %d: ", rank);
+				for (int i = 0; i < mpi.comm_size; ++i) {
+					printf("%d ", all_max_pending_reqs_by_rank[rank*mpi.comm_size + i]);
+				}
+				printf("\n");
+			}
 		}
 
 		vector<unsigned long> all_max_num_heap_pops_per_sink(mpi.comm_size);

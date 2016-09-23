@@ -77,8 +77,10 @@ static int get_free_req(mpi_context_t *mpi, int data_index)
 
 		mpi->pending_send_req.emplace_back(MPI_REQUEST_NULL);
 		mpi->pending_send_req_data_ref.emplace_back(data_index);
+		mpi->pending_send_req_dst.emplace_back(-1);
 
 		assert(mpi->pending_send_req.size() == mpi->pending_send_req_data_ref.size());
+		assert(mpi->pending_send_req.size() == mpi->pending_send_req_dst.size());
 
 		zlog_level(delta_log, ROUTER_V3, "New req, req_index %d data_index %d\n", req_index, data_index);
 	}
@@ -116,6 +118,8 @@ void bootstrap_irecv_combined(mpi_context_t *mpi)
 			int error = MPI_Irecv(mpi->pending_send_data_nbc[pid]->data(), mpi->pending_send_data_nbc[pid]->size(), MPI_INT, pid, MPI_ANY_TAG, mpi->comm, &mpi->pending_send_req[pid]);
 #endif
 
+			++mpi->num_pending_reqs;
+
 			assert(error == MPI_SUCCESS);
 		}
 	}
@@ -137,6 +141,8 @@ void broadcast_nonblocking(int data_index, int size, int tag, mpi_context_t *mpi
 			assert(req_index >= mpi->comm_size);
 			assert(mpi->pending_send_req[req_index] == MPI_REQUEST_NULL);
 
+			mpi->pending_send_req_dst[req_index] = i;
+
 			if (data_index < 0) {
 				error = MPI_Isend(nullptr, 0, MPI_INT, i, tag, mpi->comm, &mpi->pending_send_req[req_index]);
 			} else {
@@ -152,6 +158,9 @@ void broadcast_nonblocking(int data_index, int size, int tag, mpi_context_t *mpi
 			}
 
 			assert(error == MPI_SUCCESS);
+
+			++mpi->num_pending_reqs;
+			++mpi->num_pending_reqs_by_rank[i];
 		}
 	}
 }
@@ -217,7 +226,7 @@ void progress_sends_waitall(mpi_context_t *mpi)
 {
 	assert(!mpi->pending_send_req.empty());
 
-	mpi->max_send_req_size = std::max((unsigned long)mpi->max_send_req_size, mpi->pending_send_req.size());
+	mpi->max_req_buffer_size = std::max((unsigned long)mpi->max_req_buffer_size, mpi->pending_send_req.size());
 
 	vector<MPI_Status> statuses(mpi->pending_send_req.size());
 
@@ -238,7 +247,7 @@ void progress_sends_testsome(mpi_context_t *mpi)
 {
 	assert(!mpi->pending_send_req.empty());
 
-	mpi->max_send_req_size = std::max((unsigned long)mpi->max_send_req_size, mpi->pending_send_req.size());
+	mpi->max_req_buffer_size = std::max((unsigned long)mpi->max_req_buffer_size, mpi->pending_send_req.size());
 
 	if (mpi->completed_send_indices.size() < mpi->pending_send_req.size()) {
 		mpi->completed_send_indices.resize(mpi->pending_send_req.size());
@@ -492,17 +501,28 @@ void handle_completed_request(int completed_index, const MPI_Status &status, con
 #endif
 
 			assert(error == MPI_SUCCESS);
+
+			++mpi->num_pending_reqs;
 		}
 	} else {
 		complete_send_request(mpi, completed_index);
+
+		--mpi->num_pending_reqs_by_rank[mpi->pending_send_req_dst[completed_index]];
+		assert(mpi->num_pending_reqs_by_rank[mpi->pending_send_req_dst[completed_index]] >= 0);
 	}
+
+	--mpi->num_pending_reqs;
 }
 
 void sync_combined_wait(const vector<net_t> &nets, congestion_t *congestion, const RRGraph &g, float pres_fac, vector<vector<RRNode>> &net_route_trees, mpi_context_t *mpi, mpi_perf_t *mpi_perf)
 {
 	assert(!mpi->pending_send_req.empty());
 
-	mpi->max_send_req_size = std::max((unsigned long)mpi->max_send_req_size, mpi->pending_send_req.size());
+	mpi->max_req_buffer_size = std::max((unsigned long)mpi->max_req_buffer_size, mpi->pending_send_req.size());
+	mpi->max_active_reqs = std::max(mpi->max_active_reqs, mpi->num_pending_reqs);
+	for (int i = 0; i < mpi->comm_size; ++i) {
+		mpi->max_pending_send_reqs_by_rank[i] = std::max(mpi->max_pending_send_reqs_by_rank[i], mpi->num_pending_reqs_by_rank[i]);
+	}
 
 	vector<MPI_Status> statuses(mpi->pending_send_req.size());
 
@@ -523,7 +543,11 @@ void sync_combined(const vector<net_t> &nets, congestion_t *congestion, const RR
 {
 	assert(!mpi->pending_send_req.empty());
 
-	mpi->max_send_req_size = std::max((unsigned long)mpi->max_send_req_size, mpi->pending_send_req.size());
+	mpi->max_req_buffer_size = std::max((unsigned long)mpi->max_req_buffer_size, mpi->pending_send_req.size());
+	mpi->max_active_reqs = std::max(mpi->max_active_reqs, mpi->num_pending_reqs);
+	for (int i = 0; i < mpi->comm_size; ++i) {
+		mpi->max_pending_send_reqs_by_rank[i] = std::max(mpi->max_pending_send_reqs_by_rank[i], mpi->num_pending_reqs_by_rank[i]);
+	}
 
 	if (mpi->completed_indices.size() < mpi->pending_send_req.size()) {
 		mpi->completed_indices.resize(2*mpi->pending_send_req.size());

@@ -59,7 +59,6 @@ typedef struct sched_perf_t {
 } sched_perf_t;
 
 typedef struct route_parameters_t {
-	float pres_fac;
 	float astar_fac;
 	float bend_cost;
 	float max_criticality;
@@ -248,9 +247,12 @@ typedef struct mpi_context_t {
 
 	vector<MPI_Request> pending_send_req;
 	vector<int> pending_send_req_data_ref;
+	vector<int> pending_send_req_dst;
 	vector<request_meta_t> pending_req_meta;
 	vector<int> completed_indices;
 	int num_pending_reqs;
+	vector<int> num_pending_reqs_by_rank;
+	vector<vector<int>> num_pending_reqs_by_time;
 
 	vector<bool> received_last_update; 
 
@@ -268,7 +270,9 @@ typedef struct mpi_context_t {
 	unsigned long total_send_data_size;
 	unsigned long total_send_count;
 
-	int max_send_req_size;
+	int max_req_buffer_size;
+	int max_active_reqs;
+	vector<int> max_pending_send_reqs_by_rank;
 
 	vector<std::shared_ptr<vector<node_update_t>>> pending_send_data;
 	int send_req_queue_size;

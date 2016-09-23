@@ -103,7 +103,7 @@ static void broadcast_as_root(int data_index, int offset, int count, mpi_context
 
 	zlog_level(delta_log, ROUTER_V3, "Starting broadcast as root, req_index %d data_index %d offset %d\n", req_index, data_index, offset);
 
-	mpi->max_send_req_size = std::max((unsigned long)mpi->max_send_req_size, mpi->pending_send_req.size());
+	mpi->max_req_buffer_size = std::max((unsigned long)mpi->max_req_buffer_size, mpi->pending_send_req.size());
 
 	assert(mpi->pending_send_req[req_index] == MPI_REQUEST_NULL);
 	assert(mpi->pending_req_meta[req_index].data_index == data_index);
@@ -145,7 +145,7 @@ static void broadcast_as_non_root(int data_index, int offset, int count, int ran
 
 	zlog_level(delta_log, ROUTER_V3, "Starting broadcast as non-root, req_index %d data_index %d offset %d count %d rank %d\n", req_index, data_index, offset, count, rank);
 
-	mpi->max_send_req_size = std::max((unsigned long)mpi->max_send_req_size, mpi->pending_send_req.size());
+	mpi->max_req_buffer_size = std::max((unsigned long)mpi->max_req_buffer_size, mpi->pending_send_req.size());
 
 	assert(mpi->pending_send_req[req_index] == MPI_REQUEST_NULL);
 	mpi->pending_req_meta[req_index].data_index = data_index;
