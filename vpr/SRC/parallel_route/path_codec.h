@@ -11,7 +11,6 @@ typedef struct path_encoder_t  {
 void encoder_init(path_encoder_t &enc, unsigned int *buffer, int bit_width)
 {
 	enc.buffer = buffer;
-	enc.buffer[0] = 0;
 	enc.word_offset = 0;
 	enc.bit_offset = 0;
 	enc.bit_width = bit_width;
@@ -21,24 +20,28 @@ void encoder_write(path_encoder_t &enc, unsigned int edge_index)
 {
 	assert((edge_index & ((1 << enc.bit_width)-1)) == edge_index);
 
+	if (enc.bit_offset == 0) {
+		enc.buffer[enc.word_offset] = 0;
+	}
+
 	int excess_bit = enc.bit_offset+enc.bit_width - 32;
 
-	if (excess_bit >= 0) {
+	if (excess_bit > 0) {
 		//printf("case 1\n");
 		enc.buffer[enc.word_offset] |= (edge_index << enc.bit_offset);
 		++enc.word_offset;
-		enc.buffer[enc.word_offset] = 0 | (edge_index >> (32-enc.bit_offset));
+		enc.buffer[enc.word_offset] = (edge_index >> (32-enc.bit_offset));
 		enc.bit_offset = excess_bit;
 	} else {
 		//printf("case 2\n");
 		enc.buffer[enc.word_offset] |= (edge_index << enc.bit_offset);
-		//if (excess_bit == 0) {
-			//++enc.word_offset;
-			//enc.bit_offset = 0;
-			//enc.buffer[enc.word_offset] = 0;
-		//} else {
+
+		if (excess_bit == 0) {
+			++enc.word_offset;
+			enc.bit_offset = 0;
+		} else {
 			enc.bit_offset += enc.bit_width;
-		//}
+		}
 	}
 }
 

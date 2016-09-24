@@ -599,6 +599,13 @@ bool mpi_route_load_balanced_nonblocking_send_recv_encoded(t_router_opts *opts, 
 	//}
 	//orig_num_recvs_required = num_recvs_required;
 	//
+	//
+
+	extern char *s_circuit_name;
+	char dirname[256];
+	sprintf(dirname, "%s_rank_%d_stats_XXXXXX", s_circuit_name, mpi.rank);
+	char *mkerror = mkdtemp(dirname);
+	assert(mkerror != NULL);
 
     bool routed = false;
 	bool idling = false;
@@ -647,6 +654,7 @@ bool mpi_route_load_balanced_nonblocking_send_recv_encoded(t_router_opts *opts, 
 	mpi.num_pending_reqs = 0;
 	mpi.received_last_update.resize(mpi.comm_size);
 	mpi.num_pending_reqs_by_rank.resize(mpi.comm_size, 0);
+	mpi.num_pending_reqs_by_time.resize(mpi.comm_size);
 	mpi.max_pending_send_reqs_by_rank.resize(mpi.comm_size);
 
     for (iter = 0; iter < opts->max_router_iterations && !routed && !idling; ++iter) {
@@ -726,6 +734,9 @@ bool mpi_route_load_balanced_nonblocking_send_recv_encoded(t_router_opts *opts, 
 		mpi_perf.total_broadcast_time = clock::duration::zero();
 		mpi_perf.total_send_testsome_time = clock::duration::zero();
 		mpi_perf.num_syncs_while_expanding = 0;
+		for (int i = 0; i < mpi.comm_size; ++i) {
+			mpi.num_pending_reqs_by_time[i].clear();
+		}
 
 		//for (int i = 0; i < mpi.comm_size; ++i) {
 			//num_recvs_called[i] = 0;
@@ -1038,7 +1049,7 @@ bool mpi_route_load_balanced_nonblocking_send_recv_encoded(t_router_opts *opts, 
 		assert(mpi.free_send_data_index.size() == mpi.pending_send_data_nbc.size()-mpi.comm_size);
 		assert(mpi.free_send_req_index.size() == mpi.pending_send_req.size()-mpi.comm_size);
 
-		sprintf(buffer, "net_route_time_iter_%d_%d.txt", iter, mpi.rank);
+		sprintf(buffer, "%s/net_route_time_iter_%d.txt", dirname, iter);
 		FILE *net_route_time_f = fopen(buffer, "w");
 		for (const auto &net : partition_nets[mpi.rank]) {
 			float route_time = duration_cast<nanoseconds>(net_route_time[iter][net->local_id]).count() / 1e9;
@@ -1046,6 +1057,17 @@ bool mpi_route_load_balanced_nonblocking_send_recv_encoded(t_router_opts *opts, 
 			fprintf(net_route_time_f, "%d %lu %g %g %ld %g %ld %g\n", net->local_id, net->sinks.size(), bg::area(box(point(net->bounding_box.xmin, net->bounding_box.ymin), point(net->bounding_box.xmax, net->bounding_box.ymax))), route_time, net_route_time[iter][net->local_id].count(), mpi_time, net_mpi_time[iter][net->local_id].count(), mpi_time/route_time*100);
 		}
 		fclose(net_route_time_f);
+
+		for (int i = 0; i < mpi.comm_size; ++i) {
+			if (i != mpi.rank) {
+				sprintf(buffer, "%s/num_pending_send_reqs_iter_%d_to_rank_%d.txt", dirname, iter, i);
+				FILE *num_pending_send_reqs_f = fopen(buffer, "w");
+				for (const auto &n : mpi.num_pending_reqs_by_time[i]){
+					fprintf(num_pending_send_reqs_f, "%d\n", n);
+				}
+				fclose(num_pending_send_reqs_f);
+			}
+		}
 
 		total_sync_time += mpi_perf.total_sync_time;
 		total_broadcast_time += mpi_perf.total_broadcast_time;

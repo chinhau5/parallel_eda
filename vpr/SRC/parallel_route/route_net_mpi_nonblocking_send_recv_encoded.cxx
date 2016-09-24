@@ -523,6 +523,9 @@ void sync_combined_wait(const vector<net_t> &nets, congestion_t *congestion, con
 	for (int i = 0; i < mpi->comm_size; ++i) {
 		mpi->max_pending_send_reqs_by_rank[i] = std::max(mpi->max_pending_send_reqs_by_rank[i], mpi->num_pending_reqs_by_rank[i]);
 	}
+	for (int i = 0; i < mpi->comm_size; ++i) {
+		mpi->num_pending_reqs_by_time[i].push_back(mpi->num_pending_reqs_by_rank[i]);
+	}
 
 	vector<MPI_Status> statuses(mpi->pending_send_req.size());
 
@@ -533,6 +536,10 @@ void sync_combined_wait(const vector<net_t> &nets, congestion_t *congestion, con
 	for (int i = 0; i < mpi->pending_send_req.size(); ++i) {
 		if (statuses[i].MPI_TAG == MPI_ANY_TAG && statuses[i].MPI_SOURCE == MPI_ANY_SOURCE && statuses[i].MPI_ERROR == MPI_SUCCESS) {
 			/*empty status*/
+			//int num_recvd;
+			//int error = MPI_Get_count(&statuses[i], MPI_INT, &num_recvd);
+			//assert(error == MPI_SUCCESS);
+			//assert(num_recvd == 0);
 		} else {
 			handle_completed_request(i, statuses[i], nets, congestion, g, pres_fac, net_route_trees, mpi, mpi_perf);
 		}
@@ -547,6 +554,9 @@ void sync_combined(const vector<net_t> &nets, congestion_t *congestion, const RR
 	mpi->max_active_reqs = std::max(mpi->max_active_reqs, mpi->num_pending_reqs);
 	for (int i = 0; i < mpi->comm_size; ++i) {
 		mpi->max_pending_send_reqs_by_rank[i] = std::max(mpi->max_pending_send_reqs_by_rank[i], mpi->num_pending_reqs_by_rank[i]);
+	}
+	for (int i = 0; i < mpi->comm_size; ++i) {
+		mpi->num_pending_reqs_by_time[i].push_back(mpi->num_pending_reqs_by_rank[i]);
 	}
 
 	if (mpi->completed_indices.size() < mpi->pending_send_req.size()) {
@@ -771,6 +781,7 @@ void route_net_mpi_nonblocking_send_recv_encoded(const RRGraph &g, int vpr_id, i
 	//zlog_level(delta_log, ROUTER_V3, "Net %d blocking wait %d\n", net_id, blocking_wait ? 1 : 0);
 
 	int isink = 0;
+	RRNode existing_opin = RRGraph::null_vertex();
 	for (const auto &sink : sorted_sinks) {
 		//if (delayed_progress && isink > 0 && mpi->comm_size > 1) {
 			//auto progress_start = clock::now();
@@ -819,12 +830,16 @@ void route_net_mpi_nonblocking_send_recv_encoded(const RRGraph &g, int vpr_id, i
 				state[item.rr_node] = item;
 				modified.push_back(item.rr_node);
 
-				expand_neighbors(g, item.rr_node, state, congestion, sink_rr_node, sink->criticality_fac, params->astar_fac, [&g, &sink, &sink_rr_node, &v, &item] (const RRNode &n) -> bool {
+				expand_neighbors(g, item.rr_node, state, congestion, sink_rr_node, sink->criticality_fac, params->astar_fac, [&g, &sink, &sink_rr_node, &v, &item, &existing_opin] (const RRNode &n) -> bool {
 
 					/*if (trace_has_node(prev_trace, id(n))) {*/
 						/*zlog_level(delta_log, ROUTER_V3, " existing node route tree ");*/
 					/*}*/
 					const auto &prop = get_vertex_props(g, n);
+
+					if (existing_opin != RRGraph::null_vertex() && prop.type == OPIN && n != existing_opin) {
+					return false;
+					}
 
 					if (prop.xhigh < sink->current_bounding_box.xmin
 							|| prop.xlow > sink->current_bounding_box.xmax
@@ -937,9 +952,9 @@ void route_net_mpi_nonblocking_send_recv_encoded(const RRGraph &g, int vpr_id, i
 					auto &rt_edge_props = get_edge_props(rt.graph, rt_edge);
 					rt_edge_props.rr_edge = edge;
 
-					//if (parent_rr_node_p.type == OPIN && existing_opin == RRGraph::null_vertex()) {
-						//existing_opin = parent_rr_node;
-					//}
+					if (parent_rr_node_p.type == OPIN && existing_opin == RRGraph::null_vertex()) {
+						existing_opin = parent_rr_node;
+					}
 
 					child_rr_node = parent_rr_node;
 
@@ -1036,7 +1051,6 @@ void route_net_mpi_nonblocking_send_recv_encoded(const RRGraph &g, int vpr_id, i
 			}
 #endif
 		}
-
 
 		for (const auto &m : modified)  {
 			state[m].known_cost = std::numeric_limits<float>::max();
