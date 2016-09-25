@@ -233,6 +233,11 @@ typedef struct request_meta_t {
 	int data_count;
 } request_meta_t;
 
+typedef struct large_t {
+	int data_index;
+	int data_offset;
+} large_t;
+
 typedef struct mpi_context_t {
 	MPI_Comm comm;
 	int rank;
@@ -253,6 +258,8 @@ typedef struct mpi_context_t {
 	int num_pending_reqs;
 	vector<int> num_pending_reqs_by_rank;
 	vector<vector<int>> num_pending_reqs_by_time;
+
+	vector<large_t> large_packets;
 
 	vector<bool> received_last_update; 
 

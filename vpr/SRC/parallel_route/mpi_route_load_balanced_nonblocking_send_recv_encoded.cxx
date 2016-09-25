@@ -43,7 +43,6 @@ void send_route_tree(const net_t *net, const vector<route_tree_t> &route_trees, 
 void recv_route_tree(const net_t *net, const RRGraph &g, vector<route_tree_t> &route_trees, t_net_timing *net_timing, int from_procid, MPI_Comm comm);
 void init_route_structs(const RRGraph &g, const vector<net_t> &nets, const vector<net_t> &global_nets, route_state_t **states, congestion_t **congestion, vector<route_tree_t> &route_trees, t_net_timing **net_timing);
 
-void broadcast_rip_up_nonblocking(int net_id, mpi_context_t *mpi);
 void route_net_mpi_nonblocking_send_recv_encoded(const RRGraph &g, int vpr_id, int net_id, const source_t *source, const vector<sink_t *> &sinks, const t_router_opts *params, float pres_fac, const vector<net_t> &nets, const vector<vector<net_t *>> &partition_nets, int current_net_index, route_state_t *state, congestion_t *congestion, route_tree_t &rt, t_net_timing &net_timing, vector<vector<RRNode>> &net_route_trees, mpi_context_t *mpi, perf_t *perf, mpi_perf_t *mpi_perf, bool delayed_progress);
 void bootstrap_irecv(mpi_context_t *mpi);
 void bootstrap_irecv_combined(mpi_context_t *mpi);
@@ -53,7 +52,6 @@ void sync_combined(const vector<net_t> &nets, congestion_t *congestion, const RR
 void sync_combined_wait(const vector<net_t> &nets, congestion_t *congestion, const RRGraph &g, float pres_fac, vector<vector<RRNode>> &net_route_trees, mpi_context_t *mpi, mpi_perf_t *mpi_perf);
 void progress_sends_testsome(mpi_context_t *mpi);
 void progress_sends_waitall(mpi_context_t *mpi);
-void broadcast_nonblocking(int data_index, int size, int tag, mpi_context_t *mpi);
 void broadcast_rip_up_nonblocking(int net_id, mpi_context_t *mpi);
 void broadcast_trailer_nonblocking(mpi_context_t *mpi);
 void dump_rr_graph(const RRGraph &g, const char *filename);
@@ -656,6 +654,7 @@ bool mpi_route_load_balanced_nonblocking_send_recv_encoded(t_router_opts *opts, 
 	mpi.num_pending_reqs_by_rank.resize(mpi.comm_size, 0);
 	mpi.num_pending_reqs_by_time.resize(mpi.comm_size);
 	mpi.max_pending_send_reqs_by_rank.resize(mpi.comm_size);
+	mpi.large_packets.resize(mpi.comm_size, large_t { -1, -1 });
 
     for (iter = 0; iter < opts->max_router_iterations && !routed && !idling; ++iter) {
         clock::duration actual_route_time = clock::duration::zero();
