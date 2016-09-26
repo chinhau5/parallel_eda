@@ -649,9 +649,9 @@ void sync_combined_wait(const vector<net_t> &nets, congestion_t *congestion, con
 	for (int i = 0; i < mpi->comm_size; ++i) {
 		mpi->max_pending_send_reqs_by_rank[i] = std::max(mpi->max_pending_send_reqs_by_rank[i], mpi->num_pending_reqs_by_rank[i]);
 	}
-	for (int i = 0; i < mpi->comm_size; ++i) {
-		mpi->num_pending_reqs_by_time[i].push_back(mpi->num_pending_reqs_by_rank[i]);
-	}
+	//for (int i = 0; i < mpi->comm_size; ++i) {
+		//mpi->num_pending_reqs_by_time[i].push_back(mpi->num_pending_reqs_by_rank[i]);
+	//}
 
 	vector<MPI_Status> statuses(mpi->pending_send_req.size());
 
@@ -681,9 +681,9 @@ void sync_combined(const vector<net_t> &nets, congestion_t *congestion, const RR
 	for (int i = 0; i < mpi->comm_size; ++i) {
 		mpi->max_pending_send_reqs_by_rank[i] = std::max(mpi->max_pending_send_reqs_by_rank[i], mpi->num_pending_reqs_by_rank[i]);
 	}
-	for (int i = 0; i < mpi->comm_size; ++i) {
-		mpi->num_pending_reqs_by_time[i].push_back(mpi->num_pending_reqs_by_rank[i]);
-	}
+	//for (int i = 0; i < mpi->comm_size; ++i) {
+		//mpi->num_pending_reqs_by_time[i].push_back(mpi->num_pending_reqs_by_rank[i]);
+	//}
 
 	if (mpi->completed_indices.size() < mpi->pending_send_req.size()) {
 		mpi->completed_indices.resize(2*mpi->pending_send_req.size());
