@@ -745,11 +745,12 @@ struct s_router_opts {
     SchedulerType scheduler;
     int bb_expand_threshold;
     boolean rip_up_always;
-	   boolean large_bb;
-	   boolean work_conserving;
-	   boolean load_balanced;
-	   boolean sync_only_once;
-	   int progress_freq;
+	boolean large_bb;
+	boolean work_conserving;
+	boolean load_balanced;
+	boolean sync_only_once;
+	int progress_freq;
+	char *log_dir;
 };
 
 /* All the parameters controlling the router's operation are in this        *

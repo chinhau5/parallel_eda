@@ -89,6 +89,7 @@ enum e_OptionBaseToken {
 	OT_LOAD_BALANCED,
 	OT_SYNC_ONLY_ONCE,
 	OT_PROGRESS_FREQ,
+	OT_LOG_DIR,
 	OT_BASE_UNKNOWN /* Must be last since used for counting enum items */
 };
 

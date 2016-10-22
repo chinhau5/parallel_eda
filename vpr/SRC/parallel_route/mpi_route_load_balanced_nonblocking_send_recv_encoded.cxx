@@ -1,6 +1,7 @@
 #include "pch.h"
 
 #include <mpi.h>
+#include <sys/stat.h>
 
 #include "vpr_types.h"
 #include "path_delay.h"
@@ -656,11 +657,79 @@ bool mpi_route_load_balanced_nonblocking_send_recv_encoded(t_router_opts *opts, 
 	//
 	//
 
+	//char *mkerror = mkdtemp(dirname);
+	//assert(mkerror != NULL);
+
 	extern char *s_circuit_name;
 	char dirname[256];
-	sprintf(dirname, "%s_rank_%d_stats_XXXXXX", s_circuit_name, mpi.rank);
-	char *mkerror = mkdtemp(dirname);
-	assert(mkerror != NULL);
+
+	int dir_index;
+	if (mpi.rank == 0) {
+		int fd = open(".lock", O_CREAT | O_WRONLY, 0600);
+		if (fd == -1) {
+			printf("failed to create lock\n");
+			exit(-1);
+		}
+		if (lockf(fd, F_LOCK, 0) == -1) {
+			printf("failed to lock\n");
+			exit(-1);
+		}
+
+		struct stat s;
+
+		if (!opts->log_dir) {
+			bool dir_exists;
+			dir_index = 0;
+			do {
+				sprintf(dirname, "%s_stats_%d", s_circuit_name, dir_index);
+				dir_exists = stat(dirname, &s) == 0 ? true : false;
+				if (dir_exists) {
+					++dir_index;
+				}
+			} while (dir_exists);
+		} else {
+			sprintf(dirname, opts->log_dir);
+
+			if (stat(dirname, &s) == 0) {
+				printf("log dir %s already exists\n", dirname);
+				dir_index = -1;
+			} else {
+				dir_index = 0;
+			}
+		}
+
+		if (dir_index >= 0) {
+			if (mkdir(dirname, 0700) == -1) {
+				printf("failed to create dir %s\n", dirname);
+				exit(-1);
+			}
+		}
+
+		if (lockf(fd, F_ULOCK, 0) == -1) {
+			printf("failed to unlock\n");
+			exit(-1);
+		}
+
+		MPI_Bcast(&dir_index, 1, MPI_INT, 0, mpi.comm);
+	} else {
+		MPI_Bcast(&dir_index, 1, MPI_INT, 0, mpi.comm);
+
+		if (!opts->log_dir) {
+			assert(dir_index >= 0);
+			sprintf(dirname, "%s_stats_%d", s_circuit_name, dir_index);
+		} else {
+			if (dir_index == 0) {
+				sprintf(dirname, opts->log_dir);
+			} else {
+				assert(dir_index == -1);
+			}
+		}
+	}
+
+	if (dir_index < 0) {
+		printf("failed to create log dir %s\n", dirname);
+		exit(-1);
+	}
 
     bool routed = false;
 	bool idling = false;
@@ -786,7 +855,7 @@ bool mpi_route_load_balanced_nonblocking_send_recv_encoded(t_router_opts *opts, 
 
         zlog_info(delta_log, "Routing iteration: %d\n", iter);
 		if (mpi.rank == 0) {
-			printf("Routing iteration: %d\n", iter);
+			printf("Routing iteration: %d Level: %d\n", iter, current_level);
 		}
 
 		MPI_Barrier(mpi.comm);
@@ -1061,7 +1130,7 @@ bool mpi_route_load_balanced_nonblocking_send_recv_encoded(t_router_opts *opts, 
 		assert(mpi.free_send_data_index.size() == mpi.pending_send_data_nbc.size()-mpi.comm_size);
 		assert(mpi.free_send_req_index.size() == mpi.pending_send_req.size()-mpi.comm_size);
 
-		sprintf(buffer, "%s/net_route_time_iter_%d.txt", dirname, iter);
+		sprintf(buffer, "%s/net_route_time_iter_%d_rank_%d.txt", dirname, iter, mpi.rank);
 		FILE *net_route_time_f = fopen(buffer, "w");
 		for (const auto &net : partition_nets[mpi.rank]) {
 			float route_time = duration_cast<nanoseconds>(net_route_time[iter][net->local_id]).count() / 1e9;
@@ -1070,16 +1139,16 @@ bool mpi_route_load_balanced_nonblocking_send_recv_encoded(t_router_opts *opts, 
 		}
 		fclose(net_route_time_f);
 
-		for (int i = 0; i < mpi.comm_size; ++i) {
-			if (i != mpi.rank) {
-				sprintf(buffer, "%s/num_pending_send_reqs_iter_%d_to_rank_%d.txt", dirname, iter, i);
-				FILE *num_pending_send_reqs_f = fopen(buffer, "w");
-				for (const auto &n : mpi.num_pending_reqs_by_time[i]){
-					fprintf(num_pending_send_reqs_f, "%d\n", n);
-				}
-				fclose(num_pending_send_reqs_f);
-			}
-		}
+		//for (int i = 0; i < mpi.comm_size; ++i) {
+			//if (i != mpi.rank) {
+				//sprintf(buffer, "%s/num_pending_send_reqs_iter_%d_rank_%d_to_rank_%d.txt", dirname, iter, mpi.rank, i);
+				//FILE *num_pending_send_reqs_f = fopen(buffer, "w");
+				//for (const auto &n : mpi.num_pending_reqs_by_time[i]){
+					//fprintf(num_pending_send_reqs_f, "%d\n", n);
+				//}
+				//fclose(num_pending_send_reqs_f);
+			//}
+		//}
 
 		total_sync_time += mpi_perf.total_sync_time;
 		total_broadcast_time += mpi_perf.total_broadcast_time;
@@ -1087,6 +1156,9 @@ bool mpi_route_load_balanced_nonblocking_send_recv_encoded(t_router_opts *opts, 
 		total_send_testsome_time += mpi_perf.total_send_testsome_time;
 		total_last_progress_time += last_progress_time;
 		total_last_sync_time += last_sync_time;
+		total_actual_route_time += actual_route_time;
+        total_route_time += route_time;
+		total_wait_time += wait_time;
 
 		int total_num_sinks_to_route;
 		if (mpi.rank == 0) {
@@ -1289,6 +1361,51 @@ bool mpi_route_load_balanced_nonblocking_send_recv_encoded(t_router_opts *opts, 
         zlog_level(delta_log, ROUTER_V1, "Average overused net bb rank: %g\n", (float)overused_total_bb_rank/num_congested_nets);
         zlog_level(delta_log, ROUTER_V1, "Num congested nets: %d\n", num_congested_nets);
 
+		unsigned long num_overused_nodes = 0;
+		vector<int> overused_nodes_by_type(NUM_RR_TYPES, 0);
+		for (int i = 0; i < num_vertices(partitioner.orig_g); ++i) {
+			if (congestion[i].occ > get_vertex_props(partitioner.orig_g, i).capacity) {
+				const auto &v_p = get_vertex_props(partitioner.orig_g, i);
+				++overused_nodes_by_type[v_p.type];
+
+				++num_overused_nodes;
+			}
+		}
+
+		static const char *name_type[] = { "SOURCE", "SINK", "IPIN", "OPIN",
+			"CHANX", "CHANY", "INTRA_CLUSTER_EDGE" };
+		zlog_info(delta_log, "Num overused nodes: %lu/%d (%.2f)\n", num_overused_nodes, num_vertices(partitioner.orig_g), num_overused_nodes*100.0/num_vertices(partitioner.orig_g));
+		for (int i = 0; i < overused_nodes_by_type.size(); ++i) {
+			zlog_info(delta_log, "\t%s: %d (%g)\n", name_type[i], overused_nodes_by_type[i], overused_nodes_by_type[i]*100.0/num_overused_nodes);
+		}
+
+		vector<int> all_overused_nodes_by_type(mpi.comm_size*NUM_RR_TYPES);
+		vector<int> packed_overused_nodes_by_type(NUM_RR_TYPES);
+		for (int i = 0; i < overused_nodes_by_type.size(); ++i) {
+			packed_overused_nodes_by_type[i] = overused_nodes_by_type[i];
+		}
+
+		MPI_Gather(packed_overused_nodes_by_type.data(), NUM_RR_TYPES, MPI_INT, all_overused_nodes_by_type.data(), NUM_RR_TYPES, MPI_INT, 0, mpi.comm);
+
+		vector<unsigned long> all_num_overused_nodes(mpi.comm_size);
+		MPI_Gather(&num_overused_nodes, 1, MPI_UNSIGNED_LONG, all_num_overused_nodes.data(), 1, MPI_UNSIGNED_LONG, 0, mpi.comm);
+
+		if (mpi.rank == 0) {
+			printf("Num overused nodes: ");
+			for (int i = 0; i < mpi.comm_size; ++i) {
+				printf("%lu/%d (%.2f) ", all_num_overused_nodes[i], num_vertices(partitioner.orig_g), all_num_overused_nodes[i]*100.0/num_vertices(partitioner.orig_g));
+			}
+			printf("\n");
+
+			for (int i = 0; i < overused_nodes_by_type.size(); ++i) {
+				printf("\t%s: ", name_type[i]);
+				for (int j = 0; j < mpi.comm_size; ++j) {
+					printf("%d (%g) ", all_overused_nodes_by_type[j*NUM_RR_TYPES+i], all_overused_nodes_by_type[j*NUM_RR_TYPES+i]*100.0/all_num_overused_nodes[j]);
+				}
+				printf("\n");
+			}
+		} 
+
         iter_start = our_clock::now();
 
         auto analyze_timing_start = our_clock::now();
@@ -1370,9 +1487,6 @@ bool mpi_route_load_balanced_nonblocking_send_recv_encoded(t_router_opts *opts, 
 
 		update_cost_time = our_clock::now()-update_cost_start;
 
-		total_actual_route_time += actual_route_time;
-        total_route_time += route_time;
-		total_wait_time += wait_time;
         total_analyze_timing_time += analyze_timing_time;
         total_update_cost_time += update_cost_time;
 
@@ -1380,57 +1494,8 @@ bool mpi_route_load_balanced_nonblocking_send_recv_encoded(t_router_opts *opts, 
             //dump_route(*current_traces_ptr, "route.txt");
 			routed = true;	
         } else {
-            unsigned long num_overused_nodes = 0;
-			vector<int> overused_nodes_by_type(NUM_RR_TYPES, 0);
-            for (int i = 0; i < num_vertices(partitioner.orig_g); ++i) {
-                if (congestion[i].occ > get_vertex_props(partitioner.orig_g, i).capacity) {
-					const auto &v_p = get_vertex_props(partitioner.orig_g, i);
-					++overused_nodes_by_type[v_p.type];
-
-                    ++num_overused_nodes;
-                }
-            }
-
-			static const char *name_type[] = { "SOURCE", "SINK", "IPIN", "OPIN",
-				"CHANX", "CHANY", "INTRA_CLUSTER_EDGE" };
-            zlog_info(delta_log, "Num overused nodes: %lu/%d (%.2f)\n", num_overused_nodes, num_vertices(partitioner.orig_g), num_overused_nodes*100.0/num_vertices(partitioner.orig_g));
-			for (int i = 0; i < overused_nodes_by_type.size(); ++i) {
-				zlog_info(delta_log, "\t%s: %d (%g)\n", name_type[i], overused_nodes_by_type[i], overused_nodes_by_type[i]*100.0/num_overused_nodes);
-			}
-
-			int *all_overused_nodes_by_type = new int[mpi.comm_size*NUM_RR_TYPES];
-			int *overused_nodes_by_type_send = new int[NUM_RR_TYPES];
-			for (int i = 0; i < overused_nodes_by_type.size(); ++i) {
-				overused_nodes_by_type_send[i] = overused_nodes_by_type[i];
-			}
-
-			MPI_Gather(overused_nodes_by_type_send, NUM_RR_TYPES, MPI_INT, all_overused_nodes_by_type, NUM_RR_TYPES, MPI_INT, 0, mpi.comm);
-
-			unsigned long *all_num_overused_nodes = new unsigned long[mpi.comm_size];
-			MPI_Gather(&num_overused_nodes, 1, MPI_UNSIGNED_LONG, all_num_overused_nodes, 1, MPI_UNSIGNED_LONG, 0, mpi.comm);
-
-			if (mpi.rank == 0) {
-				printf("Num overused nodes: ");
-				for (int i = 0; i < mpi.comm_size; ++i) {
-					printf("%lu/%d (%.2f) ", all_num_overused_nodes[i], num_vertices(partitioner.orig_g), all_num_overused_nodes[i]*100.0/num_vertices(partitioner.orig_g));
-				}
-				printf("\n");
-
-				for (int i = 0; i < overused_nodes_by_type.size(); ++i) {
-					printf("\t%s: ", name_type[i]);
-					for (int j = 0; j < mpi.comm_size; ++j) {
-						printf("%d (%g) ", all_overused_nodes_by_type[j*NUM_RR_TYPES+i], all_overused_nodes_by_type[j*NUM_RR_TYPES+i]*100.0/all_num_overused_nodes[j]);
-					}
-					printf("\n");
-				}
-			} 
-
-			delete [] all_overused_nodes_by_type;
-			delete [] overused_nodes_by_type_send;
-			delete [] all_num_overused_nodes;
-
-			//int not_decreasing = (num_overused_nodes >= prev_num_overused_nodes && iter > 10) ? 1 : 0;
-			int not_decreasing = iter > 1;
+			int not_decreasing = (num_overused_nodes >= prev_num_overused_nodes && iter > 10) ? 1 : 0;
+			//int not_decreasing = iter > 1;
 			//int not_decreasing = current_level+1 < partitioner.result_pid_by_level.size(); [> testing <]
 			//int not_decreasing = current_level+1 <= std::log2(initial_comm_size); [> testing <]
 			//int reduced_not_decreasing;
@@ -1541,7 +1606,6 @@ bool mpi_route_load_balanced_nonblocking_send_recv_encoded(t_router_opts *opts, 
 
 				if (!idling) {
 					//assert(current_level < partitioner.result_pid_by_level.size());
-					printf("[%d] Transitioned to level %d at iteration %d\n", mpi.rank, current_level, iter);
 					zlog_level(delta_log, ROUTER_V1, "Transitioned to level %d at iteration %d\n", current_level, iter);
 					zlog_level(delta_log, ROUTER_V1, "New pid %d for initial pid %d\n", mpi.rank, initial_rank);
 

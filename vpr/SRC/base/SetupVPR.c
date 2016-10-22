@@ -531,6 +531,11 @@ static void SetupRouterOpts(INP t_options Options, INP boolean TimingEnabled,
 	if (Options.Count[OT_PROGRESS_FREQ]) {
 		RouterOpts->progress_freq = Options.progress_freq;
 	}
+
+	RouterOpts->log_dir = 0;
+	if (Options.Count[OT_LOG_DIR]) {
+		RouterOpts->log_dir = Options.log_dir;
+	}
 }
 
 static void SetupAnnealSched(INP t_options Options,

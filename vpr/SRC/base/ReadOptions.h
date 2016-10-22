@@ -93,6 +93,7 @@ struct s_options {
     boolean load_balanced;
     boolean sync_only_once;
     int progress_freq;
+    char *log_dir;
 
 	/* Timing-driven router options only */
 	float astar_fac;

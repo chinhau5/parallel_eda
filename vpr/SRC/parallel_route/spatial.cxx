@@ -2837,8 +2837,8 @@ void recv_route_tree(const net_t *net, const RRGraph &g, vector<route_tree_t> &r
 	assert(count > 0);
 	assert(status.MPI_TAG == net->local_id);
 
-	path_node_send_t *recv = new path_node_send_t[count];
-	MPI_Recv(recv, count, pn_send_dt, status.MPI_SOURCE, status.MPI_TAG, comm, MPI_STATUS_IGNORE);
+	vector<path_node_send_t> recv(count);
+	MPI_Recv(recv.data(), count, pn_send_dt, status.MPI_SOURCE, status.MPI_TAG, comm, MPI_STATUS_IGNORE);
 
 	char buffer[256];
 	zlog_level(delta_log, ROUTER_V3, "Recv route tree of net %d\n", net->vpr_id);
@@ -2849,12 +2849,12 @@ void recv_route_tree(const net_t *net, const RRGraph &g, vector<route_tree_t> &r
 	for (int i = 0; i < count; ++i) {
 		int rr_node = recv[i].rr_node_id;
 
-		RREdge rr_edge_to_parent;
-		if (recv[i].parent_rr_node == RRGraph::null_vertex()) {
-			rr_edge_to_parent = RRGraph::null_edge();
-		} else {
-			rr_edge_to_parent = get_edge(g, recv[i].parent_rr_node, rr_node);
-		}
+		//RREdge rr_edge_to_parent;
+		//if (recv[i].parent_rr_node == RRGraph::null_vertex()) {
+			//rr_edge_to_parent = RRGraph::null_edge();
+		//} else {
+			//rr_edge_to_parent = get_edge(g, recv[i].parent_rr_node, rr_node);
+		//}
 
 		const auto &rr_node_p = get_vertex_props(g, rr_node);
 
@@ -2905,8 +2905,6 @@ void recv_route_tree(const net_t *net, const RRGraph &g, vector<route_tree_t> &r
 	//assert(source_rt_node != RouteTree::null_vertex());
 	//int delta = num_out_edges(route_trees[net->local_id].graph, source_rt_node)-1;
 	//update_one_cost_internal(source_rr_node, g, congestion, delta, pres_fac);
-
-	delete [] recv;
 }
 
 void recv_route_tree(net_t *net, const RRGraph &g, vector<vector<sink_t *>> &routed_sinks, vector<route_tree_t> &route_trees, t_net_timing *net_timing, int from_procid, MPI_Comm comm)
@@ -3028,7 +3026,7 @@ void send_route_tree(const net_t *net, const vector<route_tree_t> &route_trees, 
 		++num_rt_nodes;
 	}
 
-	path_node_send_t *send = new path_node_send_t[num_rt_nodes];
+	vector<path_node_send_t> send(num_rt_nodes);
 
 	int i = 0;
 	for (const auto &rt_node : route_tree_get_nodes(route_trees[net->local_id])) {
@@ -3051,9 +3049,7 @@ void send_route_tree(const net_t *net, const vector<route_tree_t> &route_trees, 
 		++i;
 	}
 
-	MPI_Send(send, num_rt_nodes, pn_send_dt, to_procid, net->local_id, comm);
-
-	delete [] send;
+	MPI_Send(send.data(), num_rt_nodes, pn_send_dt, to_procid, net->local_id, comm);
 }
 
 void send_route_tree(const net_t *net, const vector<vector<sink_t *>> &routed_sinks, const vector<route_tree_t> &route_trees, int to_procid, MPI_Comm comm)
