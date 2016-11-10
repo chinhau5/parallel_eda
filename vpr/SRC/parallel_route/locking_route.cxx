@@ -25,6 +25,21 @@ using std::chrono::nanoseconds;
 
 void timing_driven_check_net_delays(float **net_delay);
 
+bool locking_route(t_router_opts *opts, int run);
+
+bool locking_route_driver(t_router_opts *opts)
+{
+	int num_routed = 0;
+	for (int i = 0; i < opts->num_runs; ++i) {
+		bool routed = locking_route(opts, i);
+		if (routed) {
+			++num_routed;
+		}
+	}
+	printf("%d/%d routed\n", num_routed, opts->num_runs);
+	return false;
+}
+
 bool locking_route(t_router_opts *opts, int run)
 {
 	tbb::task_scheduler_init init(opts->num_threads);
@@ -142,7 +157,7 @@ bool locking_route(t_router_opts *opts, int run)
 	params.astar_fac = opts->astar_fac;
 	params.max_criticality = opts->max_criticality;
 	params.bend_cost = opts->bend_cost;
-	params.pres_fac = opts->first_iter_pres_fac; /* Typically 0 -> ignore cong. */
+	float pres_fac = opts->first_iter_pres_fac; /* Typically 0 -> ignore cong. */
 
 	//vector<vector<virtual_net_t>> virtual_nets_by_net;
 	//create_clustered_virtual_nets(nets, 5, opts->max_sink_bb_area, virtual_nets_by_net);
@@ -296,7 +311,7 @@ bool locking_route(t_router_opts *opts, int run)
 						} else {
 							route_tree_mark_congested_nodes_to_be_ripped(route_trees[net->local_id], g, congestion);
 						}
-						route_tree_rip_up_marked(route_trees[net->local_id], g, congestion, params.pres_fac, true, &local_lock_perf);
+						route_tree_rip_up_marked(route_trees[net->local_id], g, congestion, pres_fac, true, &local_lock_perf);
 
 						//local_perf.total_rip_up_time += clock::now()-rip_up_start;
 
@@ -355,7 +370,7 @@ bool locking_route(t_router_opts *opts, int run)
 					} else {
 						route_tree_mark_congested_nodes_to_be_ripped(route_trees[net->local_id], g, congestion);
 					}
-					route_tree_rip_up_marked(route_trees[net->local_id], g, congestion, params.pres_fac, true, nullptr);
+					route_tree_rip_up_marked(route_trees[net->local_id], g, congestion, pres_fac, true, nullptr);
 
 					vector<const sink_t *> sinks;	
 					sinks.reserve(net->sinks.size());
@@ -405,7 +420,7 @@ bool locking_route(t_router_opts *opts, int run)
 							} else {
 								route_tree_mark_congested_nodes_to_be_ripped(route_trees[net->local_id], g, congestion);
 							}
-							route_tree_rip_up_marked(route_trees[net->local_id], g, congestion, params.pres_fac, true, &local_lock_perf);
+							route_tree_rip_up_marked(route_trees[net->local_id], g, congestion, pres_fac, true, &local_lock_perf);
 
 							vector<const sink_t *> sinks;	
 							sinks.reserve(net->sinks.size());
@@ -596,15 +611,15 @@ bool locking_route(t_router_opts *opts, int run)
 			auto update_cost_start = clock::now();
 
 			if (iter == 0) {
-				params.pres_fac = opts->initial_pres_fac;
-				update_costs(g, congestion, params.pres_fac, 0);
+				pres_fac = opts->initial_pres_fac;
+				update_costs(g, congestion, pres_fac, 0);
 			} else {
-				params.pres_fac *= opts->pres_fac_mult;
+				pres_fac *= opts->pres_fac_mult;
 
 				/* Avoid overflow for high iteration counts, even if acc_cost is big */
-				params.pres_fac = std::min(params.pres_fac, static_cast<float>(HUGE_POSITIVE_FLOAT / 1e5));
+				pres_fac = std::min(pres_fac, static_cast<float>(HUGE_POSITIVE_FLOAT / 1e5));
 
-				update_costs(g, congestion, params.pres_fac, opts->acc_fac);
+				update_costs(g, congestion, pres_fac, opts->acc_fac);
 			}
 
 			update_cost_time = clock::now()-update_cost_start;

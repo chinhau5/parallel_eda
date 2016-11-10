@@ -77,7 +77,7 @@ void expand_neighbors_deterministic(const RRGraph &g, int current, const route_s
 
 		item.known_cost = current_state->known_cost + known_cost;
 
-		float expected_cost = get_timing_driven_expected_cost(get_vertex_props(g, item.rr_node), target, criticality_fac, upstream_R);
+		float expected_cost = get_timing_driven_expected_cost(neighbor_p, target, criticality_fac, upstream_R);
 
 		item.cost = item.known_cost + astar_fac * expected_cost;
 
@@ -118,7 +118,7 @@ void get_path(int sink_rr_node_id, const route_state_t *state, const route_tree_
 	//callback(current_rr_node_id, RRGraph::null_edge());
 }
 
-vector<const sink_t *> route_net_deterministic(const RRGraph &g, int vpr_id, const source_t *source, const vector<const sink_t *> &sinks, const route_parameters_t &params, route_state_t *state, congestion_local_t *congestion, route_tree_t &rt, t_net_timing &net_timing, perf_t *perf)
+vector<const sink_t *> route_net_deterministic(const RRGraph &g, int vpr_id, const source_t *source, const vector<const sink_t *> &sinks, const route_parameters_t &params, route_state_t *state, float pres_fac, congestion_local_t *congestion, route_tree_t &rt, t_net_timing &net_timing, perf_t *perf)
 {
 	std::priority_queue<route_state_t> heap;
 
@@ -145,7 +145,7 @@ vector<const sink_t *> route_net_deterministic(const RRGraph &g, int vpr_id, con
 		route_tree_set_node_properties(rt, root_rt_node, true, source_rr_node.R, 0.5 * source_rr_node.R * source_rr_node.C);
 		route_tree_add_root(rt, source->rr_node);
 
-		/*update_one_cost_internal(source_rr_node, 1, params.pres_fac);*/
+		/*update_one_cost_internal(source_rr_node, 1, pres_fac);*/
 	} else {
 		assert(rt.root_rt_nodes.size() == 1);
 		const auto &rt_root_p = get_vertex_props(rt.graph, rt.root_rt_nodes[0]);
@@ -161,7 +161,6 @@ vector<const sink_t *> route_net_deterministic(const RRGraph &g, int vpr_id, con
 	}
 
 	int isink = 0;
-	int num_routed_sinks = 0;
 	vector<const sink_t *> unrouted_sinks;
 	RRNode existing_opin = RRGraph::null_vertex();
 	for (const auto &sink : sorted_sinks) {
@@ -253,13 +252,13 @@ vector<const sink_t *> route_net_deterministic(const RRGraph &g, int vpr_id, con
 			tptr->next = NULL;
 			temptail = tptr; /* This will become the new tail at the end */
 
+			sprintf_rr_node(sink->rr_node, buffer);
+			zlog_level(delta_log, ROUTER_V3, "Adding %s to route tree\n", buffer);
+
 			RouteTreeNode rt_node = route_tree_add_rr_node(rt, sink->rr_node, g);
 			assert(rt_node != RouteTree::null_vertex());
 			route_tree_set_node_properties(rt, rt_node, false, state[sink->rr_node].upstream_R, state[sink->rr_node].delay);
-			update_one_cost_internal(sink->rr_node, g, congestion, 1, params.pres_fac);
-
-			sprintf_rr_node(sink->rr_node, buffer);
-			zlog_level(delta_log, ROUTER_V3, "Adding %s to route tree\n", buffer);
+			update_one_cost_internal(sink->rr_node, g, congestion, 1, pres_fac);
 
 			RRNode child_rr_node = sink->rr_node;
 
@@ -269,17 +268,13 @@ vector<const sink_t *> route_net_deterministic(const RRGraph &g, int vpr_id, con
 
 					const auto &parent_rr_node_p = get_vertex_props(g, parent_rr_node);
 
-					RouteTreeNode rt_node = route_tree_add_rr_node(rt, parent_rr_node, g);
-					if (rt_node != RouteTree::null_vertex()) {
-						route_tree_set_node_properties(rt, rt_node, parent_rr_node_p.type != IPIN && parent_rr_node_p.type != SINK, state[parent_rr_node].upstream_R, state[parent_rr_node].delay);
-
-						update_one_cost_internal(parent_rr_node, g, congestion, 1, params.pres_fac);
-					} else if (get_vertex_props(g, parent_rr_node).type == SOURCE) {
-						update_one_cost_internal(parent_rr_node, g, congestion, 1, params.pres_fac);
-					}
-
 					sprintf_rr_node(parent_rr_node, buffer);
 					zlog_level(delta_log, ROUTER_V3, "Adding %s to route tree\n", buffer);
+
+					RouteTreeNode parent_rt_node = route_tree_add_rr_node(rt, parent_rr_node, g);
+					if (parent_rt_node != RouteTree::null_vertex()) {
+						route_tree_set_node_properties(rt, parent_rt_node, parent_rr_node_p.type != IPIN && parent_rr_node_p.type != SINK, state[parent_rr_node].upstream_R, state[parent_rr_node].delay);
+					}
 
 					assert(child_rr_node == get_target(g, edge));
 
@@ -295,6 +290,10 @@ vector<const sink_t *> route_net_deterministic(const RRGraph &g, int vpr_id, con
 					if (parent_rr_node_p.type == OPIN && existing_opin == RRGraph::null_vertex()) {
 						existing_opin = parent_rr_node;
 					}
+
+					if (parent_rt_node != RouteTree::null_vertex() || get_vertex_props(g, parent_rr_node).type == SOURCE) {
+						update_one_cost_internal(parent_rr_node, g, congestion, 1, pres_fac);
+					} 
 
 					child_rr_node = parent_rr_node;
 
@@ -319,8 +318,6 @@ vector<const sink_t *> route_net_deterministic(const RRGraph &g, int vpr_id, con
 			trace_tail[vpr_id] = temptail;
 
 			net_timing.delay[sink->id+1] = get_vertex_props(rt.graph, route_tree_get_rt_node(rt, sink->rr_node)).delay;
-
-			++num_routed_sinks;
 		}
 
 		for (const auto &m : modified)  {

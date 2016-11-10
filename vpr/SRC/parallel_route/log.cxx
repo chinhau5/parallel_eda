@@ -15,7 +15,7 @@ zlog_category_t *ss_log;
 
 using namespace std;
 
-map<string, FILE *> log_files;
+static map<string, FILE *> log_files;
 
 void init_logging()
 {
@@ -32,14 +32,12 @@ void init_logging()
 	ss_log = zlog_get_category("second_stage");
 }
 
-#define LOG_PATH_PREFIX "/tmp/"
-
 int concurrent_log_impl(zlog_msg_t *msg)
 {
 	auto iter = log_files.find(string(msg->path));
 	if (iter == end(log_files)) {
 		char filename[256];
-		sprintf(filename, "%s%s", LOG_PATH_PREFIX, msg->path);
+		sprintf(filename, "%s", msg->path);
 
 		FILE *file = fopen(filename, "w");
 		if (!file) {

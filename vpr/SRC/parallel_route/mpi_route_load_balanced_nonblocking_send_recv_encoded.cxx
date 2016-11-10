@@ -875,7 +875,7 @@ bool mpi_route_load_balanced_nonblocking_send_recv_encoded(t_router_opts *opts, 
 		//}
 		//
 
-		if (iter == 1 && opts->load_balanced) {
+		if (iter == 1 && opts->load_balanced && mpi.comm_size > 1) {
 			sync_net_route_time(partition_nets, net_route_time[0], &mpi);
 
 			repartition(nets_ptr, &net_route_time[0], opts->load_balanced, mpi.comm_size, current_level, initial_comm_size, net_partition_id, partition_nets, partitioner.orig_g, route_trees, net_route_trees, net_timing, mpi);

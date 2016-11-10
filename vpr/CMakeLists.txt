@@ -80,8 +80,8 @@ set(srcs
 	SRC/parallel_route/route_tree_timing_local.c
 	SRC/parallel_route/route_common_local.c
 	#SRC/parallel_route/fine.cxx
-	#SRC/parallel_route/locking_route.cxx
-	#SRC/parallel_route/locking_route_deterministic.cxx
+	SRC/parallel_route/locking_route.cxx
+	SRC/parallel_route/locking_route_deterministic.cxx
 	#SRC/parallel_route/locking_route_optimized.cxx
 	#SRC/parallel_route/phased.cxx
 	SRC/parallel_route/congestion.cxx
@@ -94,7 +94,7 @@ set(srcs
 	SRC/parallel_route/route_net_mpi_ibcast.cxx
 	SRC/parallel_route/route_net_mpi_nonblocking_send_recv_encoded.cxx
 	#SRC/parallel_route/route_net_with_fine_grain_lock.cxx
-	#SRC/parallel_route/route_net_deterministic.cxx
+	SRC/parallel_route/route_net_deterministic.cxx
 	SRC/parallel_route/init.cxx
 	SRC/parallel_route/log.cxx
 	SRC/parallel_route/spatial.cxx
@@ -115,6 +115,8 @@ set(srcs
 	SRC/parallel_route/mpi_route_load_balanced_nonblocking_send_recv_encoded.cxx
 	#SRC/parallel_route/astar.cxx
 	#SRC/parallel_route/partitioning_route.c
+	SRC/parallel_route/partitioning_delta_stepping_deterministic_route.cxx
+	SRC/parallel_route/delta_stepping.cxx
 	SRC/parallel_route/route_tree.c
 	#SRC/parallel_route/trace.c
 	SRC/parallel_route/utility.c

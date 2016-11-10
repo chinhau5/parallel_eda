@@ -201,7 +201,6 @@ void partition_nets_overlap_area_metric(vector<pair<box, Net>> &virtual_nets, in
 	assert(METIS_PartGraphRecursive(&nvtxs, &ncon, xadj, adjncy, vwgt, NULL, adjwgt, &nparts, NULL, &ubvec, options, &objval, part) == METIS_OK);
 	//assert(METIS_PartGraphRecursive(&nvtxs, &ncon, xadj, adjncy, vwgt, NULL, NULL, &nparts, NULL, NULL, options, &objval, part) == METIS_OK);
 //idx t *nvtxs, idx t *ncon, idx t *xadj, idx t *adjncy, idx t *vwgt, idx t *vsize, idx t *adjwgt, idx t *nparts, real t *tpwgts, real t ubvec, idx t *options, idx t *objval, idx t *part
-	printf("edgecut: %d\n", objval);
 	partitions.resize(num_partitions);
 	for (int i = 0; i < num_partitions; ++i) {
 		assert(partitions[i].empty());
@@ -209,13 +208,6 @@ void partition_nets_overlap_area_metric(vector<pair<box, Net>> &virtual_nets, in
 	for (int i = 0; i < virtual_nets.size(); ++i) {
 		assert(part[i] >= 0 && part[i] < partitions.size());
 		partitions[part[i]].push_back(i);
-	}
-	vector<int> partition_total_weight(num_partitions, 0);
-	for (int i = 0; i < virtual_nets.size(); ++i) {
-		partition_total_weight[part[i]] += vwgt[i];
-	}
-	for (int i = 0; i < num_partitions; ++i) {
-		printf("partition %d total weight %d\n", i, partition_total_weight[i]);
 	}
 
 	has_interpartition_overlap.resize(virtual_nets.size());

@@ -25,7 +25,7 @@ using std::chrono::nanoseconds;
 
 void timing_driven_check_net_delays(float **net_delay);
 
-vector<const sink_t *> route_net_deterministic(const RRGraph &g, int vpr_id, const source_t *source, const vector<const sink_t *> &sinks, const route_parameters_t &params, route_state_t *state, congestion_local_t *congestion, route_tree_t &rt, t_net_timing &net_timing, perf_t *perf);
+vector<const sink_t *> route_net_deterministic(const RRGraph &g, int vpr_id, const source_t *source, const vector<const sink_t *> &sinks, const route_parameters_t &params, route_state_t *state, float pres_fac, congestion_local_t *congestion, route_tree_t &rt, t_net_timing &net_timing, perf_t *perf);
 
 bool locking_route_deterministic(t_router_opts *opts, int run)
 {
@@ -146,7 +146,7 @@ bool locking_route_deterministic(t_router_opts *opts, int run)
 	params.astar_fac = opts->astar_fac;
 	params.max_criticality = opts->max_criticality;
 	params.bend_cost = opts->bend_cost;
-	params.pres_fac = opts->first_iter_pres_fac; /* Typically 0 -> ignore cong. */
+	float pres_fac = opts->first_iter_pres_fac; /* Typically 0 -> ignore cong. */
 
 	//vector<vector<virtual_net_t>> virtual_nets_by_net;
 	//create_clustered_virtual_nets(nets, 5, opts->max_sink_bb_area, virtual_nets_by_net);
@@ -255,6 +255,8 @@ bool locking_route_deterministic(t_router_opts *opts, int run)
 		if (!use_partitioned) {
 			auto greedy_route_start = clock::now();
 
+			tbb::spin_mutex commit_lock;
+
 			tbb::parallel_for(tbb::blocked_range<int>(0, opts->num_threads, 1),
 					[&] (const tbb::blocked_range<int> &range) {
 
@@ -299,7 +301,17 @@ bool locking_route_deterministic(t_router_opts *opts, int run)
 						} else {
 							route_tree_mark_congested_nodes_to_be_ripped(route_trees[net->local_id], g, &congestion[tid]);
 						}
-						route_tree_rip_up_marked(route_trees[net->local_id], g, &congestion[tid], params.pres_fac);
+						route_tree_rip_up_marked(route_trees[net->local_id], g, &congestion[tid], pres_fac);
+
+#ifdef __linux__
+						pthread_barrier_wait(&barrier);
+#endif
+
+						commit(&congestion[tid], commit_lock, g, pres_fac);
+
+#ifdef __linux__
+						pthread_barrier_wait(&barrier);
+#endif
 
 						//local_perf.total_rip_up_time += clock::now()-rip_up_start;
 
@@ -318,7 +330,7 @@ bool locking_route_deterministic(t_router_opts *opts, int run)
 						}
 
 						if (!sinks.empty()) {
-							route_net_deterministic(g, net->vpr_id, &net->source, sinks, params, states[tid], &congestion[tid], route_trees[net->local_id], net_timing[net->vpr_id], &local_perf);
+							route_net_deterministic(g, net->vpr_id, &net->source, sinks, params, states[tid], pres_fac, &congestion[tid], route_trees[net->local_id], net_timing[net->vpr_id], &local_perf);
 
 							++total_num_nets_routed;
 							++local_num_nets_routed;
@@ -334,20 +346,8 @@ bool locking_route_deterministic(t_router_opts *opts, int run)
 #ifdef __linux__
 						pthread_barrier_wait(&barrier);
 #endif
-						if (tid == 0) {
-							/* only one thread can do this to prevent race condition */
-							set<int> all_dirty_nodes;
-							for (int i = 0; i < opts->num_threads; ++i) {
-								commit(&congestion[i], all_dirty_nodes);
-							}
-							/* need to update pres cost of local here */
-							for (const auto &dirty_node : all_dirty_nodes) {
-								update_one_cost_internal(dirty_node, g, global.data(), 0, params.pres_fac);
-								for (int i = 0; i < opts->num_threads; ++i) {
-									congestion[i].local[dirty_node].pres_cost = global[dirty_node].pres_cost;
-								}
-							}
-						}
+
+						commit(&congestion[tid], commit_lock, g, pres_fac);
 
 #ifdef __linux__
 						pthread_barrier_wait(&barrier);
@@ -356,6 +356,8 @@ bool locking_route_deterministic(t_router_opts *opts, int run)
 
 #ifdef __linux__
 					for (; rounds < num_rounds; ++rounds) {
+						pthread_barrier_wait(&barrier);
+						pthread_barrier_wait(&barrier);
 						pthread_barrier_wait(&barrier);
 						pthread_barrier_wait(&barrier);
 					}
@@ -385,7 +387,7 @@ bool locking_route_deterministic(t_router_opts *opts, int run)
 					} else {
 						route_tree_mark_congested_nodes_to_be_ripped(route_trees[net->local_id], g, congestion);
 					}
-					route_tree_rip_up_marked(route_trees[net->local_id], g, congestion, params.pres_fac, true, nullptr);
+					route_tree_rip_up_marked(route_trees[net->local_id], g, congestion, pres_fac, true, nullptr);
 
 					vector<const sink_t *> sinks;	
 					sinks.reserve(net->sinks.size());
@@ -436,7 +438,7 @@ bool locking_route_deterministic(t_router_opts *opts, int run)
 							} else {
 								route_tree_mark_congested_nodes_to_be_ripped(route_trees[net->local_id], g, &congestion[tid]);
 							}
-							route_tree_rip_up_marked(route_trees[net->local_id], g, &congestion[tid], params.pres_fac);
+							route_tree_rip_up_marked(route_trees[net->local_id], g, &congestion[tid], pres_fac);
 
 							vector<const sink_t *> sinks;	
 							sinks.reserve(net->sinks.size());
@@ -450,7 +452,7 @@ bool locking_route_deterministic(t_router_opts *opts, int run)
 								}
 							}
 							if (!sinks.empty()) {
-								route_net_deterministic(g, net->vpr_id, &net->source, sinks, params, states[tid], &congestion[tid], route_trees[net->local_id], net_timing[net->vpr_id], &local_perf);
+								route_net_deterministic(g, net->vpr_id, &net->source, sinks, params, states[tid], pres_fac, &congestion[tid], route_trees[net->local_id], net_timing[net->vpr_id], &local_perf);
 
 								++total_num_nets_routed;
 								++local_num_nets_routed;
@@ -629,15 +631,15 @@ bool locking_route_deterministic(t_router_opts *opts, int run)
 			auto update_cost_start = clock::now();
 
 			if (iter == 0) {
-				params.pres_fac = opts->initial_pres_fac;
-				update_costs(g, global.data(), params.pres_fac, 0);
+				pres_fac = opts->initial_pres_fac;
+				update_costs(g, global.data(), pres_fac, 0);
 			} else {
-				params.pres_fac *= opts->pres_fac_mult;
+				pres_fac *= opts->pres_fac_mult;
 
 				/* Avoid overflow for high iteration counts, even if acc_cost is big */
-				params.pres_fac = std::min(params.pres_fac, static_cast<float>(HUGE_POSITIVE_FLOAT / 1e5));
+				pres_fac = std::min(pres_fac, static_cast<float>(HUGE_POSITIVE_FLOAT / 1e5));
 
-				update_costs(g, global.data(), params.pres_fac, opts->acc_fac);
+				update_costs(g, global.data(), pres_fac, opts->acc_fac);
 			}
 
 			update_cost_time = clock::now()-update_cost_start;
@@ -671,6 +673,19 @@ bool locking_route_deterministic(t_router_opts *opts, int run)
 			printf("Partition sizes: ");
 			for (int i = 0; i < partitions.size(); ++i) {
 				printf("%lu ", partitions[i].size());
+			}
+			printf("\n");
+
+			vector<int> partition_total_weight(partitions.size(), 0);
+			for (int i = 0; i < partitions.size(); ++i) {
+				for (const auto &net : partitions[i]) {
+					partition_total_weight[i] += bg::area(nets_to_partition[net].first);
+				}
+			}
+
+			printf("Partition weights: ");
+			for (int i = 0; i < partitions.size(); ++i) {
+				printf("%d ", partition_total_weight[i]);
 			}
 			printf("\n");
 		}

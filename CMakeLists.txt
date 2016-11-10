@@ -44,11 +44,11 @@ endif()
 
 #generic compile options go here
 add_compile_options(
-	#-D TBB_USE_DEBUG=1
+	-DTBB_USE_DEBUG
 	#-ferror-limit=0
 	-ftemplate-backtrace-limit=0
 	-std=c++11
-	-g -O3
+	-g -O0
 	#-Bdynamic
 	-Wall
 	#	-H
@@ -69,7 +69,6 @@ add_executable(Router vpr/SRC/main.c)
 
 if (CMAKE_SYSTEM_NAME STREQUAL "Linux")
 	set(link_libs
-		-Wl,--eh-frame-hdr
 		Vpr
 		X11
 		pthread
@@ -85,18 +84,15 @@ if (CMAKE_SYSTEM_NAME STREQUAL "Linux")
 else()
 	set(link_libs
 		Vpr
-		mpi_cxx 
 		mpi 
 		X11
 		pthread
 		dl 
 		m
 		zlog
-		boost_timer-mt-d
-		boost_system-mt-d
-		igraph
+		boost_timer-mt
+		boost_system-mt
 		tbb
-		mlpack
 		metis
 		)
 endif()

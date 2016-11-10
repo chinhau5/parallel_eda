@@ -320,7 +320,7 @@ void update_one_cost_internal(RRNode rr_node, const RRGraph &g, congestion_local
 
 	const auto &rr_node_p = get_vertex_props(g, rr_node);
 
-	if (get_occ(congestion, rr_node) < rr_node_p.capacity) {
+	if (new_occ < rr_node_p.capacity) {
 		set_pres_cost(congestion, rr_node, 1);
 	} else {
 		set_pres_cost(congestion, rr_node, 1 + (new_occ + 1 - rr_node_p.capacity) * pres_fac);

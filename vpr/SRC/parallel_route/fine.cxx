@@ -109,21 +109,6 @@ void bounding_box_overlap_stats(const vector<net_t> &nets)
 	}
 }
 
-bool locking_route(t_router_opts *opts, int run);
-
-bool locking_route_driver(t_router_opts *opts)
-{
-	int num_routed = 0;
-	for (int i = 0; i < opts->num_runs; ++i) {
-		bool routed = locking_route(opts, i);
-		if (routed) {
-			++num_routed;
-		}
-	}
-	printf("%d/%d routed\n", num_routed, opts->num_runs);
-	return false;
-}
-
 bool locking_route__1(t_router_opts *opts)
 {
 	tbb::task_scheduler_init init(opts->num_threads);

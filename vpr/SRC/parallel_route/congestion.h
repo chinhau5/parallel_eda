@@ -16,7 +16,11 @@ inline void add_occ(congestion_local_t *local, int node, int delta)
 
 inline float get_pres_cost(const congestion_local_t *local, int node)
 {
-	return local->local[node].pres_cost;
+	if (local->dirty_nodes.empty()) {
+		return local->global[node].pres_cost;
+	} else {
+		return local->local[node].pres_cost;
+	}
 }
 
 inline void set_pres_cost(congestion_local_t *local, int node, float pres_cost)
@@ -27,15 +31,18 @@ inline void set_pres_cost(congestion_local_t *local, int node, float pres_cost)
 
 inline float get_acc_cost(const congestion_local_t *local, int node)
 {
-	return local->global[node].pres_cost;
+	return local->global[node].acc_cost;
 }
 
-inline void commit(congestion_local_t *local, set<int> &all_dirty_nodes)
+void update_one_cost_internal(RRNode rr_node, const RRGraph &g, congestion_t *congestion, /*int net_id, */int delta, float pres_fac);
+
+inline void commit(congestion_local_t *local, tbb::spin_mutex &lock, const RRGraph &g, float pres_fac)
 {
 	for (const auto &dirty_node : local->dirty_nodes) {
-		local->global[dirty_node].occ += local->local[dirty_node].occ_delta;
+		lock.lock();
+		update_one_cost_internal(dirty_node, g, local->global, local->local[dirty_node].occ_delta, pres_fac);
+		lock.unlock();
 		local->local[dirty_node].occ_delta = 0;
-		all_dirty_nodes.insert(dirty_node);
 	}
 	local->dirty_nodes.clear();
 }
@@ -146,8 +153,6 @@ void update_one_cost_mpi_rma(const vector<RRNode>::const_iterator &rr_nodes_begi
 void update_one_cost_mpi_send(const vector<RRNode>::const_iterator &rr_nodes_begin, const vector<RRNode>::const_iterator &rr_nodes_end, const RRGraph &g, congestion_t *congestion, int delta, float pres_fac, int this_pid, int num_procs, MPI_Comm comm, vector<ongoing_transaction_t> &transactions);
 
 void update_one_cost_internal(RRNode rr_node, const RRGraph &g, congestion_locked_t *congestion, /*int net_id, */int delta, float pres_fac, bool lock, lock_perf_t *lock_perf);
-
-void update_one_cost_internal(RRNode rr_node, const RRGraph &g, congestion_t *congestion, /*int net_id, */int delta, float pres_fac);
 
 void update_one_cost_internal(RRNode rr_node, const RRGraph &g, congestion_local_t *congestion, int delta, float pres_fac);
 
