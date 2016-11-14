@@ -106,6 +106,7 @@ typedef struct net_t {
 	//source_t previous_source;
 	/*bool previous_source_valid;*/
 	std::vector<sink_t> sinks;
+	bounding_box_t bounding_box;
 
 	vector<struct virtual_net_t *> virtual_nets;
 
@@ -126,7 +127,6 @@ typedef struct net_t {
 	vector<bool> sink_routed;
 	source_t current_source;
 
-	bounding_box_t bounding_box;
 	std::vector<bool> overlapping_nets;
 	std::vector<bool> non_overlapping_nets;
 	int num_overlapping_nets;

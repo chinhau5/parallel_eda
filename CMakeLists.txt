@@ -48,7 +48,7 @@ add_compile_options(
 	#-ferror-limit=0
 	-ftemplate-backtrace-limit=0
 	-std=c++11
-	-g -O0
+	-g -O3
 	#-Bdynamic
 	-Wall
 	#	-H

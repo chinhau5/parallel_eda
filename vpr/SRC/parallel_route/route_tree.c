@@ -102,7 +102,11 @@ RouteTreeNode route_tree_add_rr_node(route_tree_t &rt, RRNode rr_node, const RRG
 		/*rt_node_p->branch_point = false;*/
 		rt_node_p->num_iterations_fixed = 0;
 
-		const auto &rr_node_p = get_vertex_props(g, rr_node);
+		rt_node_p->reexpand = false;
+		rt_node_p->upstream_R = std::numeric_limits<float>::max();
+		rt_node_p->delay = std::numeric_limits<float>::max();
+
+		/*const auto &rr_node_p = get_vertex_props(g, rr_node);*/
 
 		/*segment seg(point(rr_node_p.xlow, rr_node_p.ylow), point(rr_node_p.xhigh, rr_node_p.yhigh));*/
 
@@ -444,6 +448,7 @@ void route_tree_remove_edge(route_tree_t &rt, const RouteTreeEdge &rt_edge)
 	zlog_level(delta_log, ROUTER_V2, "Removing edge %s -> %s\n", s_from, s_to);
 
 	remove_edge(rt.graph, rt_edge);
+	assert(valid(to_p.rt_edge_to_parent));
 	to_p.rt_edge_to_parent = RouteTree::null_edge();
 }
 

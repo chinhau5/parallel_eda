@@ -12,9 +12,204 @@
 #include "route_tree.h"
 #include "congestion.h"
 #include "router.h"
+#include "geometry.h"
+#include "clock.h"
+#include <boost/range/adaptor/transformed.hpp>
 
 float get_timing_driven_expected_cost(const rr_node_property_t &current, const rr_node_property_t &target, float criticality_fac, float R_upstream);
 void update_sink_criticalities(net_t &net, const t_net_timing &net_timing, const route_parameters_t &params);
+
+using rtree_value = pair<box, net_t *>;
+
+struct net_to_rtree_item {
+	rtree_value operator()(net_t *net) const
+	{
+		return make_pair(box(point(net->bounding_box.xmin, net->bounding_box.ymin), point(net->bounding_box.xmax, net->bounding_box.ymax)), net);
+	}
+};
+
+struct rtree_value_equal {
+	bool operator()(const rtree_value &a, const rtree_value &b) const
+	{
+		return bg::equals(a.first, b.first) && a.second == b.second;
+	}
+};
+
+void test_rtree(vector<net_t> &nets)
+{
+	using clock = std::chrono::high_resolution_clock;
+	using std::chrono::duration_cast;
+	using std::chrono::nanoseconds;
+
+	vector<net_t *> sorted_nets;
+	for (auto &net : nets) {
+		sorted_nets.push_back(&net);
+	}
+	std::sort(begin(sorted_nets), end(sorted_nets), [] (const net_t *a, const net_t *b) -> bool {
+			return a->sinks.size() > b->sinks.size();
+			});
+
+	auto rtree_start = clock::now();
+	//bgi::rtree<rtree_value, bgi::rstar<16>> tree(nets | boost::adaptors::transformed([] (const net_t &net) -> pair<box, int> {
+				//return make_pair(box(point(net.bounding_box.xmin, net.bounding_box.ymin), point(net.bounding_box.xmax, net.bounding_box.ymax)), net.local_id);
+				//}
+				//));
+
+	net_to_rtree_item to_rtree_item;
+	bgi::rtree<rtree_value, bgi::rstar<16>, bgi::indexable<rtree_value>, rtree_value_equal> tree(sorted_nets | boost::adaptors::transformed(to_rtree_item));
+
+	auto rtree_time = clock::now()-rtree_start;
+
+	printf("rtree build time %g\n", duration_cast<nanoseconds>(rtree_time).count() / 1e9);
+
+	auto to_box = [] (const net_t &net) -> box { return box(point(net.bounding_box.xmin, net.bounding_box.ymin), point(net.bounding_box.xmax, net.bounding_box.ymax)); };
+
+	//auto lol = tree.qbegin(bgi::satisfies([] (const rtree_value &val) -> bool { return true; }));
+	vector<bool> net_scheduled(sorted_nets.size(), false);
+	int inet = 0;
+	int num_rounds = 0;
+	int max_con = 0;
+	auto sched_start = clock::now();
+	while (!tree.empty()) {
+		net_t *net = sorted_nets[inet];
+
+		if (!net_scheduled[net->local_id]) {
+			vector<rtree_value> disjoint_nets;
+			vector<rtree_value> dispatched;
+
+			dispatched.push_back(make_pair(to_box(*net), net));
+
+			if (tree.query(bgi::disjoint(to_box(*net)), std::back_inserter(disjoint_nets)) > 0) {
+				/* we could do a brute force search here instead of using MISR if sizeof disjoin_nets is small enough to consider all
+				 * possible combinations */
+				/* run graph coloring on disjoint_nets */
+				/* for each item in disjoint_nets, find out their disjoint nets and do a set union or set covering */
+				std::sort(begin(disjoint_nets), end(disjoint_nets), [] (const rtree_value &a, const rtree_value &b) -> bool {
+						return bg::area(a.first) > bg::area(b.first);
+						});
+
+				for (int i = 0; i < disjoint_nets.size(); ++i) {
+					const auto &cur_dis = disjoint_nets[i];
+					bool intersect = std::any_of(begin(dispatched), end(dispatched), [&cur_dis] (const rtree_value &n) -> bool {
+							return bg::intersects(cur_dis.first, n.first);
+							});
+					if (!intersect) {
+						dispatched.push_back(cur_dis);
+					}
+				}
+
+
+				//int max_area = -1;
+				//int max = -1;
+				//for (int i = 0; i < disjoint_nets.size(); ++i) {
+					//int area = bg::area(to_box(disjoint_nets[i]));
+					//if (area > max_area) {
+						//max_area = area;
+						//max = i;
+					//}
+				//}
+
+				//assert(max >= 0);
+				//tree.remove(make_pair(to_box(disjoint_nets[max]), disjoint_nets[max].local_id));
+			}
+
+			assert(tree.remove(begin(dispatched), end(dispatched)) == dispatched.size());
+
+			//printf("Num dispatched: %d\n", dispatched.size());
+			verify_ind(dispatched, [] (const rtree_value &a) -> box { return a.first; });
+
+			for (const auto &d : dispatched) {
+				assert(!net_scheduled[d.second->local_id]);
+				net_scheduled[d.second->local_id] = true;
+			}
+
+			++num_rounds;
+			max_con = std::max(max_con, (int)dispatched.size());
+		}
+
+		++inet;
+	}
+	auto sched_time = clock::now() - sched_start;
+
+	printf("sched_time: %g max_con: %d ave_con: %g\n", duration_cast<nanoseconds>(sched_time).count()/1e9, max_con, sorted_nets.size()*1.0/num_rounds);
+
+	assert(std::all_of(begin(net_scheduled), end(net_scheduled), [] (bool a) -> bool { return a; }));
+}
+
+void test_misr(const vector<net_t> &nets)
+{
+	set<int> all_nets;
+
+	auto to_box = [] (const net_t &net) -> box { return box(point(net.bounding_box.xmin, net.bounding_box.ymin), point(net.bounding_box.xmax, net.bounding_box.ymax)); };
+
+	int subiter = 0;
+	int max_con = 0;
+
+	vector<net_t> nets_copy = nets;
+
+	while (!nets_copy.empty()) {
+		vector<net_t *> chosen;
+
+		max_independent_rectangles(nets_copy, to_box, [] (const net_t &net) -> pair<int, int> { return make_pair(net.bounding_box.ymin, net.bounding_box.ymax); }, chosen);
+
+		verify_ind(chosen, [&to_box] (const net_t *net) -> box { return to_box(*net); });
+
+		extern int nx, ny;
+
+		FILE *file;
+		if (subiter < 10) {
+			char buffer[256];
+			sprintf(buffer, "%d_boxes.txt", subiter);
+			file = fopen(buffer, "w");
+			fprintf(file, "0 0 %d %d 0\n", nx+2, ny+2);
+		}
+
+		int total_area = 0;
+		for (const auto &c : chosen) {
+			assert(all_nets.find(c->vpr_id) == all_nets.end());
+			all_nets.insert(c->vpr_id);
+
+			total_area += bg::area(to_box(*c));
+
+			if (subiter < 10) {
+				fprintf(file, "%d %d %d %d 0\n", c->bounding_box.xmin, c->bounding_box.ymin, c->bounding_box.xmax-c->bounding_box.xmin, c->bounding_box.ymax-c->bounding_box.ymin);
+			}
+		}
+
+		vector<net_t *> new_chosen;
+		for (auto &net : nets_copy) {
+			const auto &box = to_box(net);
+			bool dis = std::all_of(begin(chosen), end(chosen), [&to_box, &box] (const net_t *c) -> bool {
+						return bg::disjoint(to_box(*c), box);
+					}) && std::all_of(begin(new_chosen), end(new_chosen), [&to_box, &box] (const net_t *c) -> bool {
+						return bg::disjoint(to_box(*c), box);
+					});
+			if (dis) {
+				if (subiter < 10) {
+					fprintf(file, "%d %d %d %d 1\n", net.bounding_box.xmin, net.bounding_box.ymin, net.bounding_box.xmax-net.bounding_box.xmin, net.bounding_box.ymax-net.bounding_box.ymin);
+				}
+				new_chosen.push_back(&net);
+			}
+		}
+
+		if (subiter < 10) {
+			fclose(file);
+		}
+
+		++subiter;
+
+		printf("chosen size: %d %d %g\n", chosen.size(), total_area, 100.0*total_area/((nx+2)*(ny+2)));
+		max_con = std::max((int)chosen.size(), max_con);
+
+		nets_copy.erase(std::remove_if(begin(nets_copy), end(nets_copy), [&chosen] (const net_t &other) -> bool {
+					return std::any_of(begin(chosen), end(chosen), [&other] (const net_t *c) -> bool {
+							return c->vpr_id == other.vpr_id;
+							});
+					}), end(nets_copy));
+	}
+
+	printf("max_con: %d ave_con: %g\n", max_con, nets.size()*1.0/subiter);
+}
 
 template<typename EdgeProperties>
 bool operator<(const existing_source_t<EdgeProperties> &a, const existing_source_t<EdgeProperties> &b)
@@ -46,7 +241,7 @@ void dijkstra(fast_graph_t<VertexProperties, EdgeProperties> &g, const vector<ex
 		//}
 
 		if (item.distance < distance[item.node]) {
-			assert(item.known_distance < known_distance[item.node]);
+			assert(item.known_distance <= known_distance[item.node]);
 
 			known_distance[item.node] = item.known_distance;
 			distance[item.node] = item.distance;
@@ -69,11 +264,11 @@ void dijkstra(fast_graph_t<VertexProperties, EdgeProperties> &g, const vector<ex
 					float kd = known_distance[item.node] + weight.first;
 					float d = known_distance[item.node] + weight.second;
 
-					zlog_level(delta_log, ROUTER_V3, "\t[kd=%g okd=%g] [d=%g od=%g]\n",
-							kd, known_distance[v], d, distance[v]);
+					zlog_level(delta_log, ROUTER_V3, "\t[w1 %X w2 %X] [kd=%X okd=%X] [d=%X od=%X] [kd=%g okd=%g] [d=%g od=%g]\n",
+							*(unsigned int *)&weight.first, *(unsigned int *)&weight.second, *(unsigned int *)&kd, *(unsigned int *)&known_distance[v], *(unsigned int *)&d, *(unsigned int *)&distance[v], kd, known_distance[v], d, distance[v]);
 
 					if (d < distance[v]) {
-						assert(kd < known_distance[v]);
+						assert(kd <= known_distance[v]);
 
 						zlog_level(delta_log, ROUTER_V3, "\tPushing neighbor %d to heap\n", v);
 
@@ -129,23 +324,17 @@ class DeltaSteppingRouter {
 
 		void relax_node(int v, const RREdge &e)
 		{
-			float old_delay;
-			float old_upstream_R;
+			//RouteTreeNode rt_node = route_tree_get_rt_node(*_current_rt, v);
 
-			RouteTreeNode rt_node = route_tree_get_rt_node(*_current_rt, v);
-
-			if (rt_node != RouteTree::null_vertex()) {
-				old_delay = _state[v].delay;
-				old_upstream_R = _state[v].upstream_R;
-
-				const auto &rt_node_p = get_vertex_props(_current_rt->graph, rt_node);
-				if (!valid(_prev_edge[v])) {
-					assert(!valid(rt_node_p.rt_edge_to_parent));
-				} else {
-					int rr = get_vertex_props(_current_rt->graph, get_source(_current_rt->graph, rt_node_p.rt_edge_to_parent)).rr_node;
-					assert(rr == get_source(_g, _prev_edge[v]));
-				}
-			}
+			//if (rt_node != RouteTree::null_vertex()) {
+				//const auto &rt_node_p = get_vertex_props(_current_rt->graph, rt_node);
+				//if (!valid(_prev_edge[v])) {
+					//assert(!valid(rt_node_p.rt_edge_to_parent));
+				//} else {
+					//int rr = get_vertex_props(_current_rt->graph, get_source(_current_rt->graph, rt_node_p.rt_edge_to_parent)).rr_node;
+					//assert(rr == get_source(_g, _prev_edge[v]));
+				//}
+			//}
 
 			const auto &v_p = get_vertex_props(_g, v);
 
@@ -153,35 +342,43 @@ class DeltaSteppingRouter {
 				assert(v == get_target(_g, e));
 
 				int u = get_source(_g, e);
+
+				float u_delay;
+				float u_upstream_R;
+				if (_state[u].upstream_R != std::numeric_limits<float>::max()) {
+					assert(_state[u].delay != std::numeric_limits<float>::max());
+					u_upstream_R = _state[u].upstream_R;
+					u_delay = _state[u].delay;
+				} else {
+					auto rt_node = route_tree_get_rt_node(*_current_rt, u);
+					assert(rt_node != RouteTree::null_vertex());
+					const auto &u_rt_node_p = get_vertex_props(_current_rt->graph, rt_node);
+					u_upstream_R = u_rt_node_p.upstream_R;
+					u_delay = u_rt_node_p.delay;
+				}
+
 				const auto &e_p = get_edge_props(_g, e);
 
-				assert(_state[u].upstream_R != std::numeric_limits<float>::max();
 				_state[v].upstream_R = e_p.R + v_p.R;
 				if (!e_p.buffered)  {
-					_state[v].upstream_R += _state[u].upstream_R;
+					_state[v].upstream_R += u_upstream_R;
 				} 
 
 				float delay;
 				if (e_p.buffered) {
-					delay = e_p.switch_delay + v_p.C * (e_p.R + 0.5 * v_p.R);
+					delay = e_p.switch_delay + v_p.C * (e_p.R + 0.5f * v_p.R);
 				} else {
-					delay = e_p.switch_delay + v_p.C * (_state[u].upstream_R + e_p.R + 0.5 * v_p.R);
+					delay = e_p.switch_delay + v_p.C * (u_upstream_R + e_p.R + 0.5f * v_p.R);
 				}
-				assert(_state[u].delay != std::numeric_limits<float>::max();
-				_state[v].delay = _state[u].delay + delay;
+				_state[v].delay = u_delay + delay;
 			} else {
 				_state[v].upstream_R = v_p.R;
-				_state[v].delay = v_p.C * 0.5 * v_p.R;
+				_state[v].delay = v_p.C * 0.5f * v_p.R;
 			}
 
 			if (!_modified_node_added[v]) {
 				_modified_nodes.push_back(v);
 				_modified_node_added[v] = true;
-			}
-
-			if (rt_node != RouteTree::null_vertex()) {
-				assert(_state[v].delay == old_delay);
-				assert(_state[v].upstream_R == old_upstream_R);
 			}
 		}
 
@@ -229,11 +426,12 @@ class DeltaSteppingRouter {
 			const auto &v_p = get_vertex_props(_g, v);
 			const auto &e_p = get_edge_props(_g, e);
 
+			assert(_state[u].upstream_R != std::numeric_limits<float>::max());
 			float delay;
 			if (e_p.buffered) {
-				delay = e_p.switch_delay + v_p.C * (e_p.R + 0.5 * v_p.R);
+				delay = e_p.switch_delay + v_p.C * (e_p.R + 0.5f * v_p.R);
 			} else {
-				delay = e_p.switch_delay + v_p.C * (_state[u].upstream_R + e_p.R + 0.5 * v_p.R);
+				delay = e_p.switch_delay + v_p.C * (_state[u].upstream_R + e_p.R + 0.5f * v_p.R);
 			}
 			extern t_rr_indexed_data *rr_indexed_data;
 			float congestion_cost = rr_indexed_data[v_p.cost_index].base_cost * _congestion[v].acc_cost * _congestion[v].pres_cost;
@@ -245,8 +443,8 @@ class DeltaSteppingRouter {
 			}
 			float expected_cost = get_timing_driven_expected_cost(v_p, get_vertex_props(_g, _current_sink->rr_node), _current_sink->criticality_fac, upstream_R);
 
-			zlog_level(delta_log, ROUTER_V3, "\t%d -> %d delay %g congestion %g crit_fac %g expected %g known %g predicted %g\n", 
-					u, v, delay, congestion_cost, _current_sink->criticality_fac, expected_cost, known_cost, known_cost + _astar_fac * expected_cost);
+			zlog_level(delta_log, ROUTER_V3, "\t%d -> %d delay %g congestion %g crit_fac %g expected %g expected_hex %X known %g predicted %g\n", 
+					u, v, delay, congestion_cost, _current_sink->criticality_fac, expected_cost, *(unsigned int *)&expected_cost, known_cost, known_cost + _astar_fac * expected_cost);
 			zlog_level(delta_log, ROUTER_V3, "\t[u: upstream %g] [edge: d %g R %g] [v: R %g C %g]\n",
 					_state[u].upstream_R, e_p.switch_delay, e_p.R, v_p.R, v_p.C);
 
@@ -299,8 +497,11 @@ class DeltaSteppingRouter {
 
 			RouteTreeNode rt_node = route_tree_add_rr_node(rt, sink_node, _g);
 			assert(rt_node != RouteTree::null_vertex());
+			assert(_state[sink_node].upstream_R != std::numeric_limits<float>::max() && _state[sink_node].delay != std::numeric_limits<float>::max());
 			route_tree_set_node_properties(rt, rt_node, false, _state[sink_node].upstream_R, _state[sink_node].delay);
 			update_one_cost_internal(sink_node, _g, _congestion, 1, *_pres_fac);
+
+			zlog_level(delta_log, ROUTER_V3, "\n");
 
 			RREdge edge = get_previous_edge(sink_node, rt);
 
@@ -316,6 +517,7 @@ class DeltaSteppingRouter {
 
 				RouteTreeNode parent_rt_node = route_tree_add_rr_node(rt, parent_rr_node, _g);
 				if (parent_rt_node != RouteTree::null_vertex()) {
+					assert(_state[parent_rr_node].upstream_R != std::numeric_limits<float>::max() && _state[parent_rr_node].delay != std::numeric_limits<float>::max());
 					route_tree_set_node_properties(rt, parent_rt_node, parent_rr_node_p.type != IPIN && parent_rr_node_p.type != SINK, _state[parent_rr_node].upstream_R, _state[parent_rr_node].delay);
 				} 
 
@@ -375,7 +577,7 @@ class DeltaSteppingRouter {
 			}
 		}
 
-		void route(const source_t *source, const vector<const sink_t *> &sinks, int net_local_id, float delta, float astar_fac, route_tree_t &rt)
+		void route(const source_t *source, const vector<const sink_t *> &sinks, int net_local_id, float delta, float astar_fac, route_tree_t &rt, t_net_timing &net_timing)
 		{
 			char buffer[256];
 
@@ -384,19 +586,15 @@ class DeltaSteppingRouter {
 			_existing_opin = RRGraph::null_vertex();
 
 			const auto &source_p = get_vertex_props(_g, source->rr_node);
-			_state[source->rr_node].upstream_R = source_p.R;
-			_state[source->rr_node].delay = 0.5 * source_p.R * source_p.C;
-			_prev_edge[source->rr_node] = RRGraph::null_edge();
-
 			RouteTreeNode root_rt_node = route_tree_add_rr_node(rt, source->rr_node, _g);
-			route_tree_set_node_properties(rt, root_rt_node, true, _state[source->rr_node].upstream_R, _state[source->rr_node].delay);
+			route_tree_set_node_properties(rt, root_rt_node, true, source_p.R, 0.5f * source_p.R * source_p.C);
 			route_tree_add_root(rt, source->rr_node);
 
 			vector<const sink_t *> sorted_sinks = sinks;
 
-			std::sort(begin(sorted_sinks), end(sorted_sinks), [] (const sink_t *a, const sink_t *b) -> bool {
-					return a->criticality_fac > b->criticality_fac;
-					});
+			//std::sort(begin(sorted_sinks), end(sorted_sinks), [] (const sink_t *a, const sink_t *b) -> bool {
+					//return a->criticality_fac > b->criticality_fac;
+					//});
 
 			_current_rt = &rt;
 
@@ -424,18 +622,16 @@ class DeltaSteppingRouter {
 							zlog_level(delta_log, ROUTER_V3, "Existing %s out of bounding box\n", buffer);
 
 						} else {
-							float kd = sink->criticality_fac * _state[node].delay; 
-							float d = kd + _astar_fac * get_timing_driven_expected_cost(node_p, get_vertex_props(_g, sink->rr_node), sink->criticality_fac, _state[node].upstream_R); 
+							float kd = sink->criticality_fac * rt_node_p.delay; 
+							float d = kd + _astar_fac * get_timing_driven_expected_cost(node_p, get_vertex_props(_g, sink->rr_node), sink->criticality_fac, rt_node_p.upstream_R); 
 
-							zlog_level(delta_log, ROUTER_V3, "Adding %s back to heap\n", buffer);
+							zlog_level(delta_log, ROUTER_V3, "Adding %s back to heap [delay %g upstream_R %g] [kd=%g d=%g]\n", buffer, rt_node_p.delay, rt_node_p.upstream_R, kd, d);
 
-							/* TODO: bug maybe here. don't use _prev_edge */
-							if (!valid(_prev_edge[node])) {
-								assert(!valid(rt_node_p.rt_edge_to_parent));
-							} else {
-								assert(get_vertex_props(rt.graph, get_source(rt.graph, rt_node_p.rt_edge_to_parent)).rr_node == get_source(_g, _prev_edge[node]));
+							RREdge prev = RRGraph::null_edge();
+							if (valid(rt_node_p.rt_edge_to_parent)) {
+								prev = get_edge_props(rt.graph, rt_node_p.rt_edge_to_parent).rr_edge;
 							}
-							sources.push_back({ node, kd, d, _prev_edge[node] });
+							sources.push_back({ node, kd, d, prev });
 						}
 					} else {
 						zlog_level(delta_log, ROUTER_V3, "Not reexpanding %s\n", buffer);
@@ -450,12 +646,15 @@ class DeltaSteppingRouter {
 
 				backtrack(sink->rr_node, rt);
 
+				assert(get_vertex_props(rt.graph, route_tree_get_rt_node(rt, sink->rr_node)).delay == _state[sink->rr_node].delay);
+				net_timing.delay[sink->id+1] = _state[sink->rr_node].delay;
+
 				for (const auto &n : _modified_nodes) {
 					_known_distance[n] = std::numeric_limits<float>::max();
 					_distance[n] = std::numeric_limits<float>::max();
-					//_prev_edge[n] = RRGraph::null_edge();
-					//_state[n].delay = std::numeric_limits<float>::max();
-					//_state[n].upstream_R = std::numeric_limits<float>::max();
+					_prev_edge[n] = RRGraph::null_edge();
+					_state[n].delay = std::numeric_limits<float>::max();
+					_state[n].upstream_R = std::numeric_limits<float>::max();
 
 					assert(_modified_node_added[n]);
 					_modified_node_added[n] = false;
@@ -463,15 +662,15 @@ class DeltaSteppingRouter {
 
 				_modified_nodes.clear();
 
-				++isink;
-			}
-
-			for (const auto &n : get_vertices(_g)) {
+				for (const auto &n : get_vertices(_g)) {
 					assert(_known_distance[n] == std::numeric_limits<float>::max() &&
-					_distance[n] == std::numeric_limits<float>::max());
-					//_prev_edge[n] == RRGraph::null_edge() &&
-					//_state[n].delay == std::numeric_limits<float>::max() &&
-					//_state[n].upstream_R == std::numeric_limits<float>::max());
+							_distance[n] == std::numeric_limits<float>::max() &&
+							_prev_edge[n] == RRGraph::null_edge() &&
+							_state[n].delay == std::numeric_limits<float>::max() &&
+							_state[n].upstream_R == std::numeric_limits<float>::max());
+				}
+
+				++isink;
 			}
 		}
 };
@@ -492,6 +691,10 @@ bool partitioning_delta_stepping_deterministic_route(t_router_opts *opts)
 	vector<net_t> nets;
 	vector<net_t> global_nets;
 	init_nets(nets, global_nets, opts->bb_factor, opts->large_bb);
+
+	test_rtree(nets);
+	test_misr(nets);
+	return false;
 
 	congestion_t *congestion = new congestion_t[num_vertices(g)];
     for (int i = 0; i < num_vertices(g); ++i) {
@@ -514,9 +717,9 @@ bool partitioning_delta_stepping_deterministic_route(t_router_opts *opts)
     params.max_criticality = opts->max_criticality;
     params.bend_cost = opts->bend_cost;
 
-	std::sort(begin(nets), end(nets), [] (const net_t &a, const net_t &b) -> bool {
-			return a.sinks.size() > b.sinks.size();
-			});
+	//std::sort(begin(nets), end(nets), [] (const net_t &a, const net_t &b) -> bool {
+			//return a.sinks.size() > b.sinks.size();
+			//});
 
 	float pres_fac = opts->first_iter_pres_fac;
 
@@ -548,7 +751,7 @@ bool partitioning_delta_stepping_deterministic_route(t_router_opts *opts)
 			}
 
 			zlog_level(delta_log, ROUTER_V3, "Routing net %d\n", net.local_id);
-			router.route(&net.source, sinks, net.local_id, delta, opts->astar_fac, route_trees[net.local_id]); 
+			router.route(&net.source, sinks, net.local_id, delta, opts->astar_fac, route_trees[net.local_id], net_timing[net.vpr_id]); 
 
 			++inet;
 		}
@@ -605,75 +808,4 @@ bool partitioning_delta_stepping_deterministic_route(t_router_opts *opts)
 	}
 
 	return false;
-
-	set<int> all_nets;
-
-	auto to_box = [] (const net_t &net) -> box { return box(point(net.bounding_box.xmin, net.bounding_box.ymin), point(net.bounding_box.xmax, net.bounding_box.ymax)); };
-
-	int subiter = 0;
-
-	vector<net_t> nets_copy = nets;
-
-	while (!nets_copy.empty()) {
-		vector<net_t *> chosen;
-
-		max_independent_rectangles(nets_copy, to_box, [] (const net_t &net) -> pair<int, int> { return make_pair(net.bounding_box.ymin, net.bounding_box.ymax); }, chosen);
-
-		verify_ind(chosen, to_box);
-
-		extern int nx, ny;
-
-		FILE *file;
-		if (subiter < 10) {
-			char buffer[256];
-			sprintf(buffer, "%d_boxes.txt", subiter);
-			file = fopen(buffer, "w");
-			fprintf(file, "0 0 %d %d 0\n", nx+2, ny+2);
-		}
-
-		int total_area = 0;
-		for (const auto &c : chosen) {
-			assert(all_nets.find(c->vpr_id) == all_nets.end());
-			all_nets.insert(c->vpr_id);
-
-			total_area += bg::area(to_box(*c));
-
-			if (subiter < 10) {
-				fprintf(file, "%d %d %d %d 0\n", c->bounding_box.xmin, c->bounding_box.ymin, c->bounding_box.xmax-c->bounding_box.xmin, c->bounding_box.ymax-c->bounding_box.ymin);
-			}
-		}
-
-		vector<net_t *> new_chosen;
-		for (auto &net : nets_copy) {
-			const auto &box = to_box(net);
-			bool dis = std::all_of(begin(chosen), end(chosen), [&to_box, &box] (const net_t *c) -> bool {
-						return bg::disjoint(to_box(*c), box);
-					}) && std::all_of(begin(new_chosen), end(new_chosen), [&to_box, &box] (const net_t *c) -> bool {
-						return bg::disjoint(to_box(*c), box);
-					});
-			if (dis) {
-				if (subiter < 10) {
-					fprintf(file, "%d %d %d %d 1\n", net.bounding_box.xmin, net.bounding_box.ymin, net.bounding_box.xmax-net.bounding_box.xmin, net.bounding_box.ymax-net.bounding_box.ymin);
-				}
-				new_chosen.push_back(&net);
-			}
-		}
-
-		if (subiter < 10) {
-			fclose(file);
-		}
-
-		++subiter;
-
-
-		printf("chosen size: %d %d %g\n", chosen.size(), total_area, 100.0*total_area/((nx+2)*(ny+2)));
-
-		nets_copy.erase(std::remove_if(begin(nets_copy), end(nets_copy), [&chosen] (const net_t &other) -> bool {
-					return std::any_of(begin(chosen), end(chosen), [&other] (const net_t *c) -> bool {
-							return c->vpr_id == other.vpr_id;
-							});
-					}), end(nets_copy));
-	}
-
-	return true;
 }

@@ -122,8 +122,8 @@ void max_independent_rectangles_internal(const vector<pair<int, Item *>> &ver_ed
 	int previous_finishing = -1;
 	for (const auto &item : sorted_items) {
 		const auto &interval = to_interval(*item);
-		assert(interval.first >= previous_finishing);
-		previous_finishing = interval.first;
+		assert(interval.second >= previous_finishing);
+		previous_finishing = interval.second;
 	}
 //#endif
 
@@ -171,18 +171,18 @@ void max_independent_rectangles(vector<Item> &items, const ItemToBox &to_box, co
 	}
 
 	std::sort(begin(ver_edges), end(ver_edges));
-	std::sort(begin(sorted_items), end(sorted_items), [&] (const Item *a, const Item *b) -> bool { return to_interval(*a).first < to_interval(*b).first; });
+	std::sort(begin(sorted_items), end(sorted_items), [&] (const Item *a, const Item *b) -> bool { return to_interval(*a).second < to_interval(*b).second; });
 
 	max_independent_rectangles_internal(ver_edges, sorted_items, to_box, to_interval, chosen);
 }
 
 template<typename Item, typename ItemToBox>
-void verify_ind(const vector<Item *> &chosen, const ItemToBox &to_box)
+void verify_ind(const vector<Item> &chosen, const ItemToBox &to_box)
 {
 	for (int i = 0; i < chosen.size(); ++i) {
 		for (int j = i + 1; j < chosen.size(); ++j) {
-			const auto &box_a = to_box(*chosen[i]);
-			const auto &box_b = to_box(*chosen[j]);
+			const auto &box_a = to_box(chosen[i]);
+			const auto &box_b = to_box(chosen[j]);
 			assert(bg::disjoint(box_a, box_b));
 		}	
 	}
