@@ -128,7 +128,7 @@ void route_tree_remove_node(route_tree_t &rt, RRNode rr_node, const RRGraph &g);
 RouteTreeNode route_tree_get_rt_node(const route_tree_t &rt, RRNode rr_node);
 
 struct valid_rt_node {
-	const RouteTree g;
+	const RouteTree &g;
 	valid_rt_node(const RouteTree &g) :
 		g(g) {}
 

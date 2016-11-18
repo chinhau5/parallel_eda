@@ -389,9 +389,9 @@ boolean try_route_new(int width_fac, struct s_router_opts router_opts,
 			assert(router_opts.route_type != GLOBAL);
 			/*success = locking_route_deterministic(&router_opts, 0);*/
 			/*success = mpi_route_load_balanced_nonblocking_send_recv_encoded(&router_opts, det_routing_arch, directs, num_directs, segment_inf, timing_inf);*/
+			success = partitioning_delta_stepping_deterministic_route(&router_opts);
 			/*success = mpi_route_load_balanced_ibcast(&router_opts, det_routing_arch, directs, num_directs, segment_inf, timing_inf);*/
 			/*success = new_astar_route(&router_opts);*/
-			success = partitioning_delta_stepping_deterministic_route(&router_opts);
 			break;
 		default:
 			success = FALSE;

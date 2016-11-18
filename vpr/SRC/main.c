@@ -374,8 +374,11 @@ int main(int argc, char **argv) {
 		printf("malloc_hook after mpi_init not found: %lX\n", __malloc_hook);
 	}
 #endif
-	int rank;
+
+	int rank = 0;
+#ifdef VPR_MPI
 	MPI_Comm_rank(MPI_COMM_WORLD, &rank);
+#endif
 
 	print_context(getpid(), rank);
 

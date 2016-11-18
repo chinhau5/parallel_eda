@@ -121,7 +121,7 @@ set(srcs
 	#SRC/parallel_route/trace.c
 	SRC/parallel_route/utility.c
 	#SRC/parallel_route/net_cluster.cxx
-	SRC/parallel_route/scheduler.c
+	#SRC/parallel_route/scheduler.c
 	SRC/parallel_route/bounding_boxes.cxx
 	SRC/parallel_route/barrier.c
 	SRC/parallel_route/bounding_box.c

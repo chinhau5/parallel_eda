@@ -79,7 +79,7 @@ typedef struct sink_t {
 	int rr_node;
 	int x;
 	int y;
-	source_t source;
+	//source_t source;
 	bounding_box_t current_bounding_box;
 	bounding_box_t previous_bounding_box;
 	bounding_box_t scheduler_bounding_box;
@@ -108,34 +108,34 @@ typedef struct net_t {
 	std::vector<sink_t> sinks;
 	bounding_box_t bounding_box;
 
-	vector<struct virtual_net_t *> virtual_nets;
+	//vector<struct virtual_net_t *> virtual_nets;
 
-	int bb_area_rank;
-	unsigned long num_bounding_box_updates;
-	unsigned long num_nearest_iters;
-	unsigned long total_point_tree_size;
+	//int bb_area_rank;
+	//unsigned long num_bounding_box_updates;
+	//unsigned long num_nearest_iters;
+	//unsigned long total_point_tree_size;
 
 	//int previous_sink_index;
 	/*bool previous_sink_valid;*/
 	//bounding_box_t current_bounding_box;
 	/*bool previous_bounding_box_valid;*/
-	int current_local_id;
-	bool has_sink;
-	int num_sinks_routed;
-	int current_sink_index;
-	sink_t *current_sink;
-	vector<bool> sink_routed;
-	source_t current_source;
+	//int current_local_id;
+	//bool has_sink;
+	//int num_sinks_routed;
+	//int current_sink_index;
+	//sink_t *current_sink;
+	//vector<bool> sink_routed;
+	//source_t current_source;
 
-	std::vector<bool> overlapping_nets;
-	std::vector<bool> non_overlapping_nets;
-	int num_overlapping_nets;
-	int num_non_overlapping_nets;
-	std::vector<const net_t *> overlapping_nets_vec;
-	std::vector<const net_t *> non_overlapping_nets_vec;
+	//std::vector<bool> overlapping_nets;
+	//std::vector<bool> non_overlapping_nets;
+	//int num_overlapping_nets;
+	//int num_non_overlapping_nets;
+	//std::vector<const net_t *> overlapping_nets_vec;
+	//std::vector<const net_t *> non_overlapping_nets_vec;
 	//int num_local_nets;
-	int pid;
-	int schedule;
+	//int pid;
+	//int schedule;
 } net_t;
 
 typedef struct virtual_net_t {

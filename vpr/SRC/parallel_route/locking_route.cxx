@@ -112,7 +112,7 @@ bool locking_route(t_router_opts *opts, int run)
 			});
 	int rank = 0;
 	for (auto &net : nets_ptr) {
-		net->bb_area_rank = rank++;
+		//net->bb_area_rank = rank++;
 	}
 	/* end */ 
 
@@ -236,12 +236,6 @@ bool locking_route(t_router_opts *opts, int run)
 		bool partitioned_rip_up_all = opts->rip_up_always || ((partitioned_iter % opts->rip_up_period) == 0);
 		bool greedy_rip_up_all = opts->rip_up_always;//(next_greedy_rip_up_iter == iter);
 		printf("Routing iteration: %d Num non-monotonic iters: %d Use partitioned: %d Greedy rip up all: %d Partitioned rip up all: %d\n", iter, num_non_monotonic_iters, use_partitioned ? 1 : 0, greedy_rip_up_all ? 1 : 0, partitioned_rip_up_all ? 1 : 0);
-
-		for (auto &net : nets) {
-			net.num_bounding_box_updates = 0;
-			net.num_nearest_iters = 0;
-			net.total_point_tree_size = 0;
-		}
 
 		auto iter_start = clock::now();
 

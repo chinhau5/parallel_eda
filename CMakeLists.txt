@@ -33,8 +33,9 @@ else()
 		/usr/local/Cellar/open-mpi/1.10.2/lib
 		/Users/chinhau5/Downloads/tbb44_20151115oss/build/macos_intel64_clang_cc5.2.0_os10.11.1_debug
 		/Users/chinhau5/Downloads/tbb44_20151115oss/build/macos_intel64_clang_cc5.2.0_os10.11.1_release
-		/Users/chinhau5/Downloads/mlpack-1.0.12/build/lib
+		#/Users/chinhau5/Downloads/mlpack-1.0.12/build/lib
 		/Users/chinhau5/Downloads/metis-5.1.0/build/Darwin-x86_64/libmetis/
+		/Users/chinhau5/libs/lib
 		)
 endif()
 
@@ -44,7 +45,7 @@ endif()
 
 #generic compile options go here
 add_compile_options(
-	-DTBB_USE_DEBUG
+	#-DTBB_USE_DEBUG
 	#-ferror-limit=0
 	-ftemplate-backtrace-limit=0
 	-std=c++11
@@ -78,6 +79,7 @@ if (CMAKE_SYSTEM_NAME STREQUAL "Linux")
 		zlog
 		boost_timer
 		boost_system
+		boost_thread
 		tbb
 		metis
 		)
@@ -92,8 +94,10 @@ else()
 		zlog
 		boost_timer-mt
 		boost_system-mt
+		boost_thread-mt
 		tbb
 		metis
+		mlpack
 		)
 endif()
 

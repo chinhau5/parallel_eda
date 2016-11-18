@@ -1117,7 +1117,7 @@ bool mpi_route_load_balanced_ibcast(t_router_opts *opts, struct s_det_routing_ar
 					zlog_level(delta_log, ROUTER_V1, "%d ", item);
 				}
 				zlog_level(delta_log, ROUTER_V1, "\n");
-				overused_total_bb_rank += net->bb_area_rank;
+				//overused_total_bb_rank += net->bb_area_rank;
 				++num_congested_nets;
 			}
 		}

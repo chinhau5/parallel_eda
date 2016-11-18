@@ -67,7 +67,7 @@ struct net_graph_edge_prop {
 	int weight;
 };
 
-using our_clock = myclock;
+using our_clock = std::chrono::high_resolution_clock;
 
 static void partition(vector<net_t *> &nets, const vector<our_clock::duration> *net_route_time, bool load_balanced, int num_partitions, int current_level, int initial_comm_size, vector<int> &net_partition_id, vector<vector<net_t *>> &partition_nets)
 {
@@ -1353,7 +1353,7 @@ bool mpi_route_load_balanced_nonblocking_send_recv_encoded(t_router_opts *opts, 
 					zlog_level(delta_log, ROUTER_V1, "%d ", item);
 				}
 				zlog_level(delta_log, ROUTER_V1, "\n");
-				overused_total_bb_rank += net->bb_area_rank;
+				//overused_total_bb_rank += net->bb_area_rank;
 				++num_congested_nets;
 			}
 		}

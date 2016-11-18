@@ -1,4 +1,6 @@
 #include "pch.h"
+#include <thread>
+#include <condition_variable>
 
 #include "vpr_types.h"
 
@@ -15,9 +17,16 @@
 #include "geometry.h"
 #include "clock.h"
 #include <boost/range/adaptor/transformed.hpp>
+#include <boost/thread/barrier.hpp>
+#include <mlpack/methods/kmeans/kmeans.hpp>
+#include <mlpack/methods/kmeans/refined_start.hpp>
 
 float get_timing_driven_expected_cost(const rr_node_property_t &current, const rr_node_property_t &target, float criticality_fac, float R_upstream);
 void update_sink_criticalities(net_t &net, const t_net_timing &net_timing, const route_parameters_t &params);
+
+using timer = std::chrono::high_resolution_clock;
+using std::chrono::duration_cast;
+using std::chrono::nanoseconds;
 
 using rtree_value = pair<box, net_t *>;
 
@@ -35,12 +44,8 @@ struct rtree_value_equal {
 	}
 };
 
-void test_rtree(vector<net_t> &nets)
+void test_rtree(vector<net_t> &nets, vector<vector<net_t *>> &phase_nets)
 {
-	using clock = std::chrono::high_resolution_clock;
-	using std::chrono::duration_cast;
-	using std::chrono::nanoseconds;
-
 	vector<net_t *> sorted_nets;
 	for (auto &net : nets) {
 		sorted_nets.push_back(&net);
@@ -49,7 +54,7 @@ void test_rtree(vector<net_t> &nets)
 			return a->sinks.size() > b->sinks.size();
 			});
 
-	auto rtree_start = clock::now();
+	auto rtree_start = timer::now();
 	//bgi::rtree<rtree_value, bgi::rstar<16>> tree(nets | boost::adaptors::transformed([] (const net_t &net) -> pair<box, int> {
 				//return make_pair(box(point(net.bounding_box.xmin, net.bounding_box.ymin), point(net.bounding_box.xmax, net.bounding_box.ymax)), net.local_id);
 				//}
@@ -58,7 +63,7 @@ void test_rtree(vector<net_t> &nets)
 	net_to_rtree_item to_rtree_item;
 	bgi::rtree<rtree_value, bgi::rstar<16>, bgi::indexable<rtree_value>, rtree_value_equal> tree(sorted_nets | boost::adaptors::transformed(to_rtree_item));
 
-	auto rtree_time = clock::now()-rtree_start;
+	auto rtree_time = timer::now()-rtree_start;
 
 	printf("rtree build time %g\n", duration_cast<nanoseconds>(rtree_time).count() / 1e9);
 
@@ -69,7 +74,7 @@ void test_rtree(vector<net_t> &nets)
 	int inet = 0;
 	int num_rounds = 0;
 	int max_con = 0;
-	auto sched_start = clock::now();
+	auto sched_start = timer::now();
 	while (!tree.empty()) {
 		net_t *net = sorted_nets[inet];
 
@@ -123,13 +128,18 @@ void test_rtree(vector<net_t> &nets)
 				net_scheduled[d.second->local_id] = true;
 			}
 
+			phase_nets.emplace_back();
+			for (const auto &d : dispatched) {
+				phase_nets.back().push_back(d.second);
+			}
+
 			++num_rounds;
 			max_con = std::max(max_con, (int)dispatched.size());
 		}
 
 		++inet;
 	}
-	auto sched_time = clock::now() - sched_start;
+	auto sched_time = timer::now() - sched_start;
 
 	printf("sched_time: %g max_con: %d ave_con: %g\n", duration_cast<nanoseconds>(sched_time).count()/1e9, max_con, sorted_nets.size()*1.0/num_rounds);
 
@@ -289,6 +299,12 @@ typedef struct extra_route_state_t {
 	float delay;
 } extra_route_state_t;
 
+typedef struct dijkstra_stats_t {
+	int num_heap_pops;
+	int num_heap_pushes;
+	int num_neighbor_visits;
+} dijkstra_stats_t;
+
 class DeltaSteppingRouter {
 	private:
 		RRGraph &_g;
@@ -301,7 +317,7 @@ class DeltaSteppingRouter {
 		extra_route_state_t *_state;
 
 		congestion_t *_congestion;
-		float *_pres_fac;
+		float &_pres_fac;
 
 		vector<int> _modified_nodes;
 		vector<bool> _modified_node_added;
@@ -311,7 +327,10 @@ class DeltaSteppingRouter {
 
 		route_tree_t *_current_rt;
 
-		int _num_heap_pops;
+		dijkstra_stats_t _stats;
+
+		static tbb::atomic<int> _num_instances;
+		int _instance;
 
 	private:
 		void popped_node(int v)
@@ -319,7 +338,7 @@ class DeltaSteppingRouter {
 			char buffer[256];
 			sprintf_rr_node(v, buffer);
 			zlog_level(delta_log, ROUTER_V3, "%s\n", buffer);
-			++_num_heap_pops;
+			++_stats.num_heap_pops;
 		}
 
 		void relax_node(int v, const RREdge &e)
@@ -415,6 +434,8 @@ class DeltaSteppingRouter {
 
 			zlog_level(delta_log, ROUTER_V3, "\n");
 
+			++_stats.num_neighbor_visits;
+
 			return true;
 		}
 
@@ -499,7 +520,7 @@ class DeltaSteppingRouter {
 			assert(rt_node != RouteTree::null_vertex());
 			assert(_state[sink_node].upstream_R != std::numeric_limits<float>::max() && _state[sink_node].delay != std::numeric_limits<float>::max());
 			route_tree_set_node_properties(rt, rt_node, false, _state[sink_node].upstream_R, _state[sink_node].delay);
-			update_one_cost_internal(sink_node, _g, _congestion, 1, *_pres_fac);
+			update_one_cost_internal(sink_node, _g, _congestion, 1, _pres_fac);
 
 			zlog_level(delta_log, ROUTER_V3, "\n");
 
@@ -537,7 +558,7 @@ class DeltaSteppingRouter {
 				}
 
 				if ((parent_rt_node != RouteTree::null_vertex()) || (get_vertex_props(_g, parent_rr_node).type == SOURCE)) {
-					update_one_cost_internal(parent_rr_node, _g, _congestion, 1, *_pres_fac);
+					update_one_cost_internal(parent_rr_node, _g, _congestion, 1, _pres_fac);
 				}
 
 				zlog_level(delta_log, ROUTER_V3, "\n");
@@ -560,7 +581,7 @@ class DeltaSteppingRouter {
 					Callbacks &callbacks);
 
 	public:
-		DeltaSteppingRouter(RRGraph &g, congestion_t *congestion, float *pres_fac)
+		DeltaSteppingRouter(RRGraph &g, congestion_t *congestion, float &pres_fac)
 			: _g(g), _congestion(congestion), _pres_fac(pres_fac), _modified_node_added(num_vertices(g), false)
 		{
 			_known_distance = new float[num_vertices(g)];
@@ -575,6 +596,32 @@ class DeltaSteppingRouter {
 				_state[i].delay = std::numeric_limits<float>::max();
 				_state[i].upstream_R = std::numeric_limits<float>::max();
 			}
+			
+			reset_stats();
+
+			_instance = _num_instances++;
+		}
+
+		int get_instance() const
+		{
+			return _instance;
+		}
+
+		int get_num_instances() const
+		{
+			return _num_instances;
+		}
+
+		void reset_stats()
+		{
+			_stats.num_heap_pops = 0;
+			_stats.num_heap_pushes = 0;
+			_stats.num_neighbor_visits = 0;
+		}
+
+		const dijkstra_stats_t &get_stats() const
+		{
+			return _stats;
 		}
 
 		void route(const source_t *source, const vector<const sink_t *> &sinks, int net_local_id, float delta, float astar_fac, route_tree_t &rt, t_net_timing &net_timing)
@@ -592,9 +639,9 @@ class DeltaSteppingRouter {
 
 			vector<const sink_t *> sorted_sinks = sinks;
 
-			//std::sort(begin(sorted_sinks), end(sorted_sinks), [] (const sink_t *a, const sink_t *b) -> bool {
-					//return a->criticality_fac > b->criticality_fac;
-					//});
+			std::sort(begin(sorted_sinks), end(sorted_sinks), [] (const sink_t *a, const sink_t *b) -> bool {
+					return a->criticality_fac > b->criticality_fac;
+					});
 
 			_current_rt = &rt;
 
@@ -638,11 +685,8 @@ class DeltaSteppingRouter {
 					}
 				}
 
-				_num_heap_pops = 0;
 				//delta_stepping(_g, sources, sink->rr_node, delta, _known_distance, _distance, _prev_edge, [this] (const RREdge &e) -> pair<float, float> { return get_edge_weight(e); }, *this);
 				dijkstra(_g, sources, sink->rr_node, _known_distance, _distance, _prev_edge, [this] (const RREdge &e) -> pair<float, float> { return get_edge_weight(e); }, *this);
-
-				zlog_level(delta_log, ROUTER_V3, "num_heap_pop %d\n", _num_heap_pops);
 
 				backtrack(sink->rr_node, rt);
 
@@ -662,88 +706,293 @@ class DeltaSteppingRouter {
 
 				_modified_nodes.clear();
 
-				for (const auto &n : get_vertices(_g)) {
-					assert(_known_distance[n] == std::numeric_limits<float>::max() &&
-							_distance[n] == std::numeric_limits<float>::max() &&
-							_prev_edge[n] == RRGraph::null_edge() &&
-							_state[n].delay == std::numeric_limits<float>::max() &&
-							_state[n].upstream_R == std::numeric_limits<float>::max());
-				}
+				//for (const auto &n : get_vertices(_g)) {
+					//assert(_known_distance[n] == std::numeric_limits<float>::max() &&
+							//_distance[n] == std::numeric_limits<float>::max() &&
+							//_prev_edge[n] == RRGraph::null_edge() &&
+							//_state[n].delay == std::numeric_limits<float>::max() &&
+							//_state[n].upstream_R == std::numeric_limits<float>::max());
+				//}
 
 				++isink;
 			}
 		}
 };
 
-bool partitioning_delta_stepping_deterministic_route(t_router_opts *opts)
+tbb::atomic<int> DeltaSteppingRouter::_num_instances = 0;
+
+//bool partitioning_delta_stepping_deterministic_route_test(t_router_opts *opts)
+//{
+	//init_logging();
+    //zlog_set_record("custom_output", concurrent_log_impl);
+
+	//zlog_put_mdc("iter", "0");
+	//zlog_put_mdc("tid", "0");
+
+	//RRGraph g;
+	//init_graph(g);
+
+	//init_sprintf_rr_node(&g);
+
+	//vector<net_t> nets;
+	//vector<net_t> global_nets;
+	//init_nets(nets, global_nets, opts->bb_factor, opts->large_bb);
+
+	//vector<vector<net_t *>> phase_nets;
+	//test_rtree(nets, phase_nets);
+	//test_misr(nets);
+	//return false;
+
+	//congestion_t *congestion = new congestion_t[num_vertices(g)];
+    //for (int i = 0; i < num_vertices(g); ++i) {
+        //congestion[i].acc_cost = 1;
+        //congestion[i].pres_cost = 1;
+        //congestion[i].occ = 0;
+    //}
+
+	//route_tree_t *route_trees = new route_tree_t[nets.size()];
+	//for (int i = 0; i < nets.size(); ++i) {
+		//route_tree_init(route_trees[i]);
+	//}
+
+    //t_net_timing *net_timing = new t_net_timing[nets.size()+global_nets.size()];
+    //init_net_timing(nets, global_nets, net_timing);
+
+    //route_parameters_t params;
+    //params.criticality_exp = opts->criticality_exp;
+    //params.astar_fac = opts->astar_fac;
+    //params.max_criticality = opts->max_criticality;
+    //params.bend_cost = opts->bend_cost;
+
+	////std::sort(begin(nets), end(nets), [] (const net_t &a, const net_t &b) -> bool {
+			////return a.sinks.size() > b.sinks.size();
+			////});
+
+	//float pres_fac = opts->first_iter_pres_fac;
+
+	//float delta;
+	//for (const auto &n : get_vertices(g)) {
+		//const auto &prop = get_vertex_props(g, n);
+		//if (prop.type == CHANX) {
+			//extern t_rr_indexed_data *rr_indexed_data;
+			//delta = rr_indexed_data[prop.cost_index].base_cost;
+			//break;
+		//}
+	//}
+
+	//DeltaSteppingRouter router(g, congestion, pres_fac);
+
+	//bool routed = false;
+	//for (int iter = 0; iter < opts->max_router_iterations && !routed; ++iter) {
+		//int inet = 0;
+		//for (auto &net : nets) {
+			//update_sink_criticalities(net, net_timing[net.vpr_id], params);
+
+			//route_tree_mark_all_nodes_to_be_ripped(route_trees[net.local_id], g);
+
+			//route_tree_rip_up_marked(route_trees[net.local_id], g, congestion, pres_fac);
+
+			//vector<const sink_t *> sinks;
+			//for (int i = 0; i < net.sinks.size(); ++i) {
+				//sinks.push_back(&net.sinks[i]);
+			//}
+
+			//zlog_level(delta_log, ROUTER_V3, "Routing net %d\n", net.local_id);
+			//router.route(&net.source, sinks, net.local_id, delta, opts->astar_fac, route_trees[net.local_id], net_timing[net.vpr_id]); 
+
+			//++inet;
+		//}
+
+		//[> checking <]
+		//for (int i = 0; i < num_vertices(g); ++i) {
+			//congestion[i].recalc_occ = 0; 
+		//}
+
+		//for (const auto &net : nets) {
+			//check_route_tree(route_trees[net.local_id], net, g);
+			//recalculate_occ(route_trees[net.local_id], g, congestion);
+		//}
+
+		//unsigned long num_overused_nodes = 0;
+		//vector<int> overused_nodes_by_type(NUM_RR_TYPES, 0);
+
+		//if (feasible_routing(g, congestion)) {
+			////dump_route(*current_traces_ptr, "route.txt");
+			//routed = true;
+		//} else {
+			//for (int i = 0; i < num_vertices(g); ++i) {
+				//if (congestion[i].occ > get_vertex_props(g, i).capacity) {
+					//++num_overused_nodes;
+					//const auto &v_p = get_vertex_props(g, i);
+					//++overused_nodes_by_type[v_p.type];
+				//}
+			//}
+
+			////auto update_cost_start = timer::now();
+
+			//if (iter == 0) {
+				//pres_fac = opts->initial_pres_fac;
+				//update_costs(g, congestion, pres_fac, 0);
+			//} else {
+				//pres_fac *= opts->pres_fac_mult;
+
+				//[> Avoid overflow for high iteration counts, even if acc_cost is big <]
+				//pres_fac = std::min(pres_fac, static_cast<float>(HUGE_POSITIVE_FLOAT / 1e5));
+
+				//update_costs(g, congestion, pres_fac, opts->acc_fac);
+			//}
+
+			////update_cost_time = timer::now()-update_cost_start;
+		//}
+
+		////auto analyze_timing_start = timer::now();
+
+		//float crit_path_delay = analyze_timing(net_timing);
+
+		////analyze_timing_time = timer::now()-analyze_timing_start;
+		
+		//printf("Overused: %lu Crit path delay: %g\n", num_overused_nodes, crit_path_delay);
+	//}
+
+	//return false;
+//}
+
+class Barrier
 {
-	init_logging();
-    zlog_set_record("custom_output", concurrent_log_impl);
+private:
+    std::mutex _mutex;
+    std::condition_variable _cv;
+    std::size_t _count;
+	std::size_t _initial_count;
 
-	zlog_put_mdc("iter", "0");
-	zlog_put_mdc("tid", "0");
+public:
+    explicit Barrier(std::size_t count)
+		: _count{count}, _initial_count(count)
+	{
+	}
 
-	RRGraph g;
-	init_graph(g);
-
-	init_sprintf_rr_node(&g);
-
-	vector<net_t> nets;
-	vector<net_t> global_nets;
-	init_nets(nets, global_nets, opts->bb_factor, opts->large_bb);
-
-	test_rtree(nets);
-	test_misr(nets);
-	return false;
-
-	congestion_t *congestion = new congestion_t[num_vertices(g)];
-    for (int i = 0; i < num_vertices(g); ++i) {
-        congestion[i].acc_cost = 1;
-        congestion[i].pres_cost = 1;
-        congestion[i].occ = 0;
+    void wait()
+    {
+        std::unique_lock<std::mutex> lock{_mutex};
+        if (--_count == 0) {
+			lock.unlock();
+            _cv.notify_all();
+        } else {
+            _cv.wait(lock, [this] { return _count == 0; });
+        }
     }
 
-	route_tree_t *route_trees = new route_tree_t[nets.size()];
-	for (int i = 0; i < nets.size(); ++i) {
-		route_tree_init(route_trees[i]);
+	void reset(std::size_t count)
+	{
+        std::unique_lock<std::mutex> lock{_mutex};
+		_count = count;
 	}
 
-    t_net_timing *net_timing = new t_net_timing[nets.size()+global_nets.size()];
-    init_net_timing(nets, global_nets, net_timing);
+	void reset()
+	{
+		reset(_initial_count);
+	}
+};
 
-    route_parameters_t params;
-    params.criticality_exp = opts->criticality_exp;
-    params.astar_fac = opts->astar_fac;
-    params.max_criticality = opts->max_criticality;
-    params.bend_cost = opts->bend_cost;
+typedef struct worker_sync_t {
+	tbb::atomic<bool> stop_routing;
+	tbb::atomic<int> net_index;
+#ifdef __linux__
+	pthread_barrier_t barrier;
+#else
+	boost::barrier *barrier;
+#endif
+} worker_sync_t;
 
-	//std::sort(begin(nets), end(nets), [] (const net_t &a, const net_t &b) -> bool {
-			//return a.sinks.size() > b.sinks.size();
-			//});
+typedef struct global_route_state_t {
+	congestion_t *congestion;
+	route_tree_t *route_trees;
+	t_net_timing *net_timing;
+} global_route_state_t;
 
-	float pres_fac = opts->first_iter_pres_fac;
-
+typedef struct router_t {
+	vector<vector<net_t *>> nets;
+	worker_sync_t sync;
+	RRGraph g;
+	global_route_state_t state;
+	route_parameters_t params;
+	float pres_fac;
 	float delta;
-	for (const auto &n : get_vertices(g)) {
-		const auto &prop = get_vertex_props(g, n);
-		if (prop.type == CHANX) {
-			extern t_rr_indexed_data *rr_indexed_data;
-			delta = rr_indexed_data[prop.cost_index].base_cost;
-			break;
-		}
-	}
+	int num_threads;
+	vector<dijkstra_stats_t> stats;
+	vector<timer::duration> route_time;
+	vector<timer::duration> pure_route_time;
+	tbb::atomic<int> iter;
+} router_t;
 
-	DeltaSteppingRouter router(g, congestion, &pres_fac);
+//class Worker {
+	//private:
+		//const vector<vector<net_t *>> &_nets;
+		//worker_sync_t _sync;
+		//shared_route &_r;
+		//float &_pres_fac;
 
-	bool routed = false;
-	for (int iter = 0; iter < opts->max_router_iterations && !routed; ++iter) {
-		int inet = 0;
-		for (auto &net : nets) {
-			update_sink_criticalities(net, net_timing[net.vpr_id], params);
+		//DeltaSteppingRouter _router;
 
-			route_tree_mark_all_nodes_to_be_ripped(route_trees[net.local_id], g);
+	//public:
+		//Worker(tbb::atomic<bool> &stop_routing, const vector<vector<net_t *>> &nets, tbb::atomic<int> &net_index, pthread_barrier_t &barrier, shared_route &r, float &pres_fac)
+			//: _stop_routing(stop_routing), _nets(nets), _net_index(net_index), _barrier(barrier), _r(r), _pres_fac(pres_fac), _router(r.g, r.congestion, pres_fac)
+		//{
+		//}
 
-			route_tree_rip_up_marked(route_trees[net.local_id], g, congestion, pres_fac);
+		//void main(const route_parameters_t &params, float delta)
+		//{
+		//}
+
+		//void operator()(const route_parameters_t &params, float delta)
+		//{
+			//while (!_stop_routing) {
+				//main(params, delta);
+			//}
+		//}
+//};
+
+void do_work(router_t *router, DeltaSteppingRouter &net_router)
+{
+	char buffer[256];
+
+	sprintf(buffer, "%d", router->iter);
+	zlog_put_mdc("iter", buffer);
+
+#ifdef __linux__
+	pthread_barrier_wait(&router->sync.barrier);
+#else
+	router->sync.barrier->wait();
+#endif
+
+	assert(net_router.get_num_instances() == router->num_threads);
+
+	net_router.reset_stats();
+	router->pure_route_time[net_router.get_instance()] = timer::duration::zero();
+
+	auto route_start = timer::now();
+
+	for (int phase = 0; phase < router->nets.size(); ++phase) {
+		int inet;
+
+		router->sync.net_index = 0;
+
+#ifdef __linux__
+		pthread_barrier_wait(&router->sync.barrier);
+#else
+		router->sync.barrier->wait();
+#endif
+
+		auto pure_route_start = timer::now();
+
+		while ((inet = router->sync.net_index++) < router->nets[phase].size()) {
+			auto &net = *router->nets[phase][inet];
+
+			update_sink_criticalities(net, router->state.net_timing[net.vpr_id], router->params);
+
+			route_tree_mark_all_nodes_to_be_ripped(router->state.route_trees[net.local_id], router->g);
+
+			route_tree_rip_up_marked(router->state.route_trees[net.local_id], router->g, router->state.congestion, router->pres_fac);
 
 			vector<const sink_t *> sinks;
 			for (int i = 0; i < net.sinks.size(); ++i) {
@@ -751,60 +1000,204 @@ bool partitioning_delta_stepping_deterministic_route(t_router_opts *opts)
 			}
 
 			zlog_level(delta_log, ROUTER_V3, "Routing net %d\n", net.local_id);
-			router.route(&net.source, sinks, net.local_id, delta, opts->astar_fac, route_trees[net.local_id], net_timing[net.vpr_id]); 
-
-			++inet;
+			net_router.route(&net.source, sinks, net.local_id, router->delta, router->params.astar_fac, router->state.route_trees[net.local_id], router->state.net_timing[net.vpr_id]); 
 		}
 
+		router->pure_route_time[net_router.get_instance()] += timer::now()-pure_route_start;
+
+#ifdef __linux__
+		pthread_barrier_wait(&router->sync.barrier);
+#else
+		router->sync.barrier->wait();
+#endif
+	}
+
+	router->route_time[net_router.get_instance()] = timer::now()-route_start;
+
+	router->stats[net_router.get_instance()] = net_router.get_stats();
+}
+
+void *worker_thread(void *args)
+{
+	router_t *router = (router_t *)args;
+
+	DeltaSteppingRouter net_router(router->g, router->state.congestion, router->pres_fac);
+
+	char buffer[256];
+	sprintf(buffer, "%d", net_router.get_instance());
+	zlog_put_mdc("tid", buffer);
+
+	while (!router->sync.stop_routing) {
+		do_work(router, net_router);
+	}
+
+	return nullptr;
+}
+
+bool partitioning_delta_stepping_deterministic_route(t_router_opts *opts)
+{
+	init_logging();
+    zlog_set_record("custom_output", concurrent_log_impl);
+
+	zlog_put_mdc("tid", "0");
+
+	router_t router;
+
+	router.num_threads = opts->num_threads;
+
+	init_graph(router.g);
+
+	init_sprintf_rr_node(&router.g);
+
+	vector<net_t> nets;
+	vector<net_t> global_nets;
+	init_nets(nets, global_nets, opts->bb_factor, opts->large_bb);
+
+	test_rtree(nets, router.nets);
+	test_misr(nets);
+
+	router.state.congestion = new congestion_t[num_vertices(router.g)];
+    for (int i = 0; i < num_vertices(router.g); ++i) {
+        router.state.congestion[i].acc_cost = 1;
+        router.state.congestion[i].pres_cost = 1;
+        router.state.congestion[i].occ = 0;
+    }
+
+	router.state.route_trees = new route_tree_t[nets.size()];
+	for (int i = 0; i < nets.size(); ++i) {
+		route_tree_init(router.state.route_trees[i]);
+	}
+
+    router.state.net_timing = new t_net_timing[nets.size()+global_nets.size()];
+    init_net_timing(nets, global_nets, router.state.net_timing);
+
+    router.params.criticality_exp = opts->criticality_exp;
+    router.params.astar_fac = opts->astar_fac;
+    router.params.max_criticality = opts->max_criticality;
+    router.params.bend_cost = opts->bend_cost;
+
+	//std::sort(begin(nets), end(nets), [] (const net_t &a, const net_t &b) -> bool {
+			//return a.sinks.size() > b.sinks.size();
+			//});
+
+	router.pres_fac = opts->first_iter_pres_fac;
+
+	for (const auto &n : get_vertices(router.g)) {
+		const auto &prop = get_vertex_props(router.g, n);
+		if (prop.type == CHANX) {
+			extern t_rr_indexed_data *rr_indexed_data;
+			router.delta = rr_indexed_data[prop.cost_index].base_cost;
+			break;
+		}
+	}
+
+#ifdef __linux__
+	assert(pthread_barrier_init(&router.sync.barrier, nullptr, opts->num_threads) == 0);
+#else
+	router.sync.barrier = new boost::barrier(opts->num_threads);
+#endif
+	router.sync.stop_routing = false;
+
+	router.stats.resize(opts->num_threads);
+	router.pure_route_time.resize(opts->num_threads);
+	router.route_time.resize(opts->num_threads);
+
+	router.iter = 0;
+
+	vector<pthread_t> tids(opts->num_threads);
+	for (int i = 1; i < opts->num_threads; ++i) {
+		assert(pthread_create(&tids[i], nullptr, worker_thread, (void *)&router) == 0);
+	}
+
+	timer::duration total_route_time = timer::duration::zero();
+
+	/* just to make sure that we are allocated on the correct NUMA node */
+	DeltaSteppingRouter *net_router = new DeltaSteppingRouter(router.g, router.state.congestion, router.pres_fac);
+
+	bool routed = false;
+	for (; router.iter < opts->max_router_iterations && !routed; ++router.iter) {
+		printf("Routing iteration: %d\n", router.iter);
+
+		do_work(&router, *net_router);
+
+		auto max_duration = *std::max_element(begin(router.route_time), end(router.route_time));
+		total_route_time += max_duration;
+
+		printf("Route time: ");
+		for (int i = 0; i < opts->num_threads; ++i) {
+			printf("%g ", duration_cast<nanoseconds>(router.route_time[i]).count()/1e9);
+		}
+		printf("\n");
+
+		printf("Max route time: %lu %g\n", max_duration.count(), max_duration.count() / 1e9);
+
+		printf("Pure route time: ");
+		for (int i = 0; i < opts->num_threads; ++i) {
+			printf("%g (%g) ", duration_cast<nanoseconds>(router.pure_route_time[i]).count()/1e9, 100.0*router.pure_route_time[i].count()/router.route_time[i].count());
+		}
+		printf("\n");
+
+		printf("Num heap pops: ");
+		for (int i = 0; i < opts->num_threads; ++i) {
+			printf("%d ", router.stats[i].num_heap_pops);
+		}
+		printf("\n");
+
 		/* checking */
-		for (int i = 0; i < num_vertices(g); ++i) {
-			congestion[i].recalc_occ = 0; 
+		for (int i = 0; i < num_vertices(router.g); ++i) {
+			router.state.congestion[i].recalc_occ = 0; 
 		}
 
 		for (const auto &net : nets) {
-			check_route_tree(route_trees[net.local_id], net, g);
-			recalculate_occ(route_trees[net.local_id], g, congestion);
+			check_route_tree(router.state.route_trees[net.local_id], net, router.g);
+			recalculate_occ(router.state.route_trees[net.local_id], router.g, router.state.congestion);
 		}
 
 		unsigned long num_overused_nodes = 0;
 		vector<int> overused_nodes_by_type(NUM_RR_TYPES, 0);
 
-		if (feasible_routing(g, congestion)) {
+		if (feasible_routing(router.g, router.state.congestion)) {
 			//dump_route(*current_traces_ptr, "route.txt");
 			routed = true;
 		} else {
-			for (int i = 0; i < num_vertices(g); ++i) {
-				if (congestion[i].occ > get_vertex_props(g, i).capacity) {
+			for (int i = 0; i < num_vertices(router.g); ++i) {
+				if (router.state.congestion[i].occ > get_vertex_props(router.g, i).capacity) {
 					++num_overused_nodes;
-					const auto &v_p = get_vertex_props(g, i);
+					const auto &v_p = get_vertex_props(router.g, i);
 					++overused_nodes_by_type[v_p.type];
 				}
 			}
 
-			//auto update_cost_start = clock::now();
+			//auto update_cost_start = timer::now();
 
-			if (iter == 0) {
-				pres_fac = opts->initial_pres_fac;
-				update_costs(g, congestion, pres_fac, 0);
+			if (router.iter == 0) {
+				router.pres_fac = opts->initial_pres_fac;
+				update_costs(router.g, router.state.congestion, router.pres_fac, 0);
 			} else {
-				pres_fac *= opts->pres_fac_mult;
+				router.pres_fac *= opts->pres_fac_mult;
 
 				/* Avoid overflow for high iteration counts, even if acc_cost is big */
-				pres_fac = std::min(pres_fac, static_cast<float>(HUGE_POSITIVE_FLOAT / 1e5));
+				router.pres_fac = std::min(router.pres_fac, static_cast<float>(HUGE_POSITIVE_FLOAT / 1e5));
 
-				update_costs(g, congestion, pres_fac, opts->acc_fac);
+				update_costs(router.g, router.state.congestion, router.pres_fac, opts->acc_fac);
 			}
 
-			//update_cost_time = clock::now()-update_cost_start;
+			//update_cost_time = timer::now()-update_cost_start;
 		}
 
-		//auto analyze_timing_start = clock::now();
+		//auto analyze_timing_start = timer::now();
 
-		float crit_path_delay = analyze_timing(net_timing);
+		float crit_path_delay = analyze_timing(router.state.net_timing);
 
-		//analyze_timing_time = clock::now()-analyze_timing_start;
+		//analyze_timing_time = timer::now()-analyze_timing_start;
 		
 		printf("Overused: %lu Crit path delay: %g\n", num_overused_nodes, crit_path_delay);
+		printf("\n");
+	}
+
+	if (routed) {
+		printf("Routed in %d iterations\n", router.iter);
+		printf("Total route time: %g\n", duration_cast<nanoseconds>(total_route_time).count() / 1e9);
 	}
 
 	return false;
