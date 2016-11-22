@@ -238,12 +238,12 @@ void init_nets(vector<net_t> &nets, vector<net_t> &global_nets, int bb_factor, c
 			/* initially all sink will be reached from the net's source */
 			/* this is later updated during scheduling */
 			//sink.source = net.source;
-			sink.bb_factor = bb_factor;
-			sink.current_bounding_box = get_bounding_box(net.source, sink, sink.bb_factor); 
+			//sink.bb_factor = bb_factor;
+			sink.current_bounding_box = get_bounding_box(net.source, sink, bb_factor); 
 
 			sprintf_rr_node(sink.rr_node, buffer);
 			zlog_debug(net_log, "Net %d sink %d (%s) bounding box %d-%d %d-%d\n", net.vpr_id, sink.id, buffer, sink.current_bounding_box.xmin, sink.current_bounding_box.xmax, sink.current_bounding_box.ymin, sink.current_bounding_box.ymax);
-			sink.congested_iterations = 0;
+			//sink.congested_iterations = 0;
 
 			net.sinks.push_back(sink);
 
@@ -264,7 +264,7 @@ void init_nets(vector<net_t> &nets, vector<net_t> &global_nets, int bb_factor, c
 
 		int rank = 0;
 		for (auto &sink : net.sinks) {
-			sink.distance_to_source_rank = rank++;
+			//sink.distance_to_source_rank = rank++;
 		}
 
 		//net.current_sink_index = 0;
@@ -378,12 +378,12 @@ void init_nets(vector<net_t> &nets, vector<net_t> &global_nets, int bb_factor, b
 			/* initially all sink will be reached from the net's source */
 			/* this is later updated during scheduling */
 			//sink.source = net.source;
-			sink.bb_factor = bb_factor;
-			sink.current_bounding_box = get_bounding_box(net.source, sink, sink.bb_factor); 
+			//sink.bb_factor = bb_factor;
+			sink.current_bounding_box = get_bounding_box(net.source, sink, bb_factor); 
 
 			sprintf_rr_node(sink.rr_node, buffer);
 			zlog_debug(net_log, "Net %d sink %d (%s) bounding box %d-%d %d-%d\n", net.vpr_id, sink.id, buffer, sink.current_bounding_box.xmin, sink.current_bounding_box.xmax, sink.current_bounding_box.ymin, sink.current_bounding_box.ymax);
-			sink.congested_iterations = 0;
+			//sink.congested_iterations = 0;
 
 			net.sinks.push_back(sink);
 
@@ -404,7 +404,7 @@ void init_nets(vector<net_t> &nets, vector<net_t> &global_nets, int bb_factor, b
 
 		int rank = 0;
 		for (auto &sink : net.sinks) {
-			sink.distance_to_source_rank = rank++;
+			//sink.distance_to_source_rank = rank++;
 		}
 
 		//net.current_sink_index = 0;

@@ -66,6 +66,22 @@ static int mark_node_expansion_by_bin(int inet, int target_node,
 /*	pthread_create();*/
 /*}*/
 
+static const char *rr_types[] =  {
+	"SOURCE", "SINK", "IPIN", "OPIN", "CHANX", "CHANY", "INTRA_CLUSTER_EDGE"
+};
+
+static void sprintf_rr_node_impl(int inode, char *buffer)
+{
+	extern t_rr_node *rr_node;
+	if (rr_node[inode].direction == INC_DIRECTION) {
+		sprintf(buffer, "%d %s (%d,%d)(%d,%d) ptc=%d dir=%d", inode, rr_types[rr_node[inode].type], rr_node[inode].xlow, rr_node[inode].ylow, rr_node[inode].xhigh, rr_node[inode].yhigh, rr_node[inode].ptc_num, rr_node[inode].direction);
+	} else if (rr_node[inode].direction == DEC_DIRECTION) {
+		sprintf(buffer, "%d %s (%d,%d)(%d,%d) ptc=%d dir=%d", inode, rr_types[rr_node[inode].type], rr_node[inode].xhigh, rr_node[inode].yhigh, rr_node[inode].xlow, rr_node[inode].ylow, rr_node[inode].ptc_num, rr_node[inode].direction);
+	} else {
+		sprintf(buffer, "%d %s (%d,%d)(%d,%d) ptc=%d dir=%d", inode, rr_types[rr_node[inode].type], rr_node[inode].xlow, rr_node[inode].ylow, rr_node[inode].xhigh, rr_node[inode].yhigh, rr_node[inode].ptc_num, rr_node[inode].direction);
+	}
+}
+
 boolean try_timing_driven_route(struct s_router_opts router_opts,
 		float **net_delay, t_slack * slacks, t_ivec ** clb_opins_used_locally, boolean timing_analysis_enabled) {
 
@@ -879,18 +895,22 @@ static int mark_node_expansion_by_bin(int inet, int target_node,
 		return rlim;
 	}
 
+	char buffer[256];
+	sprintf_rr_node_impl(target_node, buffer);
+	printf("Mark expansion net %d to node %s\n", inet, buffer);
+
 	success = FALSE;
 	/* determine quickly a feasible bin radius to route sink for high fanout nets 
 	 this is necessary to prevent super long runtimes for high fanout nets; in best case, a reduction in complexity from O(N^2logN) to O(NlogN) (Swartz fast router)
 	 */
 	linked_rt_edge = rt_node->u.child_list;
 	while (success == FALSE && linked_rt_edge != NULL) {
+		printf("Start rlim %d\n", rlim);
 		while (linked_rt_edge != NULL && success == FALSE) {
 			child_node = linked_rt_edge->child;
 			inode = child_node->inode;
-			//char buffer[256];
-			//sprintf_rr_node(inode, buffer);
-			//printf("Node %s\n", buffer);
+			sprintf_rr_node_impl(inode, buffer);
+			printf("Node %s\n", buffer);
 			if (!(rr_node[inode].type == IPIN || rr_node[inode].type == SINK)) {
 				if (rr_node[inode].xlow <= target_x + rlim
 						&& rr_node[inode].xhigh >= target_x - rlim
@@ -916,6 +936,8 @@ static int mark_node_expansion_by_bin(int inet, int target_node,
 		}
 		linked_rt_edge = rt_node->u.child_list;
 	}
+
+	printf("Final rlim %d\n", rlim);
 
 	/* redetermine expansion based on rlim */
 	linked_rt_edge = rt_node->u.child_list;

@@ -152,41 +152,30 @@ if (CMAKE_SYSTEM_NAME STREQUAL "Linux")
 		#/opt/intel/tbb/include/
 		/home/chinhau5/Downloads/boost_1_60_0/
 		/home/chinhau5/Downloads/tbb44_20160526oss/include
-		/home/chinhau5/Downloads/mlpack-1.0.12/build/include
-		/home/chinhau5/Downloads/armadillo-6.400.3/include
 		/home/chinhau5/Downloads/metis-5.1.0/include/
 		/home/chinhau5/zlog/include
-		/home/chinhau/Downloads/boost_1_60_0/
-		/home/chinhau/Downloads/tbb44_20160128oss/include
-		/home/chinhau/Downloads/mlpack-1.0.12/build/include
-		/home/chinhau/Downloads/armadillo-6.400.3/include
-		/home/chinhau/Downloads/metis-5.1.0/include/
-		/home/chinhau/zlog/include
-		/home/akkumar/Downloads/boost_1_60_0/
-		/home/akkumar/Downloads/tbb44_20160526oss/include
-		/home/akkumar/Downloads/mlpack-1.0.12/build/include
-		/home/akkumar/Downloads/armadillo-6.400.3/include
-		/home/akkumar/Downloads/metis-5.1.0/include/
-		/home/akkumar/zlog/include
-		/home/svu/a0045424/Downloads/boost_1_60_0/
-		/home/svu/a0045424/Downloads/tbb44_20160526oss/include
-		/home/svu/a0045424/Downloads/mlpack-1.0.12/build/include
-		/home/svu/a0045424/Downloads/armadillo-6.400.3/include
-		/home/svu/a0045424/Downloads/metis-5.1.0/include/
-		/home/svu/a0045424/zlog/include
+		/home/chinhau5/libs/include
+		#/home/chinhau/Downloads/boost_1_60_0/
+		#/home/chinhau/Downloads/tbb44_20160128oss/include
+		#/home/chinhau/Downloads/metis-5.1.0/include/
+		#/home/chinhau/zlog/include
+		#/home/akkumar/Downloads/boost_1_60_0/
+		#/home/akkumar/Downloads/tbb44_20160526oss/include
+		#/home/akkumar/Downloads/metis-5.1.0/include/
+		#/home/akkumar/zlog/include
+		#/home/svu/a0045424/Downloads/boost_1_60_0/
+		#/home/svu/a0045424/Downloads/tbb44_20160526oss/include
+		#/home/svu/a0045424/Downloads/metis-5.1.0/include/
+		#/home/svu/a0045424/zlog/include
 		)
 else()
 	set(external_includes 
 		/usr/local/include
-		/opt/local/include
 		/usr/include/libxml2
-		#/usr/local/Cellar/mpich/3.2/include
-		/usr/local/Cellar/open-mpi/1.10.2/include
 		/opt/X11/include
 		/Users/chinhau5/Downloads/tbb44_20151115oss/include
-		/Users/chinhau5/Downloads/mlpack-1.0.12/build/include
-		/Users/chinhau5/Downloads/armadillo-6.400.3/include
 		/Users/chinhau5/Downloads/metis-5.1.0/include/
+		/Users/chinhau5/libs/include
 		)
 	#set(pch_flags
 		#-fasm-blocks

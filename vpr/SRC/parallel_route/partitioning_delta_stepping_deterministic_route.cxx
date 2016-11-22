@@ -18,8 +18,8 @@
 #include "clock.h"
 #include <boost/range/adaptor/transformed.hpp>
 #include <boost/thread/barrier.hpp>
-#include <mlpack/methods/kmeans/kmeans.hpp>
-#include <mlpack/methods/kmeans/refined_start.hpp>
+//#include <mlpack/methods/kmeans/kmeans.hpp>
+//#include <mlpack/methods/kmeans/refined_start.hpp>
 
 float get_timing_driven_expected_cost(const rr_node_property_t &current, const rr_node_property_t &target, float criticality_fac, float R_upstream);
 void update_sink_criticalities(net_t &net, const t_net_timing &net_timing, const route_parameters_t &params);
@@ -43,6 +43,140 @@ struct rtree_value_equal {
 		return bg::equals(a.first, b.first) && a.second == b.second;
 	}
 };
+
+using point_rtree_value = pair<point, sink_t *>;
+
+struct sink_to_point_rtree_item {
+	point_rtree_value operator()(sink_t &sink) const
+	{
+		return make_pair(point(sink.x, sink.y), &sink);
+	}
+};
+
+struct point_rtree_value_equal {
+	bool operator()(const point_rtree_value &a, const point_rtree_value &b) const
+	{
+		return bg::equals(a.first, b.first) && a.second == b.second;
+	}
+};
+
+typedef struct new_virtual_net_t {
+	net_t *net;
+	vector<sink_t *> sinks;
+	box bounding_box;
+} new_virtual_net_t;
+
+void split(net_t &net, float bb_area_threshold, vector<new_virtual_net_t> &virtual_nets)
+{
+	using point_f = typename bg::model::point<float, 2, bg::cs::cartesian>;
+
+	point_f centroid(net.source.x, net.source.y);
+	point_f total;
+	int num_points;
+
+	sink_to_point_rtree_item to_point_rtree_item;
+
+	bgi::rtree<point_rtree_value, bgi::rstar<16>, bgi::indexable<point_rtree_value>, point_rtree_value_equal> tree(net.sinks | boost::adaptors::transformed(to_point_rtree_item));
+
+	int num_acc = 0;
+
+	box previous_box;
+	int debug = 0;
+
+	while (!tree.empty()) {
+		new_virtual_net_t vnet;
+		vnet.net = &net;
+		vnet.bounding_box = bg::make_inverse<box>();
+
+		bg::expand(vnet.bounding_box, centroid);
+
+		if ((num_acc % 2) == 0) {
+			total = centroid;
+			num_points = 1;
+			num_acc = 0;
+		}
+
+		while (bg::area(vnet.bounding_box) < bb_area_threshold && !tree.empty()) {
+			vector<point_rtree_value> nearest;
+
+			assert(tree.query(bgi::nearest(centroid, 1), std::back_inserter(nearest)) == 1);
+
+			vnet.sinks.push_back(nearest[0].second);
+			bg::expand(vnet.bounding_box, nearest[0].first);
+
+			/* recalc centroid */
+			bg::add_point(total, nearest[0].first);
+			centroid = total;
+			++num_points;
+			bg::divide_value(centroid, num_points); 
+
+			assert(tree.remove(nearest[0]) == 1);
+		}
+
+		if (debug > 0) {
+			assert(bg::intersects(previous_box, vnet.bounding_box));
+		}
+		previous_box = vnet.bounding_box;
+
+		++num_acc;
+		++debug;
+
+		virtual_nets.emplace_back(std::move(vnet));
+	}
+}
+
+void create_virtual_nets(vector<net_t> &nets, int num_threads)
+{
+	vector<net_t *> sorted_nets;
+	for (auto &net : nets) {
+		sorted_nets.push_back(&net);
+	}
+	std::sort(begin(sorted_nets), end(sorted_nets), [] (const net_t *a, const net_t *b) -> bool {
+			return a->sinks.size() > b->sinks.size();
+			});
+
+	vector<new_virtual_net_t> virtual_nets;
+
+	extern int nx, ny;
+	int fpga_area = (nx+2) * (ny+2);
+	const float scaling_factor = 2;
+	float bb_area_threshold = (float)fpga_area / (num_threads * scaling_factor);
+
+	split(*sorted_nets[0], bb_area_threshold, virtual_nets);
+
+	for (int i = 0; i < virtual_nets.size(); ++i) {
+		char buffer[256];
+
+		sprintf(buffer, "virtual_nets_0_%d_bb.txt", i);
+		FILE *vnet_bb = fopen(buffer, "w");
+		const auto &box = virtual_nets[i].bounding_box;
+		extern int nx, ny;
+		fprintf(vnet_bb, "0 0 %d %d 0\n", nx+2, ny+2);
+		fprintf(vnet_bb, "%d %d %d %d 1\n",
+				box.min_corner().get<0>(), box.min_corner().get<1>(),
+				box.max_corner().get<0>()-box.min_corner().get<0>(),
+				box.max_corner().get<1>()-box.min_corner().get<1>());
+		fclose(vnet_bb);
+
+		sprintf(buffer, "virtual_nets_0_%d_p.txt", i);
+		FILE *vnet_p = fopen(buffer, "w");
+
+		fprintf(vnet_p, "%d %d %d\n", virtual_nets[i].net->source.x, virtual_nets[i].net->source.y, i);
+		for (const auto &sink : virtual_nets[i].sinks) {
+			fprintf(vnet_p, "%d %d %d\n", sink->x, sink->y, i);
+		}
+
+		fclose(vnet_p);
+	}
+}
+
+void best_case(vector<net_t> &nets, vector<vector<net_t *>> &phase_nets)
+{
+	phase_nets.emplace_back();
+	for (auto &net : nets) {
+		phase_nets.back().push_back(&net);
+	}
+}
 
 void test_rtree(vector<net_t> &nets, vector<vector<net_t *>> &phase_nets)
 {
@@ -228,7 +362,7 @@ bool operator<(const existing_source_t<EdgeProperties> &a, const existing_source
 }
 
 template<typename VertexProperties, typename EdgeProperties, typename EdgeWeightFunc, typename Callbacks>
-void dijkstra(fast_graph_t<VertexProperties, EdgeProperties> &g, const vector<existing_source_t<EdgeProperties>> &sources, int sink, float *known_distance, float *distance, fast_edge_t<EdgeProperties> *prev_edge, const EdgeWeightFunc &edge_weight, Callbacks &callbacks)
+void dijkstra(cache_graph_t<VertexProperties, EdgeProperties> &g, const vector<existing_source_t<EdgeProperties>> &sources, int sink, float *known_distance, float *distance, cache_edge_t<EdgeProperties> *prev_edge, const EdgeWeightFunc &edge_weight, Callbacks &callbacks)
 {
 	using Item = existing_source_t<EdgeProperties>;
 	std::priority_queue<Item> heap;
@@ -569,15 +703,15 @@ class DeltaSteppingRouter {
 		}
 
 		template<typename VertexProperties, typename EdgeProperties, typename EdgeWeightFunc, typename Callbacks>
-		friend void delta_stepping(fast_graph_t<VertexProperties, EdgeProperties> &g, const vector<existing_source_t<EdgeProperties>> &sources, int sink, float delta, float *known_distance, float *distance, fast_edge_t<EdgeProperties> *prev_edge, const EdgeWeightFunc &edge_weight, Callbacks &callbacks);
+		friend void delta_stepping(cache_graph_t<VertexProperties, EdgeProperties> &g, const vector<existing_source_t<EdgeProperties>> &sources, int sink, float delta, float *known_distance, float *distance, cache_edge_t<EdgeProperties> *prev_edge, const EdgeWeightFunc &edge_weight, Callbacks &callbacks);
 
 		template<typename VertexProperties, typename EdgeProperties, typename EdgeWeightFunc, typename Callbacks>
-		friend void dijkstra(fast_graph_t<VertexProperties, EdgeProperties> &g, const vector<existing_source_t<EdgeProperties>> &sources, int sink, float *known_distance, float *distance, fast_edge_t<EdgeProperties> *prev_edge, const EdgeWeightFunc &edge_weight, Callbacks &callbacks);
+		friend void dijkstra(cache_graph_t<VertexProperties, EdgeProperties> &g, const vector<existing_source_t<EdgeProperties>> &sources, int sink, float *known_distance, float *distance, cache_edge_t<EdgeProperties> *prev_edge, const EdgeWeightFunc &edge_weight, Callbacks &callbacks);
 
 		template<typename EdgeProperties, typename Callbacks>
 		friend void relax(Buckets &buckets, float delta, vector<bool> &in_bucket, const vector<bool> &vertex_deleted,
-					float *known_distance, float *distance, fast_edge_t<EdgeProperties> *predecessor,
-					int v, float new_known_distance, float new_distance, const fast_edge_t<EdgeProperties> &edge,
+					float *known_distance, float *distance, cache_edge_t<EdgeProperties> *predecessor,
+					int v, float new_known_distance, float new_distance, const cache_edge_t<EdgeProperties> &edge,
 					Callbacks &callbacks);
 
 	public:
@@ -895,10 +1029,10 @@ public:
 };
 
 typedef struct worker_sync_t {
-	tbb::atomic<bool> stop_routing;
-	tbb::atomic<int> net_index;
+	alignas(64) tbb::atomic<bool> stop_routing;
+	alignas(64) tbb::atomic<int> net_index;
 #ifdef __linux__
-	pthread_barrier_t barrier;
+	alignas(64) pthread_barrier_t barrier;
 #else
 	boost::barrier *barrier;
 #endif
@@ -910,7 +1044,7 @@ typedef struct global_route_state_t {
 	t_net_timing *net_timing;
 } global_route_state_t;
 
-typedef struct router_t {
+typedef struct alignas(64) router_t {
 	vector<vector<net_t *>> nets;
 	worker_sync_t sync;
 	RRGraph g;
@@ -968,7 +1102,8 @@ void do_work(router_t *router, DeltaSteppingRouter &net_router)
 	assert(net_router.get_num_instances() == router->num_threads);
 
 	net_router.reset_stats();
-	router->pure_route_time[net_router.get_instance()] = timer::duration::zero();
+
+	auto pure_route_time = timer::duration::zero();
 
 	auto route_start = timer::now();
 
@@ -983,7 +1118,7 @@ void do_work(router_t *router, DeltaSteppingRouter &net_router)
 		router->sync.barrier->wait();
 #endif
 
-		auto pure_route_start = timer::now();
+		//auto pure_route_start = timer::now();
 
 		while ((inet = router->sync.net_index++) < router->nets[phase].size()) {
 			auto &net = *router->nets[phase][inet];
@@ -1003,7 +1138,7 @@ void do_work(router_t *router, DeltaSteppingRouter &net_router)
 			net_router.route(&net.source, sinks, net.local_id, router->delta, router->params.astar_fac, router->state.route_trees[net.local_id], router->state.net_timing[net.vpr_id]); 
 		}
 
-		router->pure_route_time[net_router.get_instance()] += timer::now()-pure_route_start;
+		//pure_route_time += timer::now()-pure_route_start;
 
 #ifdef __linux__
 		pthread_barrier_wait(&router->sync.barrier);
@@ -1013,6 +1148,7 @@ void do_work(router_t *router, DeltaSteppingRouter &net_router)
 	}
 
 	router->route_time[net_router.get_instance()] = timer::now()-route_start;
+	router->pure_route_time[net_router.get_instance()] = pure_route_time; 
 
 	router->stats[net_router.get_instance()] = net_router.get_stats();
 }
@@ -1034,6 +1170,28 @@ void *worker_thread(void *args)
 	return nullptr;
 }
 
+void write_nets(const vector<net_t> &nets)
+{
+	auto nets_copy = nets;
+
+	std::sort(begin(nets_copy), end(nets_copy), [] (const net_t &a, const net_t &b) -> bool {
+			return a.sinks.size() > b.sinks.size();
+			});
+
+	for (int i = 0; i < 5; ++i) {
+		char buffer[256];
+
+		sprintf(buffer, "net_sinks/net_%d.txt", i);
+		FILE *file = fopen(buffer, "w");
+
+		for (const auto &sink : nets_copy[i].sinks) {
+			fprintf(file, "%d %d\n", sink.x, sink.y);
+		}
+
+		fclose(file);
+	}
+}
+
 bool partitioning_delta_stepping_deterministic_route(t_router_opts *opts)
 {
 	init_logging();
@@ -1042,6 +1200,12 @@ bool partitioning_delta_stepping_deterministic_route(t_router_opts *opts)
 	zlog_put_mdc("tid", "0");
 
 	router_t router;
+
+	assert(((unsigned long)&router.sync.stop_routing & 63) == 0);
+	assert(((unsigned long)&router.sync.net_index & 63) == 0);
+#ifdef __linux__
+	assert(((unsigned long)&router.sync.barrier & 63) == 0);
+#endif
 
 	router.num_threads = opts->num_threads;
 
@@ -1053,10 +1217,20 @@ bool partitioning_delta_stepping_deterministic_route(t_router_opts *opts)
 	vector<net_t> global_nets;
 	init_nets(nets, global_nets, opts->bb_factor, opts->large_bb);
 
+	create_virtual_nets(nets, opts->num_threads);
+	//best_case(nets, router.nets);
 	test_rtree(nets, router.nets);
-	test_misr(nets);
+	//test_misr(nets);
+	write_nets(nets);
 
-	router.state.congestion = new congestion_t[num_vertices(router.g)];
+	congestion_t *congestion_aligned;
+//#ifdef __linux__
+	//assert(posix_memalign((void **)&congestion_aligned, 64, sizeof(congestion_t)*num_vertices(router.g)) == 0);
+	//assert(((unsigned long)congestion_aligned & 63) == 0);
+//#else
+	congestion_aligned = (congestion_t *)malloc(sizeof(congestion_t)*num_vertices(router.g));
+//#endif 
+	router.state.congestion = new(congestion_aligned) congestion_t[num_vertices(router.g)];
     for (int i = 0; i < num_vertices(router.g); ++i) {
         router.state.congestion[i].acc_cost = 1;
         router.state.congestion[i].pres_cost = 1;
@@ -1106,7 +1280,17 @@ bool partitioning_delta_stepping_deterministic_route(t_router_opts *opts)
 
 	vector<pthread_t> tids(opts->num_threads);
 	for (int i = 1; i < opts->num_threads; ++i) {
-		assert(pthread_create(&tids[i], nullptr, worker_thread, (void *)&router) == 0);
+		pthread_attr_t attr;
+		assert(pthread_attr_init(&attr) == 0);
+
+#ifdef __linux__
+		cpu_set_t cpuset;
+		CPU_ZERO(&cpuset);
+		CPU_SET(i, &cpuset);
+		assert(pthread_attr_setaffinity_np(&attr, sizeof(cpu_set_t), &cpuset) == 0);
+#endif
+
+		assert(pthread_create(&tids[i], &attr, worker_thread, (void *)&router) == 0);
 	}
 
 	timer::duration total_route_time = timer::duration::zero();
