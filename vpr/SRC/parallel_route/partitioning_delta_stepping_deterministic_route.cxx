@@ -66,6 +66,159 @@ typedef struct new_virtual_net_t {
 	box bounding_box;
 } new_virtual_net_t;
 
+void split_bb_2(net_t &net, float bb_area_threshold, vector<new_virtual_net_t> &virtual_nets)
+{
+	using point_f = typename bg::model::point<float, 2, bg::cs::cartesian>;
+
+	sink_to_point_rtree_item to_point_rtree_item;
+
+	bgi::rtree<point_rtree_value, bgi::rstar<16>, bgi::indexable<point_rtree_value>, point_rtree_value_equal> tree(net.sinks | boost::adaptors::transformed(to_point_rtree_item));
+
+	box previous_box;
+	int debug = 0;
+
+	printf("source %d %d\n", net.source.x, net.source.y);
+
+	while (!tree.empty()) {
+		new_virtual_net_t vnet;
+		vnet.net = &net;
+
+		if (debug > 0) {
+			vnet.bounding_box = previous_box;
+		} else {
+			vnet.bounding_box = bg::make_inverse<box>();
+			bg::expand(vnet.bounding_box, point(net.source.x, net.source.y));
+		}
+
+		printf("box %d %d, %d %d\n", bg::get<0>(vnet.bounding_box.min_corner()), bg::get<1>(vnet.bounding_box.min_corner()),
+				bg::get<0>(vnet.bounding_box.max_corner()), bg::get<1>(vnet.bounding_box.max_corner()));
+
+		box source_box = vnet.bounding_box;
+		point last_point;
+
+		while (bg::area(vnet.bounding_box) < bb_area_threshold && !tree.empty()) {
+			vector<point_rtree_value> nearest;
+
+			assert(tree.query(bgi::nearest(source_box, 16), std::back_inserter(nearest)) > 0);
+
+			//assert(std::is_sorted(begin(nearest), end(nearest), [&source_box] (const point_rtree_value &a, const point_rtree_value &b) -> bool {
+						//return bg::comparable_distance(a.first, source_box) > bg::comparable_distance(b.first, source_box);
+						//}));
+
+			std::sort(begin(nearest), end(nearest), [&source_box] (const point_rtree_value &a, const point_rtree_value &b) -> bool {
+						return bg::comparable_distance(a.first, source_box) < bg::comparable_distance(b.first, source_box);
+						});
+
+			for (int i = 0; i < nearest.size() && bg::area(vnet.bounding_box) < bb_area_threshold; ++i) {
+				assert(nearest[i].first.get<0>() == nearest[i].second->x && nearest[i].first.get<1>() == nearest[i].second->y);
+				vnet.sinks.push_back(nearest[i].second);
+				bg::expand(vnet.bounding_box, nearest[i].first);
+
+				printf("expanding with point %d %d\n", nearest[i].first.get<0>(), nearest[i].first.get<1>());
+
+				last_point = nearest[i].first;
+
+				assert(tree.remove(nearest[i]) == 1);
+			}
+		}
+
+		bg::assign(previous_box.min_corner(), last_point);
+		bg::centroid(vnet.bounding_box, previous_box.max_corner());
+		bg::correct(previous_box);
+
+		printf("previous box %d %d, %d %d\n", bg::get<0>(previous_box.min_corner()), bg::get<1>(previous_box.min_corner()),
+				bg::get<0>(previous_box.max_corner()), bg::get<1>(previous_box.max_corner()));
+
+		assert(!vnet.sinks.empty());
+
+		++debug;
+
+		virtual_nets.emplace_back(std::move(vnet));
+	}
+}
+
+void split_bb(net_t &net, float bb_area_threshold, vector<new_virtual_net_t> &virtual_nets)
+{
+	using point_f = typename bg::model::point<float, 2, bg::cs::cartesian>;
+
+	sink_to_point_rtree_item to_point_rtree_item;
+
+	bgi::rtree<point_rtree_value, bgi::rstar<16>, bgi::indexable<point_rtree_value>, point_rtree_value_equal> tree(net.sinks | boost::adaptors::transformed(to_point_rtree_item));
+
+	box previous_box;
+	int debug = 0;
+
+	//printf("source %d %d\n", net.source.x, net.source.y);
+
+	while (!tree.empty()) {
+		new_virtual_net_t vnet;
+		vnet.net = &net;
+
+		point_f centroid;
+
+		if (debug > 0) {
+			bg::centroid(previous_box, centroid);
+
+			vnet.bounding_box = previous_box;
+		} else {
+			bg::assign_values(centroid, net.source.x, net.source.y);
+
+			vnet.bounding_box = bg::make_inverse<box>();
+			bg::expand(vnet.bounding_box, centroid);
+		}
+
+		printf("box %d %d, %d %d\n", bg::get<0>(vnet.bounding_box.min_corner()), bg::get<1>(vnet.bounding_box.min_corner()),
+				bg::get<0>(vnet.bounding_box.max_corner()), bg::get<1>(vnet.bounding_box.max_corner()));
+		printf("centroid: %g %g\n", centroid.get<0>(), centroid.get<1>());
+
+		point last_point;
+		point_f total = centroid;
+		int num_points = 1;
+
+		while (bg::area(vnet.bounding_box) < bb_area_threshold && !tree.empty()) {
+			vector<point_rtree_value> nearest;
+
+			assert(tree.query(bgi::nearest(centroid, 1), std::back_inserter(nearest)) == 1);
+
+			assert(nearest.size() == 1);
+			assert(nearest[0].first.get<0>() == nearest[0].second->x && nearest[0].first.get<1>() == nearest[0].second->y);
+
+			vnet.sinks.push_back(nearest[0].second);
+			bg::expand(vnet.bounding_box, nearest[0].first);
+
+			printf("%g %g + %d %d = ", total.get<0>(), total.get<1>(), nearest[0].first.get<0>(), nearest[0].first.get<1>());
+
+			bg::add_point(total, nearest[0].first);
+			++num_points;
+
+			printf("%g %g\n", total.get<0>(), total.get<1>());
+
+			/* recalc centroid */
+			centroid = total;
+			bg::divide_value(centroid, num_points); 
+
+			last_point = nearest[0].first;
+
+			printf("new centroid %g %g\n", centroid.get<0>(), centroid.get<1>());
+
+			assert(tree.remove(nearest[0]) == 1);
+		}
+
+		bg::assign(previous_box.min_corner(), last_point);
+		bg::assign(previous_box.max_corner(), centroid);
+		bg::correct(previous_box);
+
+		printf("previous box %d %d, %d %d\n", bg::get<0>(previous_box.min_corner()), bg::get<1>(previous_box.min_corner()),
+				bg::get<0>(previous_box.max_corner()), bg::get<1>(previous_box.max_corner()));
+
+		assert(!vnet.sinks.empty());
+
+		++debug;
+
+		virtual_nets.emplace_back(std::move(vnet));
+	}
+}
+
 void split(net_t &net, float bb_area_threshold, vector<new_virtual_net_t> &virtual_nets)
 {
 	using point_f = typename bg::model::point<float, 2, bg::cs::cartesian>;
@@ -83,6 +236,8 @@ void split(net_t &net, float bb_area_threshold, vector<new_virtual_net_t> &virtu
 	box previous_box;
 	int debug = 0;
 
+	//printf("source %d %d\n", net.source.x, net.source.y);
+
 	while (!tree.empty()) {
 		new_virtual_net_t vnet;
 		vnet.net = &net;
@@ -90,10 +245,14 @@ void split(net_t &net, float bb_area_threshold, vector<new_virtual_net_t> &virtu
 
 		bg::expand(vnet.bounding_box, centroid);
 
+		//printf("centroid: %g %g\n", centroid.get<0>(), centroid.get<1>());
+
 		if ((num_acc % 2) == 0) {
 			total = centroid;
 			num_points = 1;
 			num_acc = 0;
+
+			//printf("resetting total to %g %g\n", total.get<0>(), total.get<1>());
 		}
 
 		while (bg::area(vnet.bounding_box) < bb_area_threshold && !tree.empty()) {
@@ -101,17 +260,29 @@ void split(net_t &net, float bb_area_threshold, vector<new_virtual_net_t> &virtu
 
 			assert(tree.query(bgi::nearest(centroid, 1), std::back_inserter(nearest)) == 1);
 
+			assert(nearest.size() == 1);
+			assert(nearest[0].first.get<0>() == nearest[0].second->x && nearest[0].first.get<1>() == nearest[0].second->y);
+
 			vnet.sinks.push_back(nearest[0].second);
 			bg::expand(vnet.bounding_box, nearest[0].first);
 
-			/* recalc centroid */
+			//printf("%g %g + %d %d = ", total.get<0>(), total.get<1>(), nearest[0].first.get<0>(), nearest[0].first.get<1>());
+
 			bg::add_point(total, nearest[0].first);
-			centroid = total;
 			++num_points;
+
+			//printf("%g %g\n", total.get<0>(), total.get<1>());
+
+			/* recalc centroid */
+			centroid = total;
 			bg::divide_value(centroid, num_points); 
+
+			//printf("new centroid %g %g\n", centroid.get<0>(), centroid.get<1>());
 
 			assert(tree.remove(nearest[0]) == 1);
 		}
+
+		assert(!vnet.sinks.empty());
 
 		if (debug > 0) {
 			assert(bg::intersects(previous_box, vnet.bounding_box));
@@ -142,7 +313,7 @@ void create_virtual_nets(vector<net_t> &nets, int num_threads)
 	const float scaling_factor = 2;
 	float bb_area_threshold = (float)fpga_area / (num_threads * scaling_factor);
 
-	split(*sorted_nets[0], bb_area_threshold, virtual_nets);
+	split_bb_2(*sorted_nets[0], bb_area_threshold, virtual_nets);
 
 	for (int i = 0; i < virtual_nets.size(); ++i) {
 		char buffer[256];
@@ -152,10 +323,17 @@ void create_virtual_nets(vector<net_t> &nets, int num_threads)
 		const auto &box = virtual_nets[i].bounding_box;
 		extern int nx, ny;
 		fprintf(vnet_bb, "0 0 %d %d 0\n", nx+2, ny+2);
-		fprintf(vnet_bb, "%d %d %d %d 1\n",
+		fprintf(vnet_bb, "%d %d %d %d 0\n",
 				box.min_corner().get<0>(), box.min_corner().get<1>(),
 				box.max_corner().get<0>()-box.min_corner().get<0>(),
 				box.max_corner().get<1>()-box.min_corner().get<1>());
+		if (i > 0) {
+			const auto &prev_box = virtual_nets[i-1].bounding_box;
+			fprintf(vnet_bb, "%d %d %d %d 1\n",
+					prev_box.min_corner().get<0>(), prev_box.min_corner().get<1>(),
+					prev_box.max_corner().get<0>()-prev_box.min_corner().get<0>(),
+					prev_box.max_corner().get<1>()-prev_box.min_corner().get<1>());
+		}
 		fclose(vnet_bb);
 
 		sprintf(buffer, "virtual_nets_0_%d_p.txt", i);
