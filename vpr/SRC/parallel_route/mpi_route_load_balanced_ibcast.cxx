@@ -1112,7 +1112,7 @@ bool mpi_route_load_balanced_ibcast(t_router_opts *opts, struct s_det_routing_ar
 			assert(route_trees[net->local_id].root_rt_nodes.size() == 1);
 			get_overused_nodes(route_trees[net->local_id], route_trees[net->local_id].root_rt_nodes[0], partitioner.orig_g, congestion, overused_rr_node);
 			if (!overused_rr_node.empty()) {
-				zlog_level(delta_log, ROUTER_V1, "Net %d bb_rank %d has %lu overused nodes:\n", net->vpr_id, net->bb_area_rank, overused_rr_node.size());
+				//zlog_level(delta_log, ROUTER_V1, "Net %d bb_rank %d has %lu overused nodes:\n", net->vpr_id, net->bb_area_rank, overused_rr_node.size());
 				for (const auto &item : overused_rr_node) {
 					zlog_level(delta_log, ROUTER_V1, "%d ", item);
 				}

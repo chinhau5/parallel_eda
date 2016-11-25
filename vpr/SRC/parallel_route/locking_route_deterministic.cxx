@@ -514,7 +514,7 @@ bool locking_route_deterministic(t_router_opts *opts, int run)
 			assert(route_trees[net.local_id].root_rt_nodes.size() == 1);
 			get_overused_nodes(route_trees[net.local_id], route_trees[net.local_id].root_rt_nodes[0], g, global.data(), overused_rr_node);
 			if (!overused_rr_node.empty()) {
-				zlog_level(delta_log, ROUTER_V1, "Net %d bb_rank %d overused nodes:\n", net.vpr_id, net.bb_area_rank);
+				//zlog_level(delta_log, ROUTER_V1, "Net %d bb_rank %d overused nodes:\n", net.vpr_id, net.bb_area_rank);
 				for (const auto &item : overused_rr_node) {
 					zlog_level(delta_log, ROUTER_V1, "%d ", item);
 				}
