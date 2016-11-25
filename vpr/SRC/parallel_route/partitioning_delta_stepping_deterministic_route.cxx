@@ -17,7 +17,13 @@
 #include "geometry.h"
 #include "clock.h"
 #include <boost/range/adaptor/transformed.hpp>
+#include <boost/range/adaptor/sliced.hpp>
+#include <boost/range/algorithm/copy.hpp>
 #include <boost/thread/barrier.hpp>
+#include <boost/graph/adjacency_list.hpp>
+#include <boost/property_map/vector_property_map.hpp>
+#include <boost/graph/sequential_vertex_coloring.hpp>
+
 //#include <mlpack/methods/kmeans/kmeans.hpp>
 //#include <mlpack/methods/kmeans/refined_start.hpp>
 
@@ -28,6 +34,20 @@ using timer = std::chrono::high_resolution_clock;
 using std::chrono::duration_cast;
 using std::chrono::nanoseconds;
 
+typedef boost::adjacency_list<boost::vecS, boost::vecS, boost::directedS> OverlapGraph;
+typedef boost::graph_traits<OverlapGraph>::vertex_descriptor vertex_descriptor;
+typedef boost::graph_traits<OverlapGraph>::vertices_size_type vertices_size_type;
+typedef boost::property_map<OverlapGraph, boost::vertex_index_t>::const_type vertex_index_map;
+
+typedef struct new_virtual_net_t {
+	int index;
+	net_t *net;
+	vector<sink_t *> sinks;
+	box bounding_box;
+	point last_point;
+	vertex_descriptor v;
+} new_virtual_net_t;
+
 using rtree_value = pair<box, net_t *>;
 
 struct net_to_rtree_item {
@@ -37,10 +57,12 @@ struct net_to_rtree_item {
 	}
 };
 
-struct rtree_value_equal {
-	bool operator()(const rtree_value &a, const rtree_value &b) const
+using virtual_rtree_value = pair<box, new_virtual_net_t *>;
+
+struct virtual_net_to_rtree_item {
+	virtual_rtree_value operator()(new_virtual_net_t *net) const
 	{
-		return bg::equals(a.first, b.first) && a.second == b.second;
+		return make_pair(net->bounding_box, net);
 	}
 };
 
@@ -53,18 +75,173 @@ struct sink_to_point_rtree_item {
 	}
 };
 
-struct point_rtree_value_equal {
-	bool operator()(const point_rtree_value &a, const point_rtree_value &b) const
+struct rtree_value_equal {
+	template<typename GeometryPtrPair>
+	bool operator()(const GeometryPtrPair &a, const GeometryPtrPair &b) const
 	{
 		return bg::equals(a.first, b.first) && a.second == b.second;
 	}
 };
 
-typedef struct new_virtual_net_t {
-	net_t *net;
-	vector<sink_t *> sinks;
-	box bounding_box;
-} new_virtual_net_t;
+void split_bb_4(net_t &net, float bb_area_threshold, vector<new_virtual_net_t> &virtual_nets)
+{
+	using point_f = typename bg::model::point<float, 2, bg::cs::cartesian>;
+
+	sink_to_point_rtree_item to_point_rtree_item;
+
+	bgi::rtree<point_rtree_value, bgi::rstar<16>, bgi::indexable<point_rtree_value>, rtree_value_equal> tree(net.sinks | boost::adaptors::transformed(to_point_rtree_item));
+
+	int debug = 0;
+
+	//printf("source %d %d\n", net.source.x, net.source.y);
+
+	while (!tree.empty()) {
+		new_virtual_net_t vnet;
+		vnet.net = &net;
+		vnet.index = debug;
+
+		box source_box;
+
+		if (debug > 0) {
+			vector<point_rtree_value> nearest;
+			assert(tree.query(bgi::nearest(virtual_nets.back().bounding_box, 1), std::back_inserter(nearest)) == 1);
+
+			float min_distance = std::numeric_limits<float>::max();
+			point nearest_point;
+			for (const auto &sink : virtual_nets.back().sinks) {
+				point p(sink->x, sink->y);
+				float d = bg::comparable_distance(p, nearest[0].first);
+				if (d < min_distance) {
+					min_distance = d;
+					nearest_point = p;
+				}
+			}
+
+			extern int nx, ny;
+			int xmin = std::max(bg::get<0>(nearest_point)-2, 0);
+			int xmax = std::min(bg::get<0>(nearest_point)+2, nx+2);
+
+			int ymin = std::max(bg::get<1>(nearest_point)-2, 0);
+			int ymax = std::min(bg::get<1>(nearest_point)+2, ny+2);
+
+			//printf("xmin %d xmax %d ymin %d ymax %d\n", xmin, xmax, ymin, ymax);
+
+			source_box = bg::make<box>(xmin, ymin, xmax, ymax);
+
+			vnet.last_point = nearest_point;
+		} else {
+			source_box = bg::make_inverse<box>();
+			bg::expand(source_box, point(net.source.x, net.source.y));
+
+			vnet.last_point = point(net.source.x, net.source.y);
+		}
+
+		//printf("source box %d %d, %d %d\n", bg::get<0>(source_box.min_corner()), bg::get<1>(source_box.min_corner()),
+				//bg::get<0>(source_box.max_corner()), bg::get<1>(source_box.max_corner()));
+
+		vnet.bounding_box = source_box;
+
+		while (bg::area(vnet.bounding_box) < bb_area_threshold && !tree.empty()) {
+			vector<point_rtree_value> nearest;
+
+			assert(tree.query(bgi::nearest(source_box, 16), std::back_inserter(nearest)) > 0);
+
+			std::sort(begin(nearest), end(nearest), [&source_box] (const point_rtree_value &a, const point_rtree_value &b) -> bool {
+						return bg::comparable_distance(a.first, source_box) < bg::comparable_distance(b.first, source_box);
+						});
+
+			for (int i = 0; i < nearest.size() && bg::area(vnet.bounding_box) < bb_area_threshold; ++i) {
+				assert(nearest[i].first.get<0>() == nearest[i].second->x && nearest[i].first.get<1>() == nearest[i].second->y);
+				vnet.sinks.push_back(nearest[i].second);
+				bg::expand(vnet.bounding_box, nearest[i].first);
+
+				//printf("expanding with point %d %d\n", nearest[i].first.get<0>(), nearest[i].first.get<1>());
+
+				assert(tree.remove(nearest[i]) == 1);
+			}
+		}
+
+		assert(!vnet.sinks.empty());
+
+		virtual_nets.emplace_back(std::move(vnet));
+
+		++debug;
+	}
+}
+
+void split_bb_3(net_t &net, float bb_area_threshold, vector<new_virtual_net_t> &virtual_nets)
+{
+	using point_f = typename bg::model::point<float, 2, bg::cs::cartesian>;
+
+	sink_to_point_rtree_item to_point_rtree_item;
+
+	bgi::rtree<point_rtree_value, bgi::rstar<16>, bgi::indexable<point_rtree_value>, rtree_value_equal> tree(net.sinks | boost::adaptors::transformed(to_point_rtree_item));
+
+	box source_box = bg::make_inverse<box>();
+	bg::expand(source_box, point(net.source.x, net.source.y));
+
+	int debug = 0;
+
+	printf("source %d %d\n", net.source.x, net.source.y);
+
+	while (!tree.empty()) {
+		new_virtual_net_t vnet;
+		vnet.net = &net;
+
+		vnet.bounding_box = source_box;
+
+		printf("source box %d %d, %d %d\n", bg::get<0>(vnet.bounding_box.min_corner()), bg::get<1>(vnet.bounding_box.min_corner()),
+				bg::get<0>(vnet.bounding_box.max_corner()), bg::get<1>(vnet.bounding_box.max_corner()));
+
+		point last_point;
+
+		while (bg::area(vnet.bounding_box) < bb_area_threshold && !tree.empty()) {
+			vector<point_rtree_value> nearest;
+
+			assert(tree.query(bgi::nearest(source_box, 16), std::back_inserter(nearest)) > 0);
+
+			//assert(std::is_sorted(begin(nearest), end(nearest), [&source_box] (const point_rtree_value &a, const point_rtree_value &b) -> bool {
+						//return bg::comparable_distance(a.first, source_box) > bg::comparable_distance(b.first, source_box);
+						//}));
+
+			std::sort(begin(nearest), end(nearest), [&source_box] (const point_rtree_value &a, const point_rtree_value &b) -> bool {
+						return bg::comparable_distance(a.first, source_box) < bg::comparable_distance(b.first, source_box);
+						});
+
+			for (int i = 0; i < nearest.size() && bg::area(vnet.bounding_box) < bb_area_threshold; ++i) {
+				assert(nearest[i].first.get<0>() == nearest[i].second->x && nearest[i].first.get<1>() == nearest[i].second->y);
+				vnet.sinks.push_back(nearest[i].second);
+				bg::expand(vnet.bounding_box, nearest[i].first);
+
+				printf("expanding with point %d %d\n", nearest[i].first.get<0>(), nearest[i].first.get<1>());
+
+				last_point = nearest[i].first;
+
+				assert(tree.remove(nearest[i]) == 1);
+			}
+		}
+
+		assert(!vnet.sinks.empty());
+		vnet.last_point = last_point;
+
+		/* TODO: clip the values here */
+		source_box.min_corner() = last_point;
+		bg::subtract_value(source_box.min_corner(), 2);
+
+		source_box.max_corner() = last_point;
+		bg::add_value(source_box.max_corner(), 2);
+
+		printf("last point %d %d\n", bg::get<0>(last_point), bg::get<1>(last_point));
+		printf("new source box %d %d, %d %d\n", bg::get<0>(source_box.min_corner()), bg::get<1>(source_box.min_corner()),
+				bg::get<0>(source_box.max_corner()), bg::get<1>(source_box.max_corner()));
+
+		assert(!vnet.sinks.empty());
+
+		++debug;
+
+		virtual_nets.emplace_back(std::move(vnet));
+	}
+}
 
 void split_bb_2(net_t &net, float bb_area_threshold, vector<new_virtual_net_t> &virtual_nets)
 {
@@ -72,7 +249,7 @@ void split_bb_2(net_t &net, float bb_area_threshold, vector<new_virtual_net_t> &
 
 	sink_to_point_rtree_item to_point_rtree_item;
 
-	bgi::rtree<point_rtree_value, bgi::rstar<16>, bgi::indexable<point_rtree_value>, point_rtree_value_equal> tree(net.sinks | boost::adaptors::transformed(to_point_rtree_item));
+	bgi::rtree<point_rtree_value, bgi::rstar<16>, bgi::indexable<point_rtree_value>, rtree_value_equal> tree(net.sinks | boost::adaptors::transformed(to_point_rtree_item));
 
 	box previous_box;
 	int debug = 0;
@@ -143,7 +320,7 @@ void split_bb(net_t &net, float bb_area_threshold, vector<new_virtual_net_t> &vi
 
 	sink_to_point_rtree_item to_point_rtree_item;
 
-	bgi::rtree<point_rtree_value, bgi::rstar<16>, bgi::indexable<point_rtree_value>, point_rtree_value_equal> tree(net.sinks | boost::adaptors::transformed(to_point_rtree_item));
+	bgi::rtree<point_rtree_value, bgi::rstar<16>, bgi::indexable<point_rtree_value>, rtree_value_equal> tree(net.sinks | boost::adaptors::transformed(to_point_rtree_item));
 
 	box previous_box;
 	int debug = 0;
@@ -229,7 +406,7 @@ void split(net_t &net, float bb_area_threshold, vector<new_virtual_net_t> &virtu
 
 	sink_to_point_rtree_item to_point_rtree_item;
 
-	bgi::rtree<point_rtree_value, bgi::rstar<16>, bgi::indexable<point_rtree_value>, point_rtree_value_equal> tree(net.sinks | boost::adaptors::transformed(to_point_rtree_item));
+	bgi::rtree<point_rtree_value, bgi::rstar<16>, bgi::indexable<point_rtree_value>, rtree_value_equal> tree(net.sinks | boost::adaptors::transformed(to_point_rtree_item));
 
 	int num_acc = 0;
 
@@ -296,25 +473,28 @@ void split(net_t &net, float bb_area_threshold, vector<new_virtual_net_t> &virtu
 	}
 }
 
-void create_virtual_nets(vector<net_t> &nets, int num_threads)
+void create_virtual_nets(vector<net_t> &nets, int num_threads, vector<vector<new_virtual_net_t>> &all_virtual_nets)
 {
-	vector<net_t *> sorted_nets;
-	for (auto &net : nets) {
-		sorted_nets.push_back(&net);
-	}
-	std::sort(begin(sorted_nets), end(sorted_nets), [] (const net_t *a, const net_t *b) -> bool {
-			return a->sinks.size() > b->sinks.size();
-			});
-
-	vector<new_virtual_net_t> virtual_nets;
-
 	extern int nx, ny;
 	int fpga_area = (nx+2) * (ny+2);
 	const float scaling_factor = 2;
 	float bb_area_threshold = (float)fpga_area / (num_threads * scaling_factor);
 
-	split_bb_2(*sorted_nets[0], bb_area_threshold, virtual_nets);
+	all_virtual_nets.resize(nets.size());
+	for (int i = 0; i < nets.size(); ++i) {
+		assert(all_virtual_nets[i].empty());
+		split_bb_4(nets[i], bb_area_threshold, all_virtual_nets[i]);
+	}
 
+	vector<vector<new_virtual_net_t> *> sorted_all_virtual_nets;
+	for (auto &virtual_nets : all_virtual_nets) {
+		sorted_all_virtual_nets.push_back(&virtual_nets);
+	}
+	std::sort(begin(sorted_all_virtual_nets), end(sorted_all_virtual_nets), [] (const vector<new_virtual_net_t> *a, const vector<new_virtual_net_t> *b) -> bool {
+			return a->at(0).net->sinks.size() > b->at(0).net->sinks.size();
+			});
+
+	const auto &virtual_nets = *sorted_all_virtual_nets[0];
 	for (int i = 0; i < virtual_nets.size(); ++i) {
 		char buffer[256];
 
@@ -339,10 +519,19 @@ void create_virtual_nets(vector<net_t> &nets, int num_threads)
 		sprintf(buffer, "virtual_nets_0_%d_p.txt", i);
 		FILE *vnet_p = fopen(buffer, "w");
 
-		fprintf(vnet_p, "%d %d %d\n", virtual_nets[i].net->source.x, virtual_nets[i].net->source.y, i);
-		for (const auto &sink : virtual_nets[i].sinks) {
-			fprintf(vnet_p, "%d %d %d\n", sink->x, sink->y, i);
+		fprintf(vnet_p, "%d %d %d 0\n", virtual_nets[i].net->source.x, virtual_nets[i].net->source.y, i);
+		for (int j = 0; j < virtual_nets[i].sinks.size(); ++j) {
+			const auto &sink = virtual_nets[i].sinks[j];
+			//if (j == virtual_nets[i].sinks.size()-1) {
+				//assert(virtual_nets[i].last_point.get<0>() == sink->x &&virtual_nets[i].last_point.get<1>() == sink->y);
+				//fprintf(vnet_p, "%d %d %d 1\n", sink->x, sink->y, i);
+			//} else {
+				//fprintf(vnet_p, "%d %d %d 0\n", sink->x, sink->y, i);
+			//}
+				fprintf(vnet_p, "%d %d %d 0\n", sink->x, sink->y, i);
 		}
+
+		fprintf(vnet_p, "%d %d %d 1\n", bg::get<0>(virtual_nets[i].last_point), bg::get<1>(virtual_nets[i].last_point), i);
 
 		fclose(vnet_p);
 	}
@@ -353,6 +542,314 @@ void best_case(vector<net_t> &nets, vector<vector<net_t *>> &phase_nets)
 	phase_nets.emplace_back();
 	for (auto &net : nets) {
 		phase_nets.back().push_back(&net);
+	}
+}
+
+void build_overlap_graph(vector<vector<new_virtual_net_t>> &all_virtual_nets, OverlapGraph &g, vector<new_virtual_net_t *> &all_virtual_nets_ptr)
+{
+	for (auto &virtual_nets : all_virtual_nets) {
+		for (auto &virtual_net : virtual_nets) {
+			auto v = add_vertex(g);
+
+			virtual_net.v = v;
+
+			all_virtual_nets_ptr.push_back(&virtual_net);
+		}
+	}
+
+	virtual_net_to_rtree_item to_rtree_item;
+	bgi::rtree<virtual_rtree_value, bgi::rstar<16>, bgi::indexable<virtual_rtree_value>, rtree_value_equal> tree(all_virtual_nets_ptr | boost::adaptors::transformed(to_rtree_item));
+
+	for (const auto &current : all_virtual_nets_ptr) {
+		vector<virtual_rtree_value> overlapping_nets;
+		tree.query(bgi::intersects(current->bounding_box), std::back_inserter(overlapping_nets));
+
+		int num_equal = 0;
+		for (const auto &overlapping_net : overlapping_nets) {
+			assert(bg::equals(overlapping_net.first, overlapping_net.second->bounding_box));
+			assert(bg::intersects(overlapping_net.first , current->bounding_box));
+
+			if (overlapping_net.second != current && overlapping_net.second->net != current->net) {
+				add_edge(current->v, overlapping_net.second->v, g);
+			}
+
+			if (overlapping_net.second == current) {
+				++num_equal;
+			}
+		}
+		assert(num_equal == 1);
+	}
+
+	/* TODO: this is very pessimistic. we can remove some edges if we are sure that
+	 * the bounding box overlaps with the existing route tree sufficiently */
+	//for (auto &virtual_nets : all_virtual_nets) {
+		//for (int i = 0; i < virtual_nets.size(); ++i) {
+			//for (int j = 0; j < virtual_nets.size(); ++j) {
+				//if (i != j) {
+					//auto e = edge(virtual_nets[i].v, virtual_nets[j].v, g);
+					//if (!e.second) {
+						//add_edge(virtual_nets[i].v, virtual_nets[j].v, g);
+					//}
+				//}
+			//}
+		//}
+	//}
+
+	for (auto &virtual_nets : all_virtual_nets) {
+		for (int i = virtual_nets.size()-1; i > 0; --i) {
+			auto e = edge(virtual_nets[i].v, virtual_nets[i-1].v, g);
+			assert(!e.second);
+			add_edge(virtual_nets[i].v, virtual_nets[i-1].v, g);
+		}
+	}
+}
+
+template <class VertexListGraph, class OrderPA, class ColorMap, class VirtualNetsPtr>
+	typename boost::property_traits<ColorMap>::value_type
+custom_vertex_coloring(const VertexListGraph& G, OrderPA &order, 
+		ColorMap &color, const VirtualNetsPtr &all_virtual_nets_ptr)
+{
+	typedef boost::graph_traits<VertexListGraph> GraphTraits;
+	typedef typename GraphTraits::vertex_descriptor Vertex;
+	typedef typename boost::property_traits<ColorMap>::value_type size_type;
+
+	size_type max_color = 0;
+	const size_type V = num_vertices(G);
+
+	// We need to keep track of which colors are used by
+	// adjacent vertices. We do this by marking the colors
+	// that are used. The mark array contains the mark
+	// for each color. The length of mark is the
+	// number of vertices since the maximum possible number of colors
+	// is the number of vertices.
+
+	//Initialize colors 
+	typename GraphTraits::vertex_iterator v, vend;
+	for (boost::tie(v, vend) = vertices(G); v != vend; ++v)
+		put(color, *v, V-1);
+
+	bool has_unmarked = true;
+	int num_rounds = 0;
+	while (has_unmarked) {
+		std::vector<size_type> mark(V, 
+				std::numeric_limits<size_type>::max BOOST_PREVENT_MACRO_SUBSTITUTION());
+		//Determine the color for every vertex one by one
+		has_unmarked = false;
+		for ( size_type i = 0; i < V; i++) {
+			Vertex current = get(order,i);
+			typename GraphTraits::adjacency_iterator v, vend;
+
+			if (get(color, current) != V-1) {
+				continue;
+			}
+
+			//Mark the colors of vertices adjacent to current.
+			//i can be the value for marking since i increases successively
+			bool parent_unmarked = false;
+			int num_parents = 0;
+			Vertex parent = GraphTraits::null_vertex();
+
+			for (boost::tie(v,vend) = adjacent_vertices(current, G); v != vend && !parent_unmarked; ++v) {
+				if (all_virtual_nets_ptr[current]->net == all_virtual_nets_ptr[*v]->net
+						&& all_virtual_nets_ptr[current]->index > all_virtual_nets_ptr[*v]->index) {
+					parent = *v;
+					++num_parents;
+
+					if (get(color, *v) == V-1) {
+						parent_unmarked = true;
+					}
+				} else {
+					mark[get(color,*v)] = i; 
+				}
+			}
+
+			if (parent_unmarked) {
+				assert(num_parents == 1);
+				has_unmarked = true;
+				continue;
+			}
+
+			//Next step is to assign the smallest un-marked color
+			//to the current vertex.
+			size_type j;
+			if (parent != GraphTraits::null_vertex()) {
+				assert(num_parents == 1);
+				j = get(color, parent)+1;
+			} else {
+				assert(num_parents == 0);
+				j = 0;
+			}
+
+			//Scan through all useable colors, find the smallest possible
+			//color that is not used by neighbors.  Note that if mark[j]
+			//is equal to i, color j is used by one of the current vertex's
+			//neighbors.
+			while ( j < max_color && mark[j] == i ) 
+				++j;
+
+			max_color = std::max(j+1, max_color);
+			//while ( max_color <= j)  //All colors are used up. Add one more color
+				//++max_color;
+
+			//At this point, j is the smallest possible color
+			put(color, current, j);  //Save the color of vertex current
+		}
+		++num_rounds;
+	}
+
+	printf("num rounds %d\n", num_rounds);
+
+	return max_color;
+}
+
+void test_rtree_virtual_2(vector<vector<new_virtual_net_t>> &all_virtual_nets, vector<vector<new_virtual_net_t *>> &phase_nets)
+{
+	OverlapGraph g;
+	vector<new_virtual_net_t *> all_virtual_nets_ptr;
+
+	auto build_start = timer::now();
+
+	build_overlap_graph(all_virtual_nets, g, all_virtual_nets_ptr);
+
+	auto build_time = timer::now()-build_start;
+
+	printf("overlap graph build time %g\n", duration_cast<nanoseconds>(build_time).count() / 1e9);
+	printf("overlap num vertices %d num edges %d\n", num_vertices(g), num_edges(g));
+
+	//auto ep = edges(g);
+	//for (auto ei = ep.first; ei != ep.second; ++ei) {
+		//printf("edge %d -> %d\n", source(*ei, g), target(*ei, g));
+	//}
+
+	vector<vertex_descriptor> order(num_vertices(g));
+
+	for (int i = 0; i < num_vertices(g); ++i) {
+		order[i] = i;
+	}
+
+	std::sort(begin(order), end(order), [&] (int a, int b) -> bool {
+			assert(a == all_virtual_nets_ptr[a]->v); 
+			assert(b == all_virtual_nets_ptr[b]->v); 
+
+			/* BUG: the relation is not transitive */
+			//if (all_virtual_nets_ptr[a]->net == all_virtual_nets_ptr[b]->net) {
+			//return all_virtual_nets_ptr[a]->index < all_virtual_nets_ptr[b]->index;
+			//} else {
+			//return out_degree(a, g) > out_degree(b, g);
+			//}
+			//return all_virtual_nets_ptr[a]->index < all_virtual_nets_ptr[b]->index || (all_virtual_nets_ptr[a]->index == all_virtual_nets_ptr[b]->index && out_degree(a, g) > out_degree(b, g));
+			return out_degree(a, g) > out_degree(b, g);
+			});
+
+	auto order_map = make_iterator_property_map(begin(order), get(boost::vertex_index, g));
+
+	boost::vector_property_map<vertices_size_type> color;
+
+	auto coloring_start = timer::now();
+
+	int num_colors = custom_vertex_coloring(g, order_map, color, all_virtual_nets_ptr);
+
+	auto coloring_time = timer::now()-coloring_start;
+
+	printf("num colors %d\n", num_colors);
+	printf("coloring time %g\n", duration_cast<nanoseconds>(coloring_time).count() / 1e9);
+	
+	int vnet = 0;
+	for (const auto &virtual_nets : all_virtual_nets) {
+		set<int> colors;
+		int previous_color = -1;
+		int previous_index = -1;
+		for (const auto &virtual_net : virtual_nets) {
+			int c = color[virtual_net.v];
+			colors.insert(c);
+
+			//printf("vnet %d index %d v %d color %d\n", vnet, virtual_net.index, virtual_net.v, c);
+
+			assert(virtual_net.index > previous_index);
+			previous_index = virtual_net.index;
+
+			assert(c > previous_color);
+			previous_color = c;
+		}
+		assert(colors.size() == virtual_nets.size());
+		++vnet;
+	}
+
+	vector<int> num_v(num_colors, 0);
+	for (const auto &ptr : all_virtual_nets_ptr) {
+		++num_v[get(color, ptr->v)];
+	}
+
+	for (int i = 0; i < num_v.size(); ++i) {
+		printf("color %d %d\n", i, num_v[i]);
+	}
+	
+	phase_nets.resize(num_colors);
+	for (const auto &ptr : all_virtual_nets_ptr) {
+		phase_nets[get(color, ptr->v)].push_back(ptr);
+	}
+
+	for (const auto &phase : phase_nets) {
+		verify_ind(phase, [] (new_virtual_net_t *net) -> box { return net->bounding_box; });
+	}
+}
+
+void test_rtree_virtual(vector<vector<new_virtual_net_t>> &all_virtual_nets, vector<vector<new_virtual_net_t *>> &phase_nets)
+{
+	OverlapGraph g;
+	vector<new_virtual_net_t *> all_virtual_nets_ptr;
+	build_overlap_graph(all_virtual_nets, g, all_virtual_nets_ptr);
+
+	auto ep = edges(g);
+	for (auto ei = ep.first; ei != ep.second; ++ei) {
+		printf("edge %d -> %d\n", source(*ei, g), target(*ei, g));
+	}
+
+	vector<vertex_descriptor> order(num_vertices(g));
+
+	for (int i = 0; i < num_vertices(g); ++i) {
+		order[i] = i;
+	}
+
+	std::sort(begin(order), end(order), [&] (int a, int b) -> bool {
+			assert(a == all_virtual_nets_ptr[a]->v); 
+			assert(b == all_virtual_nets_ptr[b]->v); 
+
+			/* BUG: the relation is not transitive */
+			//if (all_virtual_nets_ptr[a]->net == all_virtual_nets_ptr[b]->net) {
+			//return all_virtual_nets_ptr[a]->index < all_virtual_nets_ptr[b]->index;
+			//} else {
+			//return out_degree(a, g) > out_degree(b, g);
+			//}
+			return all_virtual_nets_ptr[a]->index < all_virtual_nets_ptr[b]->index || (all_virtual_nets_ptr[a]->index == all_virtual_nets_ptr[b]->index && out_degree(a, g) > out_degree(b, g));
+			});
+
+	auto order_map = make_iterator_property_map(begin(order), get(boost::vertex_index, g));
+
+	boost::vector_property_map<vertices_size_type> color;
+
+	int n = boost::sequential_vertex_coloring(g, order_map, color);
+	printf("num colors %d\n", n);
+	
+	int vnet = 0;
+	for (const auto &virtual_nets : all_virtual_nets) {
+		set<int> colors;
+		int previous_color = -1;
+		int previous_index = -1;
+		for (const auto &virtual_net : virtual_nets) {
+			int c = color[virtual_net.v];
+			colors.insert(c);
+
+			printf("vnet %d index %d v %d color %d\n", vnet, virtual_net.index, virtual_net.v, c);
+
+			assert(virtual_net.index > previous_index);
+			previous_index = virtual_net.index;
+
+			assert(c > previous_color);
+			previous_color = c;
+		}
+		assert(colors.size() == virtual_nets.size());
+		++vnet;
 	}
 }
 
@@ -1370,6 +1867,213 @@ void write_nets(const vector<net_t> &nets)
 	}
 }
 
+bool partitioning_delta_stepping_deterministic_route_virtual(t_router_opts *opts)
+{
+	init_logging();
+    zlog_set_record("custom_output", concurrent_log_impl);
+
+	zlog_put_mdc("tid", "0");
+
+	router_t router;
+
+	assert(((unsigned long)&router.sync.stop_routing & 63) == 0);
+	assert(((unsigned long)&router.sync.net_index & 63) == 0);
+#ifdef __linux__
+	assert(((unsigned long)&router.sync.barrier & 63) == 0);
+#endif
+
+	router.num_threads = opts->num_threads;
+
+	init_graph(router.g);
+
+	init_sprintf_rr_node(&router.g);
+
+	vector<net_t> nets;
+	vector<net_t> global_nets;
+	init_nets(nets, global_nets, opts->bb_factor, opts->large_bb);
+
+
+	vector<net_t> nets_copy = nets;
+	std::sort(begin(nets_copy), end(nets_copy), [] (const net_t &a, const net_t &b) -> bool {
+			return a.sinks.size() > b.sinks.size();
+			});
+	vector<net_t> only;
+	//boost::copy(nets_copy | boost::adaptors::sliced(0, 5000), std::back_inserter(only));
+	boost::copy(nets_copy, std::back_inserter(only));
+
+	vector<vector<new_virtual_net_t>> all_virtual_nets;
+	create_virtual_nets(only, opts->num_threads, all_virtual_nets);
+	//best_case(nets, router.nets);
+	vector<vector<new_virtual_net_t *>> phase_nets;
+	test_rtree_virtual_2(all_virtual_nets, phase_nets);
+	//test_misr(nets);
+	//write_nets(nets);
+	return false;
+
+	congestion_t *congestion_aligned;
+//#ifdef __linux__
+	//assert(posix_memalign((void **)&congestion_aligned, 64, sizeof(congestion_t)*num_vertices(router.g)) == 0);
+	//assert(((unsigned long)congestion_aligned & 63) == 0);
+//#else
+	congestion_aligned = (congestion_t *)malloc(sizeof(congestion_t)*num_vertices(router.g));
+//#endif 
+	router.state.congestion = new(congestion_aligned) congestion_t[num_vertices(router.g)];
+    for (int i = 0; i < num_vertices(router.g); ++i) {
+        router.state.congestion[i].acc_cost = 1;
+        router.state.congestion[i].pres_cost = 1;
+        router.state.congestion[i].occ = 0;
+    }
+
+	router.state.route_trees = new route_tree_t[nets.size()];
+	for (int i = 0; i < nets.size(); ++i) {
+		route_tree_init(router.state.route_trees[i]);
+	}
+
+    router.state.net_timing = new t_net_timing[nets.size()+global_nets.size()];
+    init_net_timing(nets, global_nets, router.state.net_timing);
+
+    router.params.criticality_exp = opts->criticality_exp;
+    router.params.astar_fac = opts->astar_fac;
+    router.params.max_criticality = opts->max_criticality;
+    router.params.bend_cost = opts->bend_cost;
+
+	//std::sort(begin(nets), end(nets), [] (const net_t &a, const net_t &b) -> bool {
+			//return a.sinks.size() > b.sinks.size();
+			//});
+
+	router.pres_fac = opts->first_iter_pres_fac;
+
+	for (const auto &n : get_vertices(router.g)) {
+		const auto &prop = get_vertex_props(router.g, n);
+		if (prop.type == CHANX) {
+			extern t_rr_indexed_data *rr_indexed_data;
+			router.delta = rr_indexed_data[prop.cost_index].base_cost;
+			break;
+		}
+	}
+
+#ifdef __linux__
+	assert(pthread_barrier_init(&router.sync.barrier, nullptr, opts->num_threads) == 0);
+#else
+	router.sync.barrier = new boost::barrier(opts->num_threads);
+#endif
+	router.sync.stop_routing = false;
+
+	router.stats.resize(opts->num_threads);
+	router.pure_route_time.resize(opts->num_threads);
+	router.route_time.resize(opts->num_threads);
+
+	router.iter = 0;
+
+	vector<pthread_t> tids(opts->num_threads);
+	for (int i = 1; i < opts->num_threads; ++i) {
+		pthread_attr_t attr;
+		assert(pthread_attr_init(&attr) == 0);
+
+#ifdef __linux__
+		cpu_set_t cpuset;
+		CPU_ZERO(&cpuset);
+		CPU_SET(i, &cpuset);
+		assert(pthread_attr_setaffinity_np(&attr, sizeof(cpu_set_t), &cpuset) == 0);
+#endif
+
+		assert(pthread_create(&tids[i], &attr, worker_thread, (void *)&router) == 0);
+	}
+
+	timer::duration total_route_time = timer::duration::zero();
+
+	/* just to make sure that we are allocated on the correct NUMA node */
+	DeltaSteppingRouter *net_router = new DeltaSteppingRouter(router.g, router.state.congestion, router.pres_fac);
+
+	bool routed = false;
+	for (; router.iter < opts->max_router_iterations && !routed; ++router.iter) {
+		printf("Routing iteration: %d\n", router.iter);
+
+		do_work(&router, *net_router);
+
+		auto max_duration = *std::max_element(begin(router.route_time), end(router.route_time));
+		total_route_time += max_duration;
+
+		printf("Route time: ");
+		for (int i = 0; i < opts->num_threads; ++i) {
+			printf("%g ", duration_cast<nanoseconds>(router.route_time[i]).count()/1e9);
+		}
+		printf("\n");
+
+		printf("Max route time: %lu %g\n", max_duration.count(), max_duration.count() / 1e9);
+
+		printf("Pure route time: ");
+		for (int i = 0; i < opts->num_threads; ++i) {
+			printf("%g (%g) ", duration_cast<nanoseconds>(router.pure_route_time[i]).count()/1e9, 100.0*router.pure_route_time[i].count()/router.route_time[i].count());
+		}
+		printf("\n");
+
+		printf("Num heap pops: ");
+		for (int i = 0; i < opts->num_threads; ++i) {
+			printf("%d ", router.stats[i].num_heap_pops);
+		}
+		printf("\n");
+
+		/* checking */
+		for (int i = 0; i < num_vertices(router.g); ++i) {
+			router.state.congestion[i].recalc_occ = 0; 
+		}
+
+		for (const auto &net : nets) {
+			check_route_tree(router.state.route_trees[net.local_id], net, router.g);
+			recalculate_occ(router.state.route_trees[net.local_id], router.g, router.state.congestion);
+		}
+
+		unsigned long num_overused_nodes = 0;
+		vector<int> overused_nodes_by_type(NUM_RR_TYPES, 0);
+
+		if (feasible_routing(router.g, router.state.congestion)) {
+			//dump_route(*current_traces_ptr, "route.txt");
+			routed = true;
+		} else {
+			for (int i = 0; i < num_vertices(router.g); ++i) {
+				if (router.state.congestion[i].occ > get_vertex_props(router.g, i).capacity) {
+					++num_overused_nodes;
+					const auto &v_p = get_vertex_props(router.g, i);
+					++overused_nodes_by_type[v_p.type];
+				}
+			}
+
+			//auto update_cost_start = timer::now();
+
+			if (router.iter == 0) {
+				router.pres_fac = opts->initial_pres_fac;
+				update_costs(router.g, router.state.congestion, router.pres_fac, 0);
+			} else {
+				router.pres_fac *= opts->pres_fac_mult;
+
+				/* Avoid overflow for high iteration counts, even if acc_cost is big */
+				router.pres_fac = std::min(router.pres_fac, static_cast<float>(HUGE_POSITIVE_FLOAT / 1e5));
+
+				update_costs(router.g, router.state.congestion, router.pres_fac, opts->acc_fac);
+			}
+
+			//update_cost_time = timer::now()-update_cost_start;
+		}
+
+		//auto analyze_timing_start = timer::now();
+
+		float crit_path_delay = analyze_timing(router.state.net_timing);
+
+		//analyze_timing_time = timer::now()-analyze_timing_start;
+		
+		printf("Overused: %lu Crit path delay: %g\n", num_overused_nodes, crit_path_delay);
+		printf("\n");
+	}
+
+	if (routed) {
+		printf("Routed in %d iterations\n", router.iter);
+		printf("Total route time: %g\n", duration_cast<nanoseconds>(total_route_time).count() / 1e9);
+	}
+
+	return false;
+}
+
 bool partitioning_delta_stepping_deterministic_route(t_router_opts *opts)
 {
 	init_logging();
@@ -1395,7 +2099,6 @@ bool partitioning_delta_stepping_deterministic_route(t_router_opts *opts)
 	vector<net_t> global_nets;
 	init_nets(nets, global_nets, opts->bb_factor, opts->large_bb);
 
-	create_virtual_nets(nets, opts->num_threads);
 	//best_case(nets, router.nets);
 	test_rtree(nets, router.nets);
 	//test_misr(nets);
