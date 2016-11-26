@@ -42,13 +42,14 @@ typedef boost::graph_traits<OverlapGraph>::vertices_size_type vertices_size_type
 typedef boost::property_map<OverlapGraph, boost::vertex_index_t>::const_type vertex_index_map;
 
 typedef struct new_virtual_net_t {
+	int global_index;
 	int index;
 	net_t *net;
 	vector<sink_t *> sinks;
 	box bounding_box;
-	point last_point;
 	vertex_descriptor v;
 	vertex_descriptor parent;
+	point last_point;
 } new_virtual_net_t;
 
 using rtree_value = pair<box, net_t *>;
@@ -165,6 +166,19 @@ void split_bb_4(net_t &net, float bb_area_threshold, vector<new_virtual_net_t> &
 		}
 
 		assert(!vnet.sinks.empty());
+
+		extern int nx, ny;
+		bg::set<0>(vnet.bounding_box.min_corner(), std::max(0, bg::get<0>(vnet.bounding_box.min_corner())-1));
+		bg::set<1>(vnet.bounding_box.min_corner(), std::max(0, bg::get<1>(vnet.bounding_box.min_corner())-1));
+		bg::set<0>(vnet.bounding_box.max_corner(), std::min(nx+2, bg::get<0>(vnet.bounding_box.max_corner())+1));
+		bg::set<1>(vnet.bounding_box.max_corner(), std::min(ny+2, bg::get<1>(vnet.bounding_box.max_corner())+1));
+
+		for (auto &sink : vnet.sinks) {
+			sink->current_bounding_box.xmin = bg::get<0>(vnet.bounding_box.min_corner());
+			sink->current_bounding_box.ymin = bg::get<1>(vnet.bounding_box.min_corner());
+			sink->current_bounding_box.xmax = bg::get<0>(vnet.bounding_box.max_corner());
+			sink->current_bounding_box.ymax = bg::get<1>(vnet.bounding_box.max_corner());
+		}
 
 		virtual_nets.emplace_back(std::move(vnet));
 
@@ -476,7 +490,7 @@ void split(net_t &net, float bb_area_threshold, vector<new_virtual_net_t> &virtu
 	}
 }
 
-void create_virtual_nets(vector<net_t> &nets, int num_threads, vector<vector<new_virtual_net_t>> &all_virtual_nets)
+int create_virtual_nets(vector<net_t> &nets, int num_threads, vector<vector<new_virtual_net_t>> &all_virtual_nets)
 {
 	extern int nx, ny;
 	int fpga_area = (nx+2) * (ny+2);
@@ -487,6 +501,14 @@ void create_virtual_nets(vector<net_t> &nets, int num_threads, vector<vector<new
 	for (int i = 0; i < nets.size(); ++i) {
 		assert(all_virtual_nets[i].empty());
 		split_bb_4(nets[i], bb_area_threshold, all_virtual_nets[i]);
+	}
+
+	int global_index = 0;
+	for (auto &virtual_nets : all_virtual_nets) {
+		for (auto &virtual_net : virtual_nets) {
+			virtual_net.global_index = global_index;
+			++global_index;
+		}
 	}
 
 	vector<vector<new_virtual_net_t> *> sorted_all_virtual_nets;
@@ -538,6 +560,8 @@ void create_virtual_nets(vector<net_t> &nets, int num_threads, vector<vector<new
 
 		fclose(vnet_p);
 	}
+
+	return global_index;
 }
 
 void best_case(vector<net_t> &nets, vector<vector<net_t *>> &phase_nets)
@@ -1327,7 +1351,7 @@ class DeltaSteppingRouter {
 			return previous_edge;
 		}
 
-		void backtrack(int sink_node, route_tree_t &rt)
+		void backtrack(int sink_node, route_tree_t &rt, vector<RRNode> &added_rr_nodes)
 		{
 			char buffer[256];
 			sprintf_rr_node(sink_node, buffer);
@@ -1338,6 +1362,7 @@ class DeltaSteppingRouter {
 			assert(_state[sink_node].upstream_R != std::numeric_limits<float>::max() && _state[sink_node].delay != std::numeric_limits<float>::max());
 			route_tree_set_node_properties(rt, rt_node, false, _state[sink_node].upstream_R, _state[sink_node].delay);
 			update_one_cost_internal(sink_node, _g, _congestion, 1, _pres_fac);
+			added_rr_nodes.push_back(sink_node);
 
 			zlog_level(delta_log, ROUTER_V3, "\n");
 
@@ -1376,6 +1401,7 @@ class DeltaSteppingRouter {
 
 				if ((parent_rt_node != RouteTree::null_vertex()) || (get_vertex_props(_g, parent_rr_node).type == SOURCE)) {
 					update_one_cost_internal(parent_rr_node, _g, _congestion, 1, _pres_fac);
+					added_rr_nodes.push_back(parent_rr_node);
 				}
 
 				zlog_level(delta_log, ROUTER_V3, "\n");
@@ -1441,7 +1467,7 @@ class DeltaSteppingRouter {
 			return _stats;
 		}
 
-		void route(const source_t *source, const vector<const sink_t *> &sinks, int net_local_id, float delta, float astar_fac, route_tree_t &rt, t_net_timing &net_timing)
+		void route(const source_t *source, const vector<const sink_t *> &sinks, float delta, float astar_fac, route_tree_t &rt, vector<RRNode> &added_rr_nodes, t_net_timing &net_timing)
 		{
 			char buffer[256];
 
@@ -1456,7 +1482,6 @@ class DeltaSteppingRouter {
 				route_tree_set_node_properties(rt, root_rt_node, true, source_p.R, 0.5f * source_p.R * source_p.C);
 				route_tree_add_root(rt, source->rr_node);
 			} else {
-				printf("num roots: %d\n", rt.root_rt_nodes.size());
 				assert(rt.root_rt_nodes.size() == 1);
 			}
 
@@ -1511,7 +1536,7 @@ class DeltaSteppingRouter {
 				//delta_stepping(_g, sources, sink->rr_node, delta, _known_distance, _distance, _prev_edge, [this] (const RREdge &e) -> pair<float, float> { return get_edge_weight(e); }, *this);
 				dijkstra(_g, sources, sink->rr_node, _known_distance, _distance, _prev_edge, [this] (const RREdge &e) -> pair<float, float> { return get_edge_weight(e); }, *this);
 
-				backtrack(sink->rr_node, rt);
+				backtrack(sink->rr_node, rt, added_rr_nodes);
 
 				assert(get_vertex_props(rt.graph, route_tree_get_rt_node(rt, sink->rr_node)).delay == _state[sink->rr_node].delay);
 				net_timing.delay[sink->id+1] = _state[sink->rr_node].delay;
@@ -1730,6 +1755,9 @@ typedef struct worker_sync_t {
 typedef struct global_route_state_t {
 	congestion_t *congestion;
 	route_tree_t *route_trees;
+	//route_tree_t *back_route_trees;
+	vector<RRNode> *added_rr_nodes;	
+	vector<RRNode> *back_added_rr_nodes;	
 	t_net_timing *net_timing;
 } global_route_state_t;
 
@@ -1778,11 +1806,6 @@ struct alignas(64) router_t {
 
 void do_virtual_work(router_t<new_virtual_net_t *> *router, DeltaSteppingRouter &net_router)
 {
-	char buffer[256];
-
-	sprintf(buffer, "%d", router->iter);
-	zlog_put_mdc("iter", buffer);
-
 #ifdef __linux__
 	pthread_barrier_wait(&router->sync.barrier);
 #else
@@ -1790,6 +1813,11 @@ void do_virtual_work(router_t<new_virtual_net_t *> *router, DeltaSteppingRouter 
 #endif
 
 	assert(net_router.get_num_instances() == router->num_threads);
+
+	char buffer[256];
+
+	sprintf(buffer, "%d", router->iter);
+	zlog_put_mdc("iter", buffer);
 
 	net_router.reset_stats();
 
@@ -1810,7 +1838,7 @@ void do_virtual_work(router_t<new_virtual_net_t *> *router, DeltaSteppingRouter 
 
 		zlog_level(delta_log, ROUTER_V2, "Phase %d\n", phase);
 
-		//auto pure_route_start = timer::now();
+		auto pure_route_start = timer::now();
 
 		while ((inet = router->sync.net_index++) < router->nets[phase].size()) {
 			auto &vnet = *router->nets[phase][inet];
@@ -1818,9 +1846,25 @@ void do_virtual_work(router_t<new_virtual_net_t *> *router, DeltaSteppingRouter 
 
 			update_sink_criticalities(net, router->state.net_timing[net.vpr_id], router->params);
 
-			route_tree_mark_all_nodes_to_be_ripped(router->state.route_trees[net.local_id], router->g);
+			zlog_level(delta_log, ROUTER_V3, "Routing net %d vnet %d\n", net.local_id, vnet.index);
 
-			route_tree_rip_up_marked(router->state.route_trees[net.local_id], router->g, router->state.congestion, router->pres_fac);
+			if (router->iter > 0) {
+				//for (const auto &rt_node : route_tree_get_nodes(router->state.back_route_trees[net.local_id])) {
+					//RRNode rr_node = get_vertex_props(router->state.back_route_trees[net.local_id].graph, rt_node).rr_node;
+					//const auto &rr_node_p = get_vertex_props(router->g, rr_node);
+
+					//if (rr_node_p.xhigh >= _current_sink->current_bounding_box.xmin
+							//&& rr_node_p.xlow <= _current_sink->current_bounding_box.xmax
+							//&& rr_node_p.yhigh >= _current_sink->current_bounding_box.ymin
+							//&& rr_node_p.ylow <= _current_sink->current_bounding_box.ymax) {
+						//update_one_cost_internal(rr_node, router->g, router->state.congestion, -1, router->pres_fac);
+					//}
+				//}
+				
+				for (const auto &rr_node : router->state.back_added_rr_nodes[vnet.global_index]) {
+					update_one_cost_internal(rr_node, router->g, router->state.congestion, -1, router->pres_fac);
+				}
+			}
 
 			vector<const sink_t *> sinks;
 			for (int i = 0; i < vnet.sinks.size(); ++i) {
@@ -1834,12 +1878,10 @@ void do_virtual_work(router_t<new_virtual_net_t *> *router, DeltaSteppingRouter 
 				source = nullptr;
 			}
 
-			zlog_level(delta_log, ROUTER_V3, "Routing net %d vnet %d\n", net.local_id, vnet.index);
-
-			net_router.route(source, sinks, net.local_id, router->delta, router->params.astar_fac, router->state.route_trees[net.local_id], router->state.net_timing[net.vpr_id]); 
+			net_router.route(source, sinks, router->delta, router->params.astar_fac, router->state.route_trees[net.local_id], router->state.added_rr_nodes[vnet.global_index], router->state.net_timing[net.vpr_id]); 
 		}
 
-		//pure_route_time += timer::now()-pure_route_start;
+		pure_route_time += timer::now()-pure_route_start;
 
 #ifdef __linux__
 		pthread_barrier_wait(&router->sync.barrier);
@@ -1903,7 +1945,7 @@ void do_work(router_t<net_t *> *router, DeltaSteppingRouter &net_router)
 			}
 
 			zlog_level(delta_log, ROUTER_V3, "Routing net %d\n", net.local_id);
-			net_router.route(&net.source, sinks, net.local_id, router->delta, router->params.astar_fac, router->state.route_trees[net.local_id], router->state.net_timing[net.vpr_id]); 
+			net_router.route(&net.source, sinks, router->delta, router->params.astar_fac, router->state.route_trees[net.local_id], router->state.added_rr_nodes[net.local_id], router->state.net_timing[net.vpr_id]); 
 		}
 
 		//pure_route_time += timer::now()-pure_route_start;
@@ -2009,7 +2051,7 @@ bool partitioning_delta_stepping_deterministic_route_virtual(t_router_opts *opts
 	//boost::copy(nets_copy, std::back_inserter(only));
 
 	vector<vector<new_virtual_net_t>> all_virtual_nets;
-	create_virtual_nets(nets, opts->num_threads, all_virtual_nets);
+	int num_virtual_nets = create_virtual_nets(nets, opts->num_threads, all_virtual_nets);
 	//best_case(nets, router.nets);
 	schedule_virtual_nets_2(all_virtual_nets, router.nets);
 	//test_misr(nets);
@@ -2030,9 +2072,14 @@ bool partitioning_delta_stepping_deterministic_route_virtual(t_router_opts *opts
     }
 
 	router.state.route_trees = new route_tree_t[nets.size()];
+	//router.state.back_route_trees = new route_tree_t[nets.size()];
 	for (int i = 0; i < nets.size(); ++i) {
 		route_tree_init(router.state.route_trees[i]);
+		//route_tree_init(router.state.back_route_trees[i]);
 	}
+
+	router.state.added_rr_nodes = new vector<RRNode>[num_virtual_nets];
+	router.state.back_added_rr_nodes = new vector<RRNode>[num_virtual_nets];
 
     router.state.net_timing = new t_net_timing[nets.size()+global_nets.size()];
     init_net_timing(nets, global_nets, router.state.net_timing);
@@ -2131,6 +2178,18 @@ bool partitioning_delta_stepping_deterministic_route_virtual(t_router_opts *opts
 		for (const auto &net : nets) {
 			check_route_tree(router.state.route_trees[net.local_id], net, router.g);
 			recalculate_occ(router.state.route_trees[net.local_id], router.g, router.state.congestion);
+		}
+
+		//for (int i = 0; i < nets.size(); ++i) {
+			//route_tree_clear(router.state.back_route_trees[i]);
+		//}
+		//std::swap(router.state.route_trees, router.state.back_route_trees);
+		for (int i = 0; i < num_virtual_nets; ++i) {
+			router.state.back_added_rr_nodes[i].clear();
+		}
+		std::swap(router.state.added_rr_nodes, router.state.back_added_rr_nodes);
+		for (int i = 0; i < nets.size(); ++i) {
+			route_tree_clear(router.state.route_trees[i]);
 		}
 
 		unsigned long num_overused_nodes = 0;
