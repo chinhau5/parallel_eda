@@ -68,6 +68,7 @@ add_executable(Router vpr/SRC/main.c)
 if (CMAKE_SYSTEM_NAME STREQUAL "Linux")
 	set(link_libs
 		Vpr
+		#tbbmalloc_proxy
 		X11
 		pthread
 		dl 

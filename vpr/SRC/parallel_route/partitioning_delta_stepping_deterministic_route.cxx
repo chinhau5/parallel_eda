@@ -25,6 +25,13 @@
 #include <boost/graph/adjacency_list.hpp>
 #include <boost/graph/sequential_vertex_coloring.hpp>
 #include <boost/graph/smallest_last_ordering.hpp>
+#include <boost/accumulators/accumulators.hpp>
+#include <boost/accumulators/statistics/stats.hpp>
+#include <boost/accumulators/statistics/mean.hpp>
+#include <boost/accumulators/statistics/min.hpp>
+#include <boost/accumulators/statistics/max.hpp>
+#include <boost/accumulators/statistics/moment.hpp>
+#include <boost/accumulators/statistics/variance.hpp>
 
 //#include <mlpack/methods/kmeans/kmeans.hpp>
 //#include <mlpack/methods/kmeans/refined_start.hpp>
@@ -64,9 +71,9 @@ struct net_to_rtree_item {
 using virtual_rtree_value = pair<box, new_virtual_net_t *>;
 
 struct virtual_net_to_rtree_item {
-	virtual_rtree_value operator()(new_virtual_net_t *net) const
+	virtual_rtree_value operator()(new_virtual_net_t *vnet) const
 	{
-		return make_pair(net->bounding_box, net);
+		return make_pair(vnet->bounding_box, vnet);
 	}
 };
 
@@ -172,12 +179,21 @@ void split_bb_4(net_t &net, float bb_area_threshold, vector<new_virtual_net_t> &
 		bg::set<1>(vnet.bounding_box.min_corner(), std::max(0, bg::get<1>(vnet.bounding_box.min_corner())-1));
 		bg::set<0>(vnet.bounding_box.max_corner(), std::min(nx+2, bg::get<0>(vnet.bounding_box.max_corner())+1));
 		bg::set<1>(vnet.bounding_box.max_corner(), std::min(ny+2, bg::get<1>(vnet.bounding_box.max_corner())+1));
+		//box expanded = vnet.bounding_box;
+		//bg::set<0>(expanded.min_corner(), std::max(0, bg::get<0>(expanded.min_corner())-1));
+		//bg::set<1>(expanded.min_corner(), std::max(0, bg::get<1>(expanded.min_corner())-1));
+		//bg::set<0>(expanded.max_corner(), std::min(nx+2, bg::get<0>(expanded.max_corner())+1));
+		//bg::set<1>(expanded.max_corner(), std::min(ny+2, bg::get<1>(expanded.max_corner())+1));
 
 		for (auto &sink : vnet.sinks) {
 			sink->current_bounding_box.xmin = bg::get<0>(vnet.bounding_box.min_corner());
 			sink->current_bounding_box.ymin = bg::get<1>(vnet.bounding_box.min_corner());
 			sink->current_bounding_box.xmax = bg::get<0>(vnet.bounding_box.max_corner());
 			sink->current_bounding_box.ymax = bg::get<1>(vnet.bounding_box.max_corner());
+			//sink->current_bounding_box.xmin = bg::get<0>(expanded.min_corner());
+			//sink->current_bounding_box.ymin = bg::get<1>(expanded.min_corner());
+			//sink->current_bounding_box.xmax = bg::get<0>(expanded.max_corner());
+			//sink->current_bounding_box.ymax = bg::get<1>(expanded.max_corner());
 		}
 
 		virtual_nets.emplace_back(std::move(vnet));
@@ -572,6 +588,91 @@ void best_case(vector<net_t> &nets, vector<vector<net_t *>> &phase_nets)
 	}
 }
 
+int build_overlap_graph_2(vector<vector<new_virtual_net_t>> &all_virtual_nets, vector<vector<int>> &overlap, vector<new_virtual_net_t *> &all_virtual_nets_ptr)
+{
+	int v = 0;
+	for (auto &virtual_nets : all_virtual_nets) {
+		for (auto &virtual_net : virtual_nets) {
+			virtual_net.v = v;
+
+			all_virtual_nets_ptr.push_back(&virtual_net);
+
+			++v;
+		}
+	}
+
+	virtual_net_to_rtree_item to_rtree_item;
+	bgi::rtree<virtual_rtree_value, bgi::rstar<64>, bgi::indexable<virtual_rtree_value>, rtree_value_equal> tree(all_virtual_nets_ptr | boost::adaptors::transformed(to_rtree_item));
+
+	overlap.resize(v);
+
+	int num_edges = 0;
+
+	for (const auto &current : all_virtual_nets_ptr) {
+		//vector<virtual_rtree_value> overlapping_nets;
+		//tree.query(bgi::intersects(current->bounding_box), std::back_inserter(overlapping_nets));
+
+		int num_equal = 0;
+		//for (const auto &overlapping_net : overlapping_nets) {
+			//assert(bg::equals(overlapping_net.first, overlapping_net.second->bounding_box));
+			//assert(bg::intersects(overlapping_net.first, current->bounding_box));
+
+		for (auto iter = tree.qbegin(bgi::intersects(current->bounding_box));
+				iter != tree.qend();
+				++iter) {
+			const auto &overlapping_net = *iter;
+
+			if (overlapping_net.second != current && overlapping_net.second->net != current->net) {
+				//add_edge(current->v, overlapping_net.second->v, g);
+				overlap[current->v].push_back(overlapping_net.second->v);
+
+				++num_edges;
+			}
+
+			if (overlapping_net.second == current) {
+				++num_equal;
+			}
+		}
+		assert(num_equal == 1);
+	}
+
+	/* TODO: this is very pessimistic. we can remove some edges if we are sure that
+	 * the bounding box overlaps with the existing route tree sufficiently */
+	//for (auto &virtual_nets : all_virtual_nets) {
+		//for (int i = 0; i < virtual_nets.size(); ++i) {
+			//for (int j = 0; j < virtual_nets.size(); ++j) {
+				//if (i != j) {
+					//auto e = edge(virtual_nets[i].v, virtual_nets[j].v, g);
+					//if (!e.second) {
+						//add_edge(virtual_nets[i].v, virtual_nets[j].v, g);
+					//}
+				//}
+			//}
+		//}
+	//}
+
+	/* Don't need this here because we are checking the parent based on the virtual net index */
+	//for (auto &virtual_nets : all_virtual_nets) {
+		//for (int i = virtual_nets.size()-1; i > 0; --i) {
+			//auto e = edge(virtual_nets[i].v, virtual_nets[i-1].v, g);
+			//assert(!e.second);
+			//add_edge(virtual_nets[i].v, virtual_nets[i-1].v, g);
+		//}
+	//}
+	
+	for (auto &virtual_nets : all_virtual_nets) {
+		for (int i = 0; i < virtual_nets.size(); ++i) {
+			if (i == 0) {
+				virtual_nets[i].parent = -1;
+			} else {
+				virtual_nets[i].parent = virtual_nets[i-1].v;
+			}
+		}
+	}
+
+	return num_edges;
+}
+
 void build_overlap_graph(vector<vector<new_virtual_net_t>> &all_virtual_nets, OverlapGraph &g, vector<new_virtual_net_t *> &all_virtual_nets_ptr)
 {
 	for (auto &virtual_nets : all_virtual_nets) {
@@ -585,7 +686,9 @@ void build_overlap_graph(vector<vector<new_virtual_net_t>> &all_virtual_nets, Ov
 	}
 
 	virtual_net_to_rtree_item to_rtree_item;
-	bgi::rtree<virtual_rtree_value, bgi::rstar<16>, bgi::indexable<virtual_rtree_value>, rtree_value_equal> tree(all_virtual_nets_ptr | boost::adaptors::transformed(to_rtree_item));
+	bgi::rtree<virtual_rtree_value, bgi::rstar<64>, bgi::indexable<virtual_rtree_value>, rtree_value_equal> tree(all_virtual_nets_ptr | boost::adaptors::transformed(to_rtree_item));
+
+	//vector<vector<int>> overlap(num_vertices(g));
 
 	for (const auto &current : all_virtual_nets_ptr) {
 		vector<virtual_rtree_value> overlapping_nets;
@@ -596,8 +699,14 @@ void build_overlap_graph(vector<vector<new_virtual_net_t>> &all_virtual_nets, Ov
 			assert(bg::equals(overlapping_net.first, overlapping_net.second->bounding_box));
 			assert(bg::intersects(overlapping_net.first, current->bounding_box));
 
+		//for (auto iter = tree.qbegin(bgi::intersects(current->bounding_box));
+				//iter != tree.qend();
+				//++iter) {
+			//const auto &overlapping_net = *iter;
+
 			if (overlapping_net.second != current && overlapping_net.second->net != current->net) {
 				add_edge(current->v, overlapping_net.second->v, g);
+				//overlap[current->v].push_back(overlapping_net.second->v);
 			}
 
 			if (overlapping_net.second == current) {
@@ -640,6 +749,90 @@ void build_overlap_graph(vector<vector<new_virtual_net_t>> &all_virtual_nets, Ov
 			}
 		}
 	}
+}
+
+template <class OrderPA, class ColorMap, class VirtualNetsPtr>
+	typename boost::property_traits<ColorMap>::value_type
+custom_vertex_coloring_2(const vector<vector<int>> &G, OrderPA &order, 
+		ColorMap &color, const VirtualNetsPtr &all_virtual_nets_ptr)
+{
+	typedef typename boost::property_traits<ColorMap>::value_type size_type;
+
+	size_type max_color = 0;
+	const size_type V = G.size();
+
+	// We need to keep track of which colors are used by
+	// adjacent vertices. We do this by marking the colors
+	// that are used. The mark array contains the mark
+	// for each color. The length of mark is the
+	// number of vertices since the maximum possible number of colors
+	// is the number of vertices.
+
+	//Initialize colors 
+	for (int v = 0; v < V; ++v)
+		put(color, v, V-1);
+
+	bool has_uncolored = true;
+	int num_rounds = 0;
+
+	while (has_uncolored) {
+		std::vector<size_type> mark(V, 
+				std::numeric_limits<size_type>::max BOOST_PREVENT_MACRO_SUBSTITUTION());
+		//Determine the color for every vertex one by one
+		has_uncolored = false;
+		for ( size_type i = 0; i < V; i++) {
+			int current = get(order,i);
+
+			/* we are done coloring this node */
+			if (get(color, current) != V-1) {
+				continue;
+			}
+
+			/* don't color this node if its parent is uncolored */
+			int parent = all_virtual_nets_ptr[current]->parent;
+			if (parent != -1 
+					&& all_virtual_nets_ptr[current]->index > all_virtual_nets_ptr[parent]->index
+					&& get(color, parent) == V-1) {
+				has_uncolored = true;
+				continue;
+			}
+
+			//Mark the colors of vertices adjacent to current.
+			//i can be the value for marking since i increases successively
+			for (int j = 0; j < G[current].size(); ++j) {
+				mark[get(color, G[current][j])] = i; 
+			}
+
+			//Next step is to assign the smallest un-marked color
+			//to the current vertex.
+			size_type j;
+			if (parent != -1) {
+				j = get(color, parent)+1;
+			} else {
+				j = 0;
+			}
+
+			//Scan through all useable colors, find the smallest possible
+			//color that is not used by neighbors.  Note that if mark[j]
+			//is equal to i, color j is used by one of the current vertex's
+			//neighbors.
+			while ( j < max_color && mark[j] == i ) 
+				++j;
+
+			max_color = std::max(j+1, max_color);
+			//while ( max_color <= j)  //All colors are used up. Add one more color
+				//++max_color;
+
+			//At this point, j is the smallest possible color
+			put(color, current, j);  //Save the color of vertex current
+		}
+
+		++num_rounds;
+	}
+
+	printf("num rounds %d\n", num_rounds);
+
+	return max_color;
 }
 
 template <class VertexListGraph, class OrderPA, class ColorMap, class VirtualNetsPtr>
@@ -730,6 +923,191 @@ custom_vertex_coloring(const VertexListGraph& G, OrderPA &order,
 	return max_color;
 }
 
+template <class Order, class Degree, 
+		 class Marker, class BucketSorter>
+void 
+custom_smallest_last_vertex_ordering(const vector<vector<int>> & G, Order order, 
+		Degree degree, Marker marker,
+		BucketSorter& degree_buckets) {
+	typedef std::size_t size_type;
+
+	const size_type num = G.size();
+
+	for (int v = 0; v < G.size(); ++v) {
+		put(marker, v, num);
+		put(degree, v, G[v].size());
+		degree_buckets.push(v);
+	}
+
+	size_type minimum_degree = 0;
+	size_type current_order = num - 1;
+
+	while ( 1 ) {
+		typedef typename BucketSorter::stack MDStack;
+		MDStack minimum_degree_stack = degree_buckets[minimum_degree];
+		while (minimum_degree_stack.empty())
+			minimum_degree_stack = degree_buckets[++minimum_degree];
+
+		int node = minimum_degree_stack.top();
+		put(order, current_order, node);
+
+		if ( current_order == 0 ) //find all vertices
+			break;
+
+		minimum_degree_stack.pop();
+		put(marker, node, 0); //node has been ordered.
+
+		for (int v = 0; v < G[node].size(); ++v) {
+			int vn = G[node][v];
+			if ( get(marker, vn) > current_order ) { //vn is unordered vertex
+				put(marker, vn, current_order);  //mark the columns adjacent to node
+
+				//delete vn from the bucket sorter         
+				degree_buckets.remove(vn);
+
+				//It is possible minimum degree goes down
+				//Here we keep tracking it.
+				put(degree, vn, get(degree, vn) - 1); 
+				minimum_degree = std::min(minimum_degree, get(degree, vn)); 
+
+				//reinsert vn in the bucket sorter with the new degree
+				degree_buckets.push(vn);
+			}
+		}
+
+		current_order--;
+	}
+
+	//at this point, order[i] = v_i;
+}
+
+template <class Order, class Degree, class Marker>
+void 
+custom_smallest_last_vertex_ordering(const vector<vector<int>> & G, Order order, 
+		Degree degree, Marker marker) {
+	typedef std::size_t size_type;
+
+	const size_type num = G.size();
+
+	typedef boost::bucket_sorter<size_type, int, Degree, boost::identity_property_map> BucketSorter;
+
+	BucketSorter degree_bucket_sorter(num, num, degree);
+
+	custom_smallest_last_vertex_ordering(G, order, degree, marker, degree_bucket_sorter);
+}
+
+template <class Order>
+void 
+custom_smallest_last_vertex_ordering(const vector<vector<int>> & G, Order order) {
+	custom_smallest_last_vertex_ordering(G, order,
+			make_shared_array_property_map(G.size(), std::size_t(0), boost::identity_property_map()),
+			make_shared_array_property_map(G.size(), 0, boost::identity_property_map()));
+}
+
+void schedule_virtual_nets_3(vector<vector<new_virtual_net_t>> &all_virtual_nets, vector<vector<new_virtual_net_t *>> &phase_nets)
+{
+	vector<new_virtual_net_t *> all_virtual_nets_ptr;
+
+	auto build_start = timer::now();
+
+	vector<vector<int>> overlap;
+	int num_edges = build_overlap_graph_2(all_virtual_nets, overlap, all_virtual_nets_ptr);
+
+	auto build_time = timer::now()-build_start;
+
+	printf("overlap graph build time %g\n", duration_cast<nanoseconds>(build_time).count() / 1e9);
+	printf("overlap num vertices %d num edges %d\n", overlap.size(), num_edges);
+
+	//auto ep = edges(g);
+	//for (auto ei = ep.first; ei != ep.second; ++ei) {
+		//printf("edge %d -> %d\n", source(*ei, g), target(*ei, g));
+	//}
+
+	vector<vertex_descriptor> order(overlap.size());
+	auto order_map = make_iterator_property_map(begin(order), boost::identity_property_map());
+
+#ifdef LARGEST_FIRST
+	for (int i = 0; i < overlap.size(); ++i) {
+		order[i] = i;
+	}
+
+	std::sort(begin(order), end(order), [&] (int a, int b) -> bool {
+			assert(a == all_virtual_nets_ptr[a]->v); 
+			assert(b == all_virtual_nets_ptr[b]->v); 
+
+			/* BUG: the relation is not transitive */
+			//if (all_virtual_nets_ptr[a]->net == all_virtual_nets_ptr[b]->net) {
+			//return all_virtual_nets_ptr[a]->index < all_virtual_nets_ptr[b]->index;
+			//} else {
+			//return out_degree(a, g) > out_degree(b, g);
+			//}
+			//return all_virtual_nets_ptr[a]->index < all_virtual_nets_ptr[b]->index || (all_virtual_nets_ptr[a]->index == all_virtual_nets_ptr[b]->index && out_degree(a, g) > out_degree(b, g));
+			return overlap[a].size() > overlap[b].size();
+			});
+#else
+	/* this gives better result than largest first order */
+	custom_smallest_last_vertex_ordering(overlap, order_map); 
+#endif
+
+	//for (int i = 0; i < overlap.size(); ++i) {
+		//printf("order %d\n", order[i]);
+	//}
+
+	boost::vector_property_map<vertices_size_type> color;
+
+	auto coloring_start = timer::now();
+
+	int num_colors = custom_vertex_coloring_2(overlap, order_map, color, all_virtual_nets_ptr);
+
+	auto coloring_time = timer::now()-coloring_start;
+
+	int vnet = 0;
+	for (const auto &virtual_nets : all_virtual_nets) {
+		set<int> colors;
+		int previous_color = -1;
+		int previous_index = -1;
+		for (const auto &virtual_net : virtual_nets) {
+			int c = color[virtual_net.v];
+			colors.insert(c);
+
+			//printf("vnet %d index %d v %d color %d\n", vnet, virtual_net.index, virtual_net.v, c);
+
+			assert(virtual_net.index > previous_index);
+			previous_index = virtual_net.index;
+
+			assert(c > previous_color);
+			previous_color = c;
+		}
+		assert(colors.size() == virtual_nets.size());
+		++vnet;
+	}
+
+	vector<int> num_v(num_colors, 0);
+	for (const auto &ptr : all_virtual_nets_ptr) {
+		++num_v[get(color, ptr->v)];
+	}
+
+	using namespace boost::accumulators;
+	accumulator_set<int, stats<tag::mean, tag::max, tag::min, tag::variance > > acc;
+
+	for (int i = 0; i < num_v.size(); ++i) {
+		printf("color %d %d\n", i, num_v[i]);
+		acc(num_v[i]);
+	}
+
+	printf("num colors %d min %d max %d mean %g std dev %g\n", num_colors, boost::accumulators::min(acc), boost::accumulators::max(acc), mean(acc), std::sqrt(variance(acc)));
+	printf("coloring time %g\n", duration_cast<nanoseconds>(coloring_time).count() / 1e9);
+	
+	phase_nets.resize(num_colors);
+	for (const auto &ptr : all_virtual_nets_ptr) {
+		phase_nets[get(color, ptr->v)].push_back(ptr);
+	}
+
+	for (const auto &phase : phase_nets) {
+		verify_ind(phase, [] (new_virtual_net_t *net) -> box { return net->bounding_box; });
+	}
+}
+
 void schedule_virtual_nets_2(vector<vector<new_virtual_net_t>> &all_virtual_nets, vector<vector<new_virtual_net_t *>> &phase_nets)
 {
 	OverlapGraph g;
@@ -775,6 +1153,10 @@ void schedule_virtual_nets_2(vector<vector<new_virtual_net_t>> &all_virtual_nets
 	smallest_last_vertex_ordering(g, order_map); 
 #endif
 
+	for (int i = 0; i < num_vertices(g); ++i) {
+		printf("order %d\n", order[i]);
+	}
+
 	boost::vector_property_map<vertices_size_type> color;
 
 	auto coloring_start = timer::now();
@@ -783,9 +1165,6 @@ void schedule_virtual_nets_2(vector<vector<new_virtual_net_t>> &all_virtual_nets
 
 	auto coloring_time = timer::now()-coloring_start;
 
-	printf("num colors %d ave con %g\n", num_colors, (float)num_vertices(g)/num_colors);
-	printf("coloring time %g\n", duration_cast<nanoseconds>(coloring_time).count() / 1e9);
-	
 	int vnet = 0;
 	for (const auto &virtual_nets : all_virtual_nets) {
 		set<int> colors;
@@ -812,9 +1191,16 @@ void schedule_virtual_nets_2(vector<vector<new_virtual_net_t>> &all_virtual_nets
 		++num_v[get(color, ptr->v)];
 	}
 
+	using namespace boost::accumulators;
+	accumulator_set<int, stats<tag::mean, tag::max, tag::min, tag::variance > > acc;
+
 	for (int i = 0; i < num_v.size(); ++i) {
 		printf("color %d %d\n", i, num_v[i]);
+		acc(num_v[i]);
 	}
+
+	printf("num colors %d min %d max %d mean %g std dev %g\n", num_colors, boost::accumulators::min(acc), boost::accumulators::max(acc), mean(acc), std::sqrt(variance(acc)));
+	printf("coloring time %g\n", duration_cast<nanoseconds>(coloring_time).count() / 1e9);
 	
 	phase_nets.resize(num_colors);
 	for (const auto &ptr : all_virtual_nets_ptr) {
@@ -1743,12 +2129,12 @@ public:
 };
 
 typedef struct worker_sync_t {
-	alignas(64) tbb::atomic<bool> stop_routing;
+	alignas(64) tbb::atomic<int> stop_routing;
 	alignas(64) tbb::atomic<int> net_index;
-#ifdef __linux__
+#ifdef PTHREAD_BARRIER
 	alignas(64) pthread_barrier_t barrier;
 #else
-	boost::barrier *barrier;
+	alignas(64) boost::barrier *barrier;
 #endif
 } worker_sync_t;
 
@@ -1771,9 +2157,14 @@ struct alignas(64) router_t {
 	float pres_fac;
 	float delta;
 	int num_threads;
+	int num_virtual_nets;
 	vector<dijkstra_stats_t> stats;
 	vector<timer::duration> route_time;
 	vector<timer::duration> pure_route_time;
+	vector<vector<timer::duration>> phase_time;
+	vector<vector<timer::duration>> pure_phase_time;
+	vector<timer::duration> net_route_time;
+	vector<int> net_router;
 	tbb::atomic<int> iter;
 };
 
@@ -1806,7 +2197,7 @@ struct alignas(64) router_t {
 
 void do_virtual_work(router_t<new_virtual_net_t *> *router, DeltaSteppingRouter &net_router)
 {
-#ifdef __linux__
+#ifdef PTHREAD_BARRIER
 	pthread_barrier_wait(&router->sync.barrier);
 #else
 	router->sync.barrier->wait();
@@ -1821,6 +2212,11 @@ void do_virtual_work(router_t<new_virtual_net_t *> *router, DeltaSteppingRouter 
 
 	net_router.reset_stats();
 
+	vector<timer::duration> phase_time(router->nets.size());
+	vector<timer::duration> pure_phase_time(router->nets.size());
+	vector<timer::duration> net_route_time(router->num_virtual_nets, timer::duration::max());
+	vector<int> routed_vnets;
+
 	auto pure_route_time = timer::duration::zero();
 
 	auto route_start = timer::now();
@@ -1830,7 +2226,7 @@ void do_virtual_work(router_t<new_virtual_net_t *> *router, DeltaSteppingRouter 
 
 		router->sync.net_index = 0;
 
-#ifdef __linux__
+#ifdef PTHREAD_BARRIER
 		pthread_barrier_wait(&router->sync.barrier);
 #else
 		router->sync.barrier->wait();
@@ -1838,9 +2234,11 @@ void do_virtual_work(router_t<new_virtual_net_t *> *router, DeltaSteppingRouter 
 
 		zlog_level(delta_log, ROUTER_V2, "Phase %d\n", phase);
 
-		auto pure_route_start = timer::now();
+		auto pure_phase_start = timer::now();
 
 		while ((inet = router->sync.net_index++) < router->nets[phase].size()) {
+			auto net_route_start = timer::now();
+
 			auto &vnet = *router->nets[phase][inet];
 			auto &net = *vnet.net;
 
@@ -1879,21 +2277,41 @@ void do_virtual_work(router_t<new_virtual_net_t *> *router, DeltaSteppingRouter 
 			}
 
 			net_router.route(source, sinks, router->delta, router->params.astar_fac, router->state.route_trees[net.local_id], router->state.added_rr_nodes[vnet.global_index], router->state.net_timing[net.vpr_id]); 
+
+			net_route_time[vnet.global_index] = timer::now()-net_route_start;
+			routed_vnets.push_back(vnet.global_index);
 		}
 
-		pure_route_time += timer::now()-pure_route_start;
+		pure_phase_time[phase] = timer::now()-pure_phase_start; 
+		pure_route_time += pure_phase_time[phase];
 
-#ifdef __linux__
+#ifdef PTHREAD_BARRIER 
 		pthread_barrier_wait(&router->sync.barrier);
 #else
 		router->sync.barrier->wait();
 #endif
+
+		phase_time[phase] = timer::now()-pure_phase_start;
 	}
 
 	router->route_time[net_router.get_instance()] = timer::now()-route_start;
 	router->pure_route_time[net_router.get_instance()] = pure_route_time; 
 
+	router->phase_time[net_router.get_instance()] = std::move(phase_time); 
+	router->pure_phase_time[net_router.get_instance()] = std::move(pure_phase_time); 
+
+	for (const auto &r : routed_vnets) {
+		router->net_route_time[r] = net_route_time[r];
+		router->net_router[r] = net_router.get_instance();
+	}
+
 	router->stats[net_router.get_instance()] = net_router.get_stats();
+
+#ifdef PTHREAD_BARRIER 
+	pthread_barrier_wait(&router->sync.barrier);
+#else
+	router->sync.barrier->wait();
+#endif
 }
 
 void do_work(router_t<net_t *> *router, DeltaSteppingRouter &net_router)
@@ -1903,7 +2321,7 @@ void do_work(router_t<net_t *> *router, DeltaSteppingRouter &net_router)
 	sprintf(buffer, "%d", router->iter);
 	zlog_put_mdc("iter", buffer);
 
-#ifdef __linux__
+#ifdef PTHREAD_BARRIER
 	pthread_barrier_wait(&router->sync.barrier);
 #else
 	router->sync.barrier->wait();
@@ -1922,7 +2340,7 @@ void do_work(router_t<net_t *> *router, DeltaSteppingRouter &net_router)
 
 		router->sync.net_index = 0;
 
-#ifdef __linux__
+#ifdef PTHREAD_BARRIER
 		pthread_barrier_wait(&router->sync.barrier);
 #else
 		router->sync.barrier->wait();
@@ -1950,7 +2368,7 @@ void do_work(router_t<net_t *> *router, DeltaSteppingRouter &net_router)
 
 		//pure_route_time += timer::now()-pure_route_start;
 
-#ifdef __linux__
+#ifdef PTHREAD_BARRIER
 		pthread_barrier_wait(&router->sync.barrier);
 #else
 		router->sync.barrier->wait();
@@ -1966,6 +2384,12 @@ void do_work(router_t<net_t *> *router, DeltaSteppingRouter &net_router)
 void *virtual_worker_thread(void *args)
 {
 	router_t<new_virtual_net_t *> *router = (router_t<new_virtual_net_t *> *)args;
+
+#ifdef PTHREAD_BARRIER
+	pthread_barrier_wait(&router->sync.barrier);
+#else
+	router->sync.barrier->wait();
+#endif
 
 	DeltaSteppingRouter net_router(router->g, router->state.congestion, router->pres_fac);
 
@@ -2053,9 +2477,10 @@ bool partitioning_delta_stepping_deterministic_route_virtual(t_router_opts *opts
 	vector<vector<new_virtual_net_t>> all_virtual_nets;
 	int num_virtual_nets = create_virtual_nets(nets, opts->num_threads, all_virtual_nets);
 	//best_case(nets, router.nets);
-	schedule_virtual_nets_2(all_virtual_nets, router.nets);
+	schedule_virtual_nets_3(all_virtual_nets, router.nets);
 	//test_misr(nets);
 	//write_nets(nets);
+	router.num_virtual_nets = num_virtual_nets;
 
 	congestion_t *congestion_aligned;
 //#ifdef __linux__
@@ -2104,16 +2529,20 @@ bool partitioning_delta_stepping_deterministic_route_virtual(t_router_opts *opts
 		}
 	}
 
-#ifdef __linux__
+#ifdef PTHREAD_BARRIER
 	assert(pthread_barrier_init(&router.sync.barrier, nullptr, opts->num_threads) == 0);
 #else
 	router.sync.barrier = new boost::barrier(opts->num_threads);
 #endif
-	router.sync.stop_routing = false;
+	router.sync.stop_routing = 0;
 
 	router.stats.resize(opts->num_threads);
 	router.pure_route_time.resize(opts->num_threads);
 	router.route_time.resize(opts->num_threads);
+	router.pure_phase_time.resize(opts->num_threads);
+	router.phase_time.resize(opts->num_threads);
+	router.net_route_time.resize(num_virtual_nets);
+	router.net_router.resize(num_virtual_nets);
 
 	router.iter = 0;
 
@@ -2132,6 +2561,12 @@ bool partitioning_delta_stepping_deterministic_route_virtual(t_router_opts *opts
 		assert(pthread_create(&tids[i], &attr, virtual_worker_thread, (void *)&router) == 0);
 	}
 
+#ifdef PTHREAD_BARRIER
+	pthread_barrier_wait(&router.sync.barrier);
+#else
+	router.sync.barrier->wait();
+#endif
+
 	timer::duration total_route_time = timer::duration::zero();
 
 	/* just to make sure that we are allocated on the correct NUMA node */
@@ -2147,8 +2582,10 @@ bool partitioning_delta_stepping_deterministic_route_virtual(t_router_opts *opts
 
 		do_virtual_work(&router, *net_router);
 
-		auto max_duration = *std::max_element(begin(router.route_time), end(router.route_time));
-		total_route_time += max_duration;
+		auto max_route_time_i = std::max_element(begin(router.route_time), end(router.route_time));
+		assert(max_route_time_i != end(router.route_time));
+		timer::duration max_route_time = *max_route_time_i;
+		total_route_time += max_route_time;
 
 		printf("Route time: ");
 		for (int i = 0; i < opts->num_threads; ++i) {
@@ -2156,7 +2593,13 @@ bool partitioning_delta_stepping_deterministic_route_virtual(t_router_opts *opts
 		}
 		printf("\n");
 
-		printf("Max route time: %lu %g\n", max_duration.count(), max_duration.count() / 1e9);
+		//printf("Route time debug: ");
+		//for (auto iter = begin(router.route_time); iter != end(router.route_time); ++iter) {
+			//printf("%g ", duration_cast<nanoseconds>(*iter).count()/1e9);
+		//}
+		//printf("\n");
+
+		printf("Max route time: %lu %g\n", max_route_time.count(), max_route_time.count() / 1e9);
 
 		printf("Pure route time: ");
 		for (int i = 0; i < opts->num_threads; ++i) {
@@ -2164,11 +2607,48 @@ bool partitioning_delta_stepping_deterministic_route_virtual(t_router_opts *opts
 		}
 		printf("\n");
 
+		unsigned long total_num_heap_pops = 0;
 		printf("Num heap pops: ");
 		for (int i = 0; i < opts->num_threads; ++i) {
 			printf("%d ", router.stats[i].num_heap_pops);
+			total_num_heap_pops += router.stats[i].num_heap_pops;
 		}
 		printf("\n");
+		printf("Total num heap pops: %lu\n", total_num_heap_pops);
+
+		unsigned long total_num_neighbor_visits = 0;
+		printf("Num neighbor visits: ");
+		for (int i = 0; i < opts->num_threads; ++i) {
+			printf("%d ", router.stats[i].num_neighbor_visits);
+			total_num_neighbor_visits += router.stats[i].num_neighbor_visits;
+		}
+		printf("\n");
+		printf("Total num neighbor visits: %lu\n", total_num_neighbor_visits);
+
+		sprintf(buffer, "stats_%d.txt", router.iter);
+		FILE *stats = fopen(buffer, "w");
+
+		for (int i = 0; i < router.nets.size(); ++i) {
+			for (int j = 0; j < opts->num_threads; ++j) {
+				fprintf(stats, "%g %g %g ", duration_cast<nanoseconds>(router.pure_phase_time[j][i]).count()/1e9, duration_cast<nanoseconds>(router.phase_time[j][i]).count()/1e9,
+						100.0*router.pure_phase_time[j][i].count()/router.phase_time[j][i].count());
+			}
+			fprintf(stats, "\n");
+		}
+
+		fclose(stats);
+
+		sprintf(buffer, "net_route_time_%d.txt", router.iter);
+		FILE *nrt = fopen(buffer, "w");
+
+		for (int i = 0; i < router.nets.size(); ++i) {
+			for (int j = 0; j < router.nets[i].size(); ++j) {
+				const auto *vnet = router.nets[i][j];
+				fprintf(nrt, "%d %d %g %d %d %g\n", i, router.net_router[vnet->global_index], duration_cast<nanoseconds>(router.net_route_time[vnet->global_index]).count()/1e9, vnet->index, vnet->sinks.size(), bg::area(vnet->bounding_box));
+			}
+		}
+
+		fclose(nrt);
 
 		/* checking */
 		for (int i = 0; i < num_vertices(router.g); ++i) {
@@ -2312,12 +2792,12 @@ bool partitioning_delta_stepping_deterministic_route(t_router_opts *opts)
 		}
 	}
 
-#ifdef __linux__
+#ifdef PTHREAD_BARRIER
 	assert(pthread_barrier_init(&router.sync.barrier, nullptr, opts->num_threads) == 0);
 #else
 	router.sync.barrier = new boost::barrier(opts->num_threads);
 #endif
-	router.sync.stop_routing = false;
+	router.sync.stop_routing = 0;
 
 	router.stats.resize(opts->num_threads);
 	router.pure_route_time.resize(opts->num_threads);
