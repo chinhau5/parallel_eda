@@ -360,7 +360,7 @@ int main(int argc, char **argv) {
 	CPU_ZERO(&cpuset);
 	CPU_SET(0, &cpuset);
 
-	assert(pthread_setaffinity_np(pthread_self(), sizeof(cpu_set_t), &cpuset) == 0);
+	/*assert(pthread_setaffinity_np(pthread_self(), sizeof(cpu_set_t), &cpuset) == 0);*/
 #endif
 
 #ifdef VPR_MPI

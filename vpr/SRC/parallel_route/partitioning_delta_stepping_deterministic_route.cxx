@@ -55,9 +55,10 @@ typedef struct new_virtual_net_t {
 	net_t *net;
 	vector<sink_t *> sinks;
 	box bounding_box;
+	point last_point;
 	vertex_descriptor v;
 	vertex_descriptor parent;
-	point last_point;
+	int num_parents;
 } new_virtual_net_t;
 
 using rtree_value = pair<box, net_t *>;
@@ -111,6 +112,7 @@ void split_bb_4(net_t &net, float bb_area_threshold, vector<new_virtual_net_t> &
 		new_virtual_net_t vnet;
 		vnet.net = &net;
 		vnet.index = debug;
+		vnet.num_parents = 0;
 
 		box source_box;
 
@@ -1204,6 +1206,147 @@ void build_and_order(vector<vector<new_virtual_net_t>> &all_virtual_nets,
 	//for (int i = 0; i < overlap.size(); ++i) {
 		//printf("order %d\n", order[i]);
 	//}
+}
+
+void topological_sort(const vector<vector<int>> &g, vector<int> &sorted)
+{
+	vector<int> num_incoming_edges(g.size(), 0);
+	for (const auto &adj : g) {
+		for (const auto &to : adj) {
+			++num_incoming_edges[to];
+		}
+	}
+	queue<int> s;
+	for (int i = 0; i < num_incoming_edges.size(); ++i) {
+		if (num_incoming_edges[i] == 0) {
+			s.push(i);
+		}
+	}
+	while (!s.empty()) {
+		int item = s.front(); s.pop();
+		sorted.push_back(item);
+		for (const auto &to : g[item]) {
+			if (--num_incoming_edges[to] == 0) {
+				s.push(to);
+			}
+		}
+	}
+	assert(all_of(begin(num_incoming_edges), end(num_incoming_edges), [] (int val) -> bool { return val == 0; }));
+}
+
+void schedule_virtual_nets_4(vector<vector<int>> &overlap, vector<new_virtual_net_t *> &all_virtual_nets_ptr, vector<vertex_descriptor> &order, int num_threads, const vector<timer::duration> *vnet_route_time, vector<vector<int>> &directed, vector<new_virtual_net_t *> &topo_nets)
+{
+	boost::vector_property_map<vertices_size_type> color;
+
+	auto coloring_start = timer::now();
+
+	auto order_map = make_iterator_property_map(begin(order), boost::identity_property_map());
+
+	int num_colors;
+	if (vnet_route_time) {
+		num_colors = custom_vertex_coloring_3(overlap, all_virtual_nets_ptr, [&vnet_route_time] (int v) -> long long { return (*vnet_route_time)[v].count(); }, num_threads, order_map, color);
+	} else {
+		num_colors = custom_vertex_coloring_3(overlap, all_virtual_nets_ptr, [&all_virtual_nets_ptr] (int v) -> int { return bg::area(all_virtual_nets_ptr[v]->bounding_box); }, num_threads, order_map, color);
+	}
+
+	auto coloring_time = timer::now()-coloring_start;
+
+	/* checking validity of coloring */
+	int vnet = 0;
+	net_t *current_net = all_virtual_nets_ptr[0]->net;
+
+	for (int i = 0; i < all_virtual_nets_ptr.size(); ) {
+		set<int> colors;
+		int previous_color = -1;
+		int previous_index = -1;
+		int num_virtual_nets = 0;
+
+		for (; i < all_virtual_nets_ptr.size() && all_virtual_nets_ptr[i]->net == current_net; ++i) {
+			const auto &virtual_net = *all_virtual_nets_ptr[i];
+
+			int c = color[virtual_net.v];
+			colors.insert(c);
+
+			printf("vnet %d index %d v %d color %d\n", vnet, virtual_net.index, virtual_net.v, c);
+
+			assert(virtual_net.index > previous_index);
+			previous_index = virtual_net.index;
+
+			assert(c > previous_color);
+			previous_color = c;
+
+			++num_virtual_nets;
+		}
+
+		assert(colors.size() == num_virtual_nets);
+
+		if (i < all_virtual_nets_ptr.size()) {
+			assert(all_virtual_nets_ptr[i]->net != current_net);
+			assert(all_virtual_nets_ptr[i-1]->net == current_net);
+			current_net = all_virtual_nets_ptr[i]->net;
+		}
+
+		++vnet;
+	}
+
+	vector<vector<new_virtual_net_t *>> phase_nets(num_colors);
+
+	for (const auto &ptr : all_virtual_nets_ptr) {
+		phase_nets[get(color, ptr->v)].push_back(ptr);
+	}
+
+	for (const auto &phase : phase_nets) {
+		verify_ind(phase, [] (new_virtual_net_t *net) -> box { return net->bounding_box; });
+	}
+
+	/* coloring stats */
+	vector<int> num_v(num_colors, 0);
+	for (const auto &ptr : all_virtual_nets_ptr) {
+		++num_v[get(color, ptr->v)];
+	}
+
+	using namespace boost::accumulators;
+	accumulator_set<int, stats<tag::mean, tag::max, tag::min, tag::variance > > acc;
+
+	for (int i = 0; i < num_v.size(); ++i) {
+		printf("color %d %d\n", i, num_v[i]);
+		acc(num_v[i]);
+	}
+
+	printf("num colors %d min %d max %d mean %g std dev %g\n", num_colors, boost::accumulators::min(acc), boost::accumulators::max(acc), mean(acc), std::sqrt(variance(acc)));
+	printf("coloring time %g\n", duration_cast<nanoseconds>(coloring_time).count() / 1e9);
+
+	/* topo sort */
+	directed.resize(overlap.size());
+
+	for (int i = 0; i < overlap.size(); ++i) {
+		assert(directed[i].empty());
+		assert(all_virtual_nets_ptr[i]->global_index == i);
+		assert(all_virtual_nets_ptr[i]->v == i);
+
+		int p = all_virtual_nets_ptr[i]->parent;
+		if (p != -1) {
+			directed[p].push_back(i);
+			++all_virtual_nets_ptr[i]->num_parents;
+		}
+
+		for (int j = 0; j < overlap[i].size(); ++j) {
+			int to = overlap[i][j];
+			assert(color[i] != color[to]);
+			if (color[to] > color[i]) {
+				directed[i].push_back(to);
+
+				++all_virtual_nets_ptr[to]->num_parents;
+			}
+		}
+	}
+
+	vector<int> sorted;
+	topological_sort(directed, sorted);
+
+	for (const auto &s : sorted) {
+		topo_nets.push_back(all_virtual_nets_ptr[s]);
+	}
 }
 
 void schedule_virtual_nets_3(vector<vector<int>> &overlap, vector<new_virtual_net_t *> &all_virtual_nets_ptr, vector<vertex_descriptor> &order, int num_threads, const vector<timer::duration> *vnet_route_time, vector<vector<new_virtual_net_t *>> &phase_nets)
@@ -2345,10 +2488,11 @@ typedef struct worker_sync_t {
 	alignas(64) tbb::atomic<int> net_index;
 #ifdef PTHREAD_BARRIER
 	alignas(64) pthread_barrier_t barrier;
-#else i
+#else
 	//alignas(64) boost::barrier *barrier;
 	alignas(64) SpinningBarrier *barrier;
 #endif
+	std::atomic<int> *current_num_parents;
 } worker_sync_t;
 
 typedef struct global_route_state_t {
@@ -2363,6 +2507,8 @@ typedef struct global_route_state_t {
 template<typename Net>
 struct alignas(64) router_t {
 	vector<vector<Net>> nets;
+	vector<Net> topo_nets;
+	vector<vector<int>> directed;
 	worker_sync_t sync;
 	RRGraph g;
 	global_route_state_t state;
@@ -2407,6 +2553,120 @@ struct alignas(64) router_t {
 			//}
 		//}
 //};
+
+void do_virtual_work_topo(router_t<new_virtual_net_t *> *router, DeltaSteppingRouter &net_router)
+{
+#ifdef PTHREAD_BARRIER
+	pthread_barrier_wait(&router->sync.barrier);
+#else
+	router->sync.barrier->wait();
+#endif
+
+	assert(net_router.get_num_instances() == router->num_threads);
+
+	char buffer[256];
+
+	sprintf(buffer, "%d", router->iter);
+	zlog_put_mdc("iter", buffer);
+
+	net_router.reset_stats();
+
+	vector<timer::duration> net_route_time(router->num_virtual_nets, timer::duration::max());
+	vector<int> routed_vnets;
+
+	auto pure_route_time = timer::duration::zero();
+	auto route_start = timer::now();
+
+	router->sync.net_index = 0;
+
+#ifdef PTHREAD_BARRIER
+	pthread_barrier_wait(&router->sync.barrier);
+#else
+	router->sync.barrier->wait();
+#endif
+
+	int inet;
+
+	while ((inet = router->sync.net_index++) < router->topo_nets.size()) {
+		auto &vnet = *router->topo_nets[inet];
+		auto &net = *vnet.net;
+
+		/* wait */
+		while (router->sync.current_num_parents[vnet.global_index] > 0) {
+			;
+		}
+
+		router->sync.current_num_parents[vnet.global_index] = vnet.num_parents;
+
+		auto real_net_route_start = timer::now();
+
+		update_sink_criticalities(net, router->state.net_timing[net.vpr_id], router->params);
+
+		zlog_level(delta_log, ROUTER_V3, "Routing net %d vnet %d\n", net.local_id, vnet.index);
+
+		if (router->iter > 0) {
+			//for (const auto &rt_node : route_tree_get_nodes(router->state.back_route_trees[net.local_id])) {
+			//RRNode rr_node = get_vertex_props(router->state.back_route_trees[net.local_id].graph, rt_node).rr_node;
+			//const auto &rr_node_p = get_vertex_props(router->g, rr_node);
+
+			//if (rr_node_p.xhigh >= _current_sink->current_bounding_box.xmin
+			//&& rr_node_p.xlow <= _current_sink->current_bounding_box.xmax
+			//&& rr_node_p.yhigh >= _current_sink->current_bounding_box.ymin
+			//&& rr_node_p.ylow <= _current_sink->current_bounding_box.ymax) {
+			//update_one_cost_internal(rr_node, router->g, router->state.congestion, -1, router->pres_fac);
+			//}
+			//}
+
+			for (const auto &rr_node : router->state.back_added_rr_nodes[vnet.global_index]) {
+				update_one_cost_internal(rr_node, router->g, router->state.congestion, -1, router->pres_fac);
+			}
+		}
+
+		vector<const sink_t *> sinks;
+		for (int i = 0; i < vnet.sinks.size(); ++i) {
+			sinks.push_back(vnet.sinks[i]);
+		}
+
+		source_t *source;
+		if (vnet.index == 0) {
+			source = &net.source;
+		} else {
+			source = nullptr;
+		}
+
+		net_router.route(source, sinks, router->delta, router->params.astar_fac, router->state.route_trees[net.local_id], router->state.added_rr_nodes[vnet.global_index], router->state.net_timing[net.vpr_id]); 
+
+		for (const auto &to : router->directed[vnet.global_index]) {
+			--router->sync.current_num_parents[to];
+		}
+
+		net_route_time[vnet.global_index] = timer::now()-real_net_route_start;
+		pure_route_time += net_route_time[vnet.global_index];
+		routed_vnets.push_back(vnet.global_index);
+	}
+
+#ifdef PTHREAD_BARRIER 
+	pthread_barrier_wait(&router->sync.barrier);
+#else
+	router->sync.barrier->wait();
+#endif
+
+	router->route_time[net_router.get_instance()] = timer::now()-route_start;
+	router->pure_route_time[net_router.get_instance()] = pure_route_time; 
+
+	for (const auto &r : routed_vnets) {
+		router->net_route_time[r] = net_route_time[r];
+		router->net_router[r] = net_router.get_instance();
+	}
+
+	router->stats[net_router.get_instance()] = net_router.get_stats();
+
+#ifdef PTHREAD_BARRIER 
+	pthread_barrier_wait(&router->sync.barrier);
+#else
+	router->sync.barrier->wait();
+#endif
+}
 
 void do_virtual_work(router_t<new_virtual_net_t *> *router, DeltaSteppingRouter &net_router)
 {
@@ -2594,6 +2854,29 @@ void do_work(router_t<net_t *> *router, DeltaSteppingRouter &net_router)
 	router->stats[net_router.get_instance()] = net_router.get_stats();
 }
 
+void *virtual_topo_worker_thread(void *args)
+{
+	router_t<new_virtual_net_t *> *router = (router_t<new_virtual_net_t *> *)args;
+
+#ifdef PTHREAD_BARRIER
+	pthread_barrier_wait(&router->sync.barrier);
+#else
+	router->sync.barrier->wait();
+#endif
+
+	DeltaSteppingRouter net_router(router->g, router->state.congestion, router->pres_fac);
+
+	char buffer[256];
+	sprintf(buffer, "%d", net_router.get_instance());
+	zlog_put_mdc("tid", buffer);
+
+	while (!router->sync.stop_routing) {
+		do_virtual_work_topo(router, net_router);
+	}
+
+	return nullptr;
+}
+
 void *virtual_worker_thread(void *args)
 {
 	router_t<new_virtual_net_t *> *router = (router_t<new_virtual_net_t *> *)args;
@@ -2695,7 +2978,7 @@ bool partitioning_delta_stepping_deterministic_route_virtual(t_router_opts *opts
 	vector<vertex_descriptor> order;
 
 	build_and_order(all_virtual_nets, overlap, all_virtual_nets_ptr, order);
-	schedule_virtual_nets_3(overlap, all_virtual_nets_ptr, order, opts->num_threads, nullptr, router.nets);
+	schedule_virtual_nets_4(overlap, all_virtual_nets_ptr, order, opts->num_threads, nullptr, router.directed, router.topo_nets);
 	//test_misr(nets);
 	//write_nets(nets);
 	router.num_virtual_nets = num_virtual_nets;
@@ -2754,6 +3037,10 @@ bool partitioning_delta_stepping_deterministic_route_virtual(t_router_opts *opts
 	router.sync.barrier = new SpinningBarrier(opts->num_threads);
 #endif
 	router.sync.stop_routing = 0;
+	router.sync.current_num_parents = new std::atomic<int>[num_virtual_nets];
+	for (int i = 0; i < num_virtual_nets; ++i) {
+		router.sync.current_num_parents[i] = all_virtual_nets_ptr[i]->num_parents;
+	}
 
 	router.stats.resize(opts->num_threads);
 	router.pure_route_time.resize(opts->num_threads);
@@ -2774,10 +3061,10 @@ bool partitioning_delta_stepping_deterministic_route_virtual(t_router_opts *opts
 		cpu_set_t cpuset;
 		CPU_ZERO(&cpuset);
 		CPU_SET(i, &cpuset);
-		assert(pthread_attr_setaffinity_np(&attr, sizeof(cpu_set_t), &cpuset) == 0);
+		//assert(pthread_attr_setaffinity_np(&attr, sizeof(cpu_set_t), &cpuset) == 0);
 #endif
 
-		assert(pthread_create(&tids[i], &attr, virtual_worker_thread, (void *)&router) == 0);
+		assert(pthread_create(&tids[i], &attr, virtual_topo_worker_thread, (void *)&router) == 0);
 	}
 
 #ifdef PTHREAD_BARRIER
@@ -2798,15 +3085,15 @@ bool partitioning_delta_stepping_deterministic_route_virtual(t_router_opts *opts
 	bool routed = false;
 	for (; router.iter < opts->max_router_iterations && !routed; ++router.iter) {
 		if (router.iter == 1) {
-			for (auto &p : router.nets) {
-				p.clear();
-			}
-			schedule_virtual_nets_3(overlap, all_virtual_nets_ptr, order, opts->num_threads, &router.net_route_time, router.nets);
+			//for (auto &p : router.nets) {
+				//p.clear();
+			//}
+			//schedule_virtual_nets_3(overlap, all_virtual_nets_ptr, order, opts->num_threads, &router.net_route_time, router.nets);
 		}
 
 		printf("Routing iteration: %d\n", router.iter);
 
-		do_virtual_work(&router, *net_router);
+		do_virtual_work_topo(&router, *net_router);
 
 		auto max_route_time_i = std::max_element(begin(router.route_time), end(router.route_time));
 		assert(max_route_time_i != end(router.route_time));
