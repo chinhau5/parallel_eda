@@ -32,6 +32,7 @@
 #include <boost/accumulators/statistics/max.hpp>
 #include <boost/accumulators/statistics/moment.hpp>
 #include <boost/accumulators/statistics/variance.hpp>
+#include <atomic>
 
 //#include <mlpack/methods/kmeans/kmeans.hpp>
 //#include <mlpack/methods/kmeans/refined_start.hpp>
@@ -506,12 +507,11 @@ void split(net_t &net, float bb_area_threshold, vector<new_virtual_net_t> &virtu
 	}
 }
 
-int create_virtual_nets(vector<net_t> &nets, int num_threads, vector<vector<new_virtual_net_t>> &all_virtual_nets)
+int create_virtual_nets(vector<net_t> &nets, int num_threads, float threshold_scale, vector<vector<new_virtual_net_t>> &all_virtual_nets)
 {
 	extern int nx, ny;
 	int fpga_area = (nx+2) * (ny+2);
-	const float scaling_factor = 2;
-	float bb_area_threshold = (float)fpga_area / (num_threads * scaling_factor);
+	float bb_area_threshold = (float)fpga_area / (num_threads * threshold_scale);
 
 	all_virtual_nets.resize(nets.size());
 	for (int i = 0; i < nets.size(); ++i) {
@@ -751,6 +751,153 @@ void build_overlap_graph(vector<vector<new_virtual_net_t>> &all_virtual_nets, Ov
 	}
 }
 
+template <class VirtualNetsPtr, class Load, class OrderPA, class ColorMap>
+	typename boost::property_traits<ColorMap>::value_type
+custom_vertex_coloring_3(const vector<vector<int>> &G, const VirtualNetsPtr &all_virtual_nets_ptr, const Load &load, int num_threads, OrderPA &order, 
+		ColorMap &color)
+{
+	typedef typename boost::property_traits<ColorMap>::value_type size_type;
+
+	size_type max_color = 0;
+	const size_type V = G.size();
+
+	// We need to keep track of which colors are used by
+	// adjacent vertices. We do this by marking the colors
+	// that are used. The mark array contains the mark
+	// for each color. The length of mark is the
+	// number of vertices since the maximum possible number of colors
+	// is the number of vertices.
+
+	//Initialize colors 
+	for (int v = 0; v < V; ++v)
+		put(color, v, V-1);
+
+	bool has_uncolored = true;
+	int num_rounds = 0;
+
+	using LoadValueType = decltype(load(0));
+	using HeapElement = pair<LoadValueType, int>;
+	vector<std::priority_queue<HeapElement, vector<HeapElement>, std::greater<HeapElement>>> heaps(V);
+	vector<LoadValueType> max_load(V, std::numeric_limits<LoadValueType>::min());
+
+	while (has_uncolored) {
+		std::vector<size_type> mark(V, 
+				std::numeric_limits<size_type>::max BOOST_PREVENT_MACRO_SUBSTITUTION());
+		//Determine the color for every vertex one by one
+		has_uncolored = false;
+		for ( size_type i = 0; i < V; i++) {
+			int current = get(order,i);
+
+			//printf("current %d\n", current);
+
+			/* we are done coloring this node */
+			if (get(color, current) != V-1) {
+				//printf("\tdone coloring\n");
+				continue;
+			}
+
+			/* don't color this node if its parent is uncolored */
+			int parent = all_virtual_nets_ptr[current]->parent;
+			if (parent != -1 
+					&& all_virtual_nets_ptr[current]->index > all_virtual_nets_ptr[parent]->index
+					&& get(color, parent) == V-1) {
+				has_uncolored = true;
+				//printf("\tparent uncolored\n");
+				continue;
+			}
+
+			//Mark the colors of vertices adjacent to current.
+			//i can be the value for marking since i increases successively
+			for (int j = 0; j < G[current].size(); ++j) {
+				mark[get(color, G[current][j])] = i; 
+			}
+
+			//Next step is to assign the smallest un-marked color
+			//to the current vertex.
+			size_type j;
+			if (parent != -1) {
+				j = get(color, parent)+1;
+				assert(j <= max_color);
+			} else {
+				j = 0;
+			}
+
+			//Scan through all useable colors, find the smallest possible
+			//color that is not used by neighbors.  Note that if mark[j]
+			//is equal to i, color j is used by one of the current vertex's
+			//neighbors.
+			int best_color = -1;
+			LoadValueType min_load_delta = std::numeric_limits<LoadValueType>::max();
+
+			LoadValueType l = load(current);
+			//printf("\tnew load %d\n", l);
+
+			for (; j < max_color; ++j) {
+				if (mark[j] != i) {
+					assert(!heaps[j].empty());
+					assert(max_load[j] != std::numeric_limits<LoadValueType>::min());
+
+					/* choose the best color here */
+					const auto &min_load = heaps[j].top();
+
+					LoadValueType delta = min_load.first + l - max_load[j];
+
+					//printf("\tc %d max load %d min load %d thread %d delta %d\n", j, max_load[j], min_load.first, min_load.second, delta);
+
+					if (delta < min_load_delta) {
+						best_color = j;
+						min_load_delta = delta;
+					}
+				}
+			}
+
+			if (best_color != -1) {
+				j = best_color;
+
+				auto min_load = heaps[j].top();
+				heaps[j].pop();
+
+				min_load.first += l;
+
+				heaps[j].push(min_load);
+
+				//printf("\tbest color %d pushing min load %d thread %d to heap. old max load %d ", j, min_load.first, min_load.second, max_load[j]);
+
+				max_load[j] = std::max(max_load[j], min_load.first);
+
+				//printf("new max load %d\n", max_load[j]);
+			} else {
+				assert(j == max_color);
+
+				assert(heaps[j].empty());
+
+				heaps[j].emplace(l, 0);
+				for (int thread = 1; thread < num_threads; ++thread) {
+					heaps[j].emplace(0, thread);
+				}
+
+				max_load[j] = l;
+
+				//printf("\tnew color %d max load %d\n", j, max_load[j]);
+
+				++max_color;
+			}
+
+			//while ( max_color <= j)  //All colors are used up. Add one more color
+				//++max_color;
+
+			//At this point, j is the smallest possible color
+			put(color, current, j);  //Save the color of vertex current
+		}
+
+		++num_rounds;
+	}
+
+	printf("num rounds %d\n", num_rounds);
+
+	return max_color;
+}
+
 template <class OrderPA, class ColorMap, class VirtualNetsPtr>
 	typename boost::property_traits<ColorMap>::value_type
 custom_vertex_coloring_2(const vector<vector<int>> &G, OrderPA &order, 
@@ -808,6 +955,10 @@ custom_vertex_coloring_2(const vector<vector<int>> &G, OrderPA &order,
 			size_type j;
 			if (parent != -1) {
 				j = get(color, parent)+1;
+				//j = get(color, parent);
+				assert(j <= max_color);
+				/* just to make sure we don't use our parents color */
+				//mark[j] = i;
 			} else {
 				j = 0;
 			}
@@ -819,7 +970,10 @@ custom_vertex_coloring_2(const vector<vector<int>> &G, OrderPA &order,
 			while ( j < max_color && mark[j] == i ) 
 				++j;
 
-			max_color = std::max(j+1, max_color);
+			assert(j <= max_color);
+			if (j == max_color) {
+				++max_color;
+			}
 			//while ( max_color <= j)  //All colors are used up. Add one more color
 				//++max_color;
 
@@ -1004,13 +1158,11 @@ custom_smallest_last_vertex_ordering(const vector<vector<int>> & G, Order order)
 			make_shared_array_property_map(G.size(), 0, boost::identity_property_map()));
 }
 
-void schedule_virtual_nets_3(vector<vector<new_virtual_net_t>> &all_virtual_nets, vector<vector<new_virtual_net_t *>> &phase_nets)
+void build_and_order(vector<vector<new_virtual_net_t>> &all_virtual_nets,
+		vector<vector<int>> &overlap, vector<new_virtual_net_t *> &all_virtual_nets_ptr, vector<vertex_descriptor> &order)
 {
-	vector<new_virtual_net_t *> all_virtual_nets_ptr;
-
 	auto build_start = timer::now();
 
-	vector<vector<int>> overlap;
 	int num_edges = build_overlap_graph_2(all_virtual_nets, overlap, all_virtual_nets_ptr);
 
 	auto build_time = timer::now()-build_start;
@@ -1023,7 +1175,7 @@ void schedule_virtual_nets_3(vector<vector<new_virtual_net_t>> &all_virtual_nets
 		//printf("edge %d -> %d\n", source(*ei, g), target(*ei, g));
 	//}
 
-	vector<vertex_descriptor> order(overlap.size());
+	order.resize(overlap.size());
 	auto order_map = make_iterator_property_map(begin(order), boost::identity_property_map());
 
 #ifdef LARGEST_FIRST
@@ -1052,33 +1204,59 @@ void schedule_virtual_nets_3(vector<vector<new_virtual_net_t>> &all_virtual_nets
 	//for (int i = 0; i < overlap.size(); ++i) {
 		//printf("order %d\n", order[i]);
 	//}
+}
 
+void schedule_virtual_nets_3(vector<vector<int>> &overlap, vector<new_virtual_net_t *> &all_virtual_nets_ptr, vector<vertex_descriptor> &order, int num_threads, const vector<timer::duration> *vnet_route_time, vector<vector<new_virtual_net_t *>> &phase_nets)
+{
 	boost::vector_property_map<vertices_size_type> color;
 
 	auto coloring_start = timer::now();
 
-	int num_colors = custom_vertex_coloring_2(overlap, order_map, color, all_virtual_nets_ptr);
+	auto order_map = make_iterator_property_map(begin(order), boost::identity_property_map());
+
+	int num_colors;
+	if (vnet_route_time) {
+		num_colors = custom_vertex_coloring_3(overlap, all_virtual_nets_ptr, [&vnet_route_time] (int v) -> long long { return (*vnet_route_time)[v].count(); }, num_threads, order_map, color);
+	} else {
+		num_colors = custom_vertex_coloring_3(overlap, all_virtual_nets_ptr, [&all_virtual_nets_ptr] (int v) -> int { return bg::area(all_virtual_nets_ptr[v]->bounding_box); }, num_threads, order_map, color);
+	}
 
 	auto coloring_time = timer::now()-coloring_start;
 
 	int vnet = 0;
-	for (const auto &virtual_nets : all_virtual_nets) {
+	net_t *current_net = all_virtual_nets_ptr[0]->net;
+
+	for (int i = 0; i < all_virtual_nets_ptr.size(); ) {
 		set<int> colors;
 		int previous_color = -1;
 		int previous_index = -1;
-		for (const auto &virtual_net : virtual_nets) {
+		int num_virtual_nets = 0;
+
+		for (; i < all_virtual_nets_ptr.size() && all_virtual_nets_ptr[i]->net == current_net; ++i) {
+			const auto &virtual_net = *all_virtual_nets_ptr[i];
+
 			int c = color[virtual_net.v];
 			colors.insert(c);
 
-			//printf("vnet %d index %d v %d color %d\n", vnet, virtual_net.index, virtual_net.v, c);
+			printf("vnet %d index %d v %d color %d\n", vnet, virtual_net.index, virtual_net.v, c);
 
 			assert(virtual_net.index > previous_index);
 			previous_index = virtual_net.index;
 
 			assert(c > previous_color);
 			previous_color = c;
+
+			++num_virtual_nets;
 		}
-		assert(colors.size() == virtual_nets.size());
+
+		assert(colors.size() == num_virtual_nets);
+
+		if (i < all_virtual_nets_ptr.size()) {
+			assert(all_virtual_nets_ptr[i]->net != current_net);
+			assert(all_virtual_nets_ptr[i-1]->net == current_net);
+			current_net = all_virtual_nets_ptr[i]->net;
+		}
+
 		++vnet;
 	}
 
@@ -1099,6 +1277,7 @@ void schedule_virtual_nets_3(vector<vector<new_virtual_net_t>> &all_virtual_nets
 	printf("coloring time %g\n", duration_cast<nanoseconds>(coloring_time).count() / 1e9);
 	
 	phase_nets.resize(num_colors);
+
 	for (const auto &ptr : all_virtual_nets_ptr) {
 		phase_nets[get(color, ptr->v)].push_back(ptr);
 	}
@@ -2128,13 +2307,47 @@ public:
 	}
 };
 
+class SpinningBarrier {
+	private:
+		int _count;
+		std::atomic<int> _bar; // Counter of threads, faced barrier.
+		std::atomic<int> _passed; // Number of barriers, passed by all threads.
+
+	public:
+		SpinningBarrier(int count)
+			: _count(count), _bar(0), _passed(0)
+		{
+		}
+
+		void wait()
+		{
+			int passed_old = _passed.load(std::memory_order_relaxed);
+
+			if(_bar.fetch_add(1) == (_count - 1))
+			{
+				// The last thread, faced barrier.
+				_bar = 0;
+				// Synchronize and store in one operation.
+				_passed.store(passed_old + 1, std::memory_order_release);
+			}
+			else
+			{
+				// Not the last thread. Wait others.
+				while(_passed.load(std::memory_order_relaxed) == passed_old) {};
+				// Need to synchronize cache with other threads, passed barrier.
+				std::atomic_thread_fence(std::memory_order_acquire);
+			}
+		}
+};
+
 typedef struct worker_sync_t {
 	alignas(64) tbb::atomic<int> stop_routing;
 	alignas(64) tbb::atomic<int> net_index;
 #ifdef PTHREAD_BARRIER
 	alignas(64) pthread_barrier_t barrier;
-#else
-	alignas(64) boost::barrier *barrier;
+#else i
+	//alignas(64) boost::barrier *barrier;
+	alignas(64) SpinningBarrier *barrier;
 #endif
 } worker_sync_t;
 
@@ -2212,8 +2425,8 @@ void do_virtual_work(router_t<new_virtual_net_t *> *router, DeltaSteppingRouter 
 
 	net_router.reset_stats();
 
-	vector<timer::duration> phase_time(router->nets.size());
-	vector<timer::duration> pure_phase_time(router->nets.size());
+	vector<timer::duration> phase_time(router->nets.size(), timer::duration::max());
+	vector<timer::duration> pure_phase_time(router->nets.size(), timer::duration::max());
 	vector<timer::duration> net_route_time(router->num_virtual_nets, timer::duration::max());
 	vector<int> routed_vnets;
 
@@ -2475,9 +2688,14 @@ bool partitioning_delta_stepping_deterministic_route_virtual(t_router_opts *opts
 	//boost::copy(nets_copy, std::back_inserter(only));
 
 	vector<vector<new_virtual_net_t>> all_virtual_nets;
-	int num_virtual_nets = create_virtual_nets(nets, opts->num_threads, all_virtual_nets);
+	int num_virtual_nets = create_virtual_nets(nets, opts->num_threads, opts->bb_area_threshold_scale, all_virtual_nets);
 	//best_case(nets, router.nets);
-	schedule_virtual_nets_3(all_virtual_nets, router.nets);
+	vector<vector<int>> overlap;
+	vector<new_virtual_net_t *> all_virtual_nets_ptr;
+	vector<vertex_descriptor> order;
+
+	build_and_order(all_virtual_nets, overlap, all_virtual_nets_ptr, order);
+	schedule_virtual_nets_3(overlap, all_virtual_nets_ptr, order, opts->num_threads, nullptr, router.nets);
 	//test_misr(nets);
 	//write_nets(nets);
 	router.num_virtual_nets = num_virtual_nets;
@@ -2532,7 +2750,8 @@ bool partitioning_delta_stepping_deterministic_route_virtual(t_router_opts *opts
 #ifdef PTHREAD_BARRIER
 	assert(pthread_barrier_init(&router.sync.barrier, nullptr, opts->num_threads) == 0);
 #else
-	router.sync.barrier = new boost::barrier(opts->num_threads);
+	//router.sync.barrier = new boost::barrier(opts->num_threads);
+	router.sync.barrier = new SpinningBarrier(opts->num_threads);
 #endif
 	router.sync.stop_routing = 0;
 
@@ -2578,6 +2797,13 @@ bool partitioning_delta_stepping_deterministic_route_virtual(t_router_opts *opts
 
 	bool routed = false;
 	for (; router.iter < opts->max_router_iterations && !routed; ++router.iter) {
+		if (router.iter == 1) {
+			for (auto &p : router.nets) {
+				p.clear();
+			}
+			schedule_virtual_nets_3(overlap, all_virtual_nets_ptr, order, opts->num_threads, &router.net_route_time, router.nets);
+		}
+
 		printf("Routing iteration: %d\n", router.iter);
 
 		do_virtual_work(&router, *net_router);
@@ -2795,7 +3021,8 @@ bool partitioning_delta_stepping_deterministic_route(t_router_opts *opts)
 #ifdef PTHREAD_BARRIER
 	assert(pthread_barrier_init(&router.sync.barrier, nullptr, opts->num_threads) == 0);
 #else
-	router.sync.barrier = new boost::barrier(opts->num_threads);
+	//router.sync.barrier = new boost::barrier(opts->num_threads);
+	router.sync.barrier = new SpinningBarrier(opts->num_threads);
 #endif
 	router.sync.stop_routing = 0;
 

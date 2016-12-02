@@ -487,6 +487,8 @@ ProcessOption(INP char **Args, INOUTP t_options * Options) {
 		return ReadInt(Args, &Options->progress_freq);
 	case OT_LOG_DIR:
 		return ReadString(Args, &Options->log_dir);
+	case OT_BB_AREA_THRESHOLD_SCALE:
+		return ReadFloat(Args, &Options->bb_area_threshold_scale);
 			
 		/* Routing options valid only for timing-driven routing */
 	case OT_ASTAR_FAC:

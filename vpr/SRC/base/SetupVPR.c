@@ -536,6 +536,11 @@ static void SetupRouterOpts(INP t_options Options, INP boolean TimingEnabled,
 	if (Options.Count[OT_LOG_DIR]) {
 		RouterOpts->log_dir = Options.log_dir;
 	}
+
+	RouterOpts->bb_area_threshold_scale = 2;
+	if (Options.Count[OT_BB_AREA_THRESHOLD_SCALE]) {
+		RouterOpts->bb_area_threshold_scale = Options.bb_area_threshold_scale;
+	}
 }
 
 static void SetupAnnealSched(INP t_options Options,

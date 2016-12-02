@@ -94,6 +94,7 @@ struct s_options {
     boolean sync_only_once;
     int progress_freq;
     char *log_dir;
+    float bb_area_threshold_scale;
 
 	/* Timing-driven router options only */
 	float astar_fac;

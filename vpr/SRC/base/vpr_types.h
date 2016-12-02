@@ -751,6 +751,7 @@ struct s_router_opts {
 	boolean sync_only_once;
 	int progress_freq;
 	char *log_dir;
+	float bb_area_threshold_scale;
 };
 
 /* All the parameters controlling the router's operation are in this        *
