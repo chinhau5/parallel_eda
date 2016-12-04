@@ -358,9 +358,9 @@ int main(int argc, char **argv) {
 #if defined(__linux__) 
 	cpu_set_t cpuset;
 	CPU_ZERO(&cpuset);
-	CPU_SET(0, &cpuset);
+	CPU_SET(4, &cpuset);
 
-	/*assert(pthread_setaffinity_np(pthread_self(), sizeof(cpu_set_t), &cpuset) == 0);*/
+	assert(pthread_setaffinity_np(pthread_self(), sizeof(cpu_set_t), &cpuset) == 0);
 #endif
 
 #ifdef VPR_MPI
