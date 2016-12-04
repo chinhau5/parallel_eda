@@ -54,10 +54,10 @@ typedef struct rr_node_property_t {
 
 typedef struct rr_edge_property_t {
 	int id;
-	int index;
-	bool buffered;
-	float switch_delay;
-	float R;
+	int switch_index;
+	//bool buffered;
+	//float switch_delay;
+	//float R;
 } rr_edge_property_t;
 
 typedef cache_graph_t<rr_node_property_t, rr_edge_property_t> RRGraph;

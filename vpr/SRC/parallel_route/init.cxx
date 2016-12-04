@@ -70,10 +70,12 @@ void init_graph(RRGraph &g, vector<vector<RRNode>> &sink_in_nodes, vector<vector
 			int si = rr_node[i].switches[j];
 
 			auto &e_p = get_edge_props(g, e);
-			
-			e_p.buffered = switch_inf[si].buffered; 
-			e_p.switch_delay = switch_inf[si].Tdel; 
-			e_p.R = switch_inf[si].R; 
+
+			e_p.id = j;
+			e_p.switch_index = si;
+			//e_p.buffered = switch_inf[si].buffered; 
+			//e_p.switch_delay = switch_inf[si].Tdel; 
+			//e_p.R = switch_inf[si].R; 
 		}
 	}
 	zlog_info(delta_log, "RR graph num vertices: %d\n", num_vertices(g));
@@ -121,10 +123,10 @@ void init_graph(RRGraph &g)
 			auto &e_p = get_edge_props(g, e);
 			
 			e_p.id = j;
-			e_p.index = si;
-			e_p.buffered = switch_inf[si].buffered; 
-			e_p.switch_delay = switch_inf[si].Tdel; 
-			e_p.R = switch_inf[si].R; 
+			e_p.switch_index = si;
+			//e_p.buffered = switch_inf[si].buffered; 
+			//e_p.switch_delay = switch_inf[si].Tdel; 
+			//e_p.R = switch_inf[si].R; 
 		}
 	}
 	zlog_info(delta_log, "RR graph num vertices: %d\n", num_vertices(g));

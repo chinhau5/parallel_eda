@@ -328,15 +328,18 @@ void check_route_tree(const route_tree_t &rt, const net_t &net, RRGraph &g)
 
 float get_delay(const rr_edge_property_t &e, const rr_node_property_t &v, float unbuffered_upstream_R)
 {
-	float upstream_R = e.R;
+	extern struct s_switch_inf *switch_inf;
+	const struct s_switch_inf *sw = &switch_inf[e.switch_index];
 
-	if (!e.buffered) {
+	float upstream_R = sw->R;
+
+	if (!sw->buffered) {
 		upstream_R += unbuffered_upstream_R;
 	}
 
-	/*zlog_level(delta_log, ROUTER_V3, " [edge_delay: %g edge_R: %g node_R: %g node_C: %g] ", e.switch_delay, e.R, v.R, v.C);*/
+	/*zlog_level(delta_log, ROUTER_V3, " [edge_delay: %g edge_R: %g node_R: %g node_C: %g] ", sw->Tdel, sw->R, v.R, v.C);*/
 
-	return e.switch_delay + v.C * (upstream_R + 0.5 * v.R);
+	return sw->Tdel + v.C * (upstream_R + 0.5 * v.R);
 }
 
 float get_congestion_cost_mpi_recv(RRNode rr_node, const RRGraph &g, congestion_t *congestion, MPI_Comm comm, int this_pid, int num_procs, float pres_fac)
@@ -711,11 +714,14 @@ void expand_neighbors_one_pass(const RRGraph &g, RRNode current, const route_sta
 
 		const auto &e_p = get_edge_props(g, e);
 
+		extern struct s_switch_inf *switch_inf;
+		const struct s_switch_inf *sw = &switch_inf[e_p.switch_index];
+
 		const route_state_t *current_state = &state[current];
 
 		float unbuffered_upstream_R = current_state->upstream_R;
-		float upstream_R = e_p.R + neighbor_p.R;
-		if (!e_p.buffered) {
+		float upstream_R = sw->R + neighbor_p.R;
+		if (!sw->buffered) {
 			upstream_R += unbuffered_upstream_R;
 		}
 		item.upstream_R = upstream_R;
@@ -741,7 +747,7 @@ void expand_neighbors_one_pass(const RRGraph &g, RRNode current, const route_sta
 		zlog_level(delta_log, ROUTER_V3, " [cost: %g known_cost: %g][occ/cap: %d/%d pres: %g acc: %g][edge_delay: %g edge_R: %g node_R: %g node_C: %g] \n",
 				item.cost, item.known_cost, 
 				congestion[item.rr_node].occ, neighbor_p.capacity, congestion[item.rr_node].pres_cost, congestion[item.rr_node].acc_cost,
-				e_p.switch_delay, e_p.R, neighbor_p.R, neighbor_p.C);
+				sw->Tdel, sw->R, neighbor_p.R, neighbor_p.C);
 	}
 }
 
@@ -771,11 +777,14 @@ void expand_neighbors_lockless(const RRGraph &g, RRNode current, const route_sta
 
 		const auto &e_p = get_edge_props(g, e);
 
+		extern struct s_switch_inf *switch_inf;
+		const struct s_switch_inf *sw = &switch_inf[e_p.switch_index];
+
 		const route_state_t *current_state = &state[current];
 
 		float unbuffered_upstream_R = current_state->upstream_R;
-		float upstream_R = e_p.R + neighbor_p.R;
-		if (!e_p.buffered) {
+		float upstream_R = sw->R + neighbor_p.R;
+		if (!sw->buffered) {
 			upstream_R += unbuffered_upstream_R;
 		}
 		item.upstream_R = upstream_R;
@@ -801,7 +810,7 @@ void expand_neighbors_lockless(const RRGraph &g, RRNode current, const route_sta
 		zlog_level(delta_log, ROUTER_V3, " [cost: %g known_cost: %g][occ/cap: %d/%d pres: %g acc: %g][edge_delay: %g edge_R: %g node_R: %g node_C: %g] \n",
 				item.cost, item.known_cost, 
 				congestion[item.rr_node].occ, neighbor_p.capacity, congestion[item.rr_node].pres_cost, congestion[item.rr_node].acc_cost,
-				e_p.switch_delay, e_p.R, neighbor_p.R, neighbor_p.C);
+				sw->Tdel, sw->R, neighbor_p.R, neighbor_p.C);
 	}
 }
 
@@ -854,9 +863,12 @@ void expand_neighbors_mpi_rma(const RRGraph &g, RRNode current, const route_stat
 
 		const auto &e_p = get_edge_props(g, e);
 
+		extern struct s_switch_inf *switch_inf;
+		const struct s_switch_inf *sw = &switch_inf[e_p.switch_index];
+
 		float unbuffered_upstream_R = current_state->upstream_R;
-		float upstream_R = e_p.R + neighbor_p.R;
-		if (!e_p.buffered) {
+		float upstream_R = sw->R + neighbor_p.R;
+		if (!sw->buffered) {
 			upstream_R += unbuffered_upstream_R;
 		}
 		item.upstream_R = upstream_R;
@@ -881,7 +893,7 @@ void expand_neighbors_mpi_rma(const RRGraph &g, RRNode current, const route_stat
 		zlog_level(delta_log, ROUTER_V3, " [cost: %g known_cost: %g][occ/cap: %d/%d pres: %g acc: %g][edge_delay: %g edge_R: %g node_R: %g node_C: %g] \n",
 				item.cost, item.known_cost, 
 				congestion[item.rr_node].occ, neighbor_p.capacity, congestion[item.rr_node].pres_cost, congestion[item.rr_node].acc_cost,
-				e_p.switch_delay, e_p.R, neighbor_p.R, neighbor_p.C);
+				sw->Tdel, sw->R, neighbor_p.R, neighbor_p.C);
 	}
 }
 
@@ -937,9 +949,12 @@ void expand_neighbors_with_high_interpartition_cost(const RRGraph &g, RRNode cur
 
 		const auto &e_p = get_edge_props(g, e);
 
+		extern struct s_switch_inf *switch_inf;
+		const struct s_switch_inf *sw = &switch_inf[e_p.switch_index];
+
 		float unbuffered_upstream_R = current_state->upstream_R;
-		float upstream_R = e_p.R + neighbor_p.R;
-		if (!e_p.buffered) {
+		float upstream_R = sw->R + neighbor_p.R;
+		if (!sw->buffered) {
 			upstream_R += unbuffered_upstream_R;
 		}
 		item.upstream_R = upstream_R;
@@ -964,7 +979,7 @@ void expand_neighbors_with_high_interpartition_cost(const RRGraph &g, RRNode cur
 		zlog_level(delta_log, ROUTER_V3, " [cost: %g known_cost: %g][occ/cap: %d/%d pres: %g acc: %g][edge_delay: %g edge_R: %g node_R: %g node_C: %g] \n",
 				item.cost, item.known_cost, 
 				congestion[item.rr_node].cong.occ, neighbor_p.capacity, congestion[item.rr_node].cong.pres_cost, congestion[item.rr_node].cong.acc_cost,
-				e_p.switch_delay, e_p.R, neighbor_p.R, neighbor_p.C);
+				sw->Tdel, sw->R, neighbor_p.R, neighbor_p.C);
 	}
 }
 
@@ -1003,9 +1018,12 @@ void expand_neighbors_with_partition_hopping(const RRGraph &g, int current, cons
 
 		const auto &e_p = get_edge_props(g, e);
 
+		extern struct s_switch_inf *switch_inf;
+		const struct s_switch_inf *sw = &switch_inf[e_p.switch_index];
+
 		float unbuffered_upstream_R = current_state->upstream_R;
-		float upstream_R = e_p.R + neighbor_p.R;
-		if (!e_p.buffered) {
+		float upstream_R = sw->R + neighbor_p.R;
+		if (!sw->buffered) {
 			upstream_R += unbuffered_upstream_R;
 		}
 		item.upstream_R = upstream_R;
@@ -1045,7 +1063,7 @@ void expand_neighbors_with_partition_hopping(const RRGraph &g, int current, cons
 		zlog_level(delta_log, ROUTER_V3, " [cost: %g known_cost: %g][occ/cap: %d/%d pres: %g acc: %g][edge_delay: %g edge_R: %g node_R: %g node_C: %g] \n",
 				item.cost, item.known_cost, 
 				congestion[item.rr_node].cong.occ, neighbor_p.capacity, congestion[item.rr_node].cong.pres_cost, congestion[item.rr_node].cong.acc_cost,
-				e_p.switch_delay, e_p.R, neighbor_p.R, neighbor_p.C);
+				sw->Tdel, sw->R, neighbor_p.R, neighbor_p.C);
 	}
 }
 

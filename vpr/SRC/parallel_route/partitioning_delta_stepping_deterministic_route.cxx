@@ -1961,16 +1961,19 @@ class DeltaSteppingRouter {
 
 				const auto &e_p = get_edge_props(_g, e);
 
-				_state[v].upstream_R = e_p.R + v_p.R;
-				if (!e_p.buffered)  {
+				extern struct s_switch_inf *switch_inf;
+				const struct s_switch_inf *sw = &switch_inf[e_p.switch_index];
+
+				_state[v].upstream_R = sw->R + v_p.R;
+				if (!sw->buffered)  {
 					_state[v].upstream_R += u_upstream_R;
 				} 
 
 				float delay;
-				if (e_p.buffered) {
-					delay = e_p.switch_delay + v_p.C * (e_p.R + 0.5f * v_p.R);
+				if (sw->buffered) {
+					delay = sw->Tdel + v_p.C * (sw->R + 0.5f * v_p.R);
 				} else {
-					delay = e_p.switch_delay + v_p.C * (u_upstream_R + e_p.R + 0.5f * v_p.R);
+					delay = sw->Tdel + v_p.C * (u_upstream_R + sw->R + 0.5f * v_p.R);
 				}
 				_state[v].delay = u_delay + delay;
 			} else {
@@ -2030,19 +2033,22 @@ class DeltaSteppingRouter {
 			const auto &v_p = get_vertex_props(_g, v);
 			const auto &e_p = get_edge_props(_g, e);
 
+			extern struct s_switch_inf *switch_inf;
+			const struct s_switch_inf *sw = &switch_inf[e_p.switch_index];
+
 			assert(_state[u].upstream_R != std::numeric_limits<float>::max());
 			float delay;
-			if (e_p.buffered) {
-				delay = e_p.switch_delay + v_p.C * (e_p.R + 0.5f * v_p.R);
+			if (sw->buffered) {
+				delay = sw->Tdel + v_p.C * (sw->R + 0.5f * v_p.R);
 			} else {
-				delay = e_p.switch_delay + v_p.C * (_state[u].upstream_R + e_p.R + 0.5f * v_p.R);
+				delay = sw->Tdel + v_p.C * (_state[u].upstream_R + sw->R + 0.5f * v_p.R);
 			}
 			extern t_rr_indexed_data *rr_indexed_data;
 			float congestion_cost = rr_indexed_data[v_p.cost_index].base_cost * _congestion[v].acc_cost * _congestion[v].pres_cost;
 			float known_cost = _current_sink->criticality_fac * delay + (1 - _current_sink->criticality_fac) * congestion_cost;
 
-			float upstream_R = e_p.R + v_p.R;
-			if (!e_p.buffered) {
+			float upstream_R = sw->R + v_p.R;
+			if (!sw->buffered) {
 				upstream_R += _state[u].upstream_R;
 			}
 			float expected_cost = get_timing_driven_expected_cost(v_p, get_vertex_props(_g, _current_sink->rr_node), _current_sink->criticality_fac, upstream_R);
@@ -2050,7 +2056,7 @@ class DeltaSteppingRouter {
 			zlog_level(delta_log, ROUTER_V3, "\t%d -> %d delay %g congestion %g crit_fac %g expected %g expected_hex %X known %g predicted %g\n", 
 					u, v, delay, congestion_cost, _current_sink->criticality_fac, expected_cost, *(unsigned int *)&expected_cost, known_cost, known_cost + _astar_fac * expected_cost);
 			zlog_level(delta_log, ROUTER_V3, "\t[u: upstream %g] [edge: d %g R %g] [v: R %g C %g]\n",
-					_state[u].upstream_R, e_p.switch_delay, e_p.R, v_p.R, v_p.C);
+					_state[u].upstream_R, sw->Tdel, sw->R, v_p.R, v_p.C);
 
 			return make_pair(known_cost, known_cost + _astar_fac * expected_cost);
 		}

@@ -37,10 +37,13 @@ void expand_neighbors_deterministic(const RRGraph &g, int current, const route_s
 
 		const auto &e_p = get_edge_props(g, e);
 
+		extern struct s_switch_inf *switch_inf;
+		const struct s_switch_inf *sw = &switch_inf[e_p.switch_index];
+
 		const route_state_t *current_state = &state[current];
 
-		float upstream_R = e_p.R + neighbor_p.R;
-		if (!e_p.buffered) {
+		float upstream_R = sw->R + neighbor_p.R;
+		if (!sw->buffered) {
 			upstream_R += current_state->upstream_R;
 		}
 		item.upstream_R = upstream_R;
@@ -62,10 +65,10 @@ void expand_neighbors_deterministic(const RRGraph &g, int current, const route_s
 		/*}*/
 		//float delay = get_delay(e_p, neighbor_p, unbuffered_upstream_R);
 		float delay;
-		if (e_p.buffered) {
-			delay = e_p.switch_delay + neighbor_p.C * (e_p.R + 0.5 * neighbor_p.R);
+		if (sw->buffered) {
+			delay = sw->Tdel + neighbor_p.C * (sw->R + 0.5 * neighbor_p.R);
 		} else {
-			delay = e_p.switch_delay + neighbor_p.C * (current_state->upstream_R + e_p.R + 0.5 * neighbor_p.R);
+			delay = sw->Tdel + neighbor_p.C * (current_state->upstream_R + sw->R + 0.5 * neighbor_p.R);
 		}
 
 		item.delay = current_state->delay + delay;
@@ -90,7 +93,7 @@ void expand_neighbors_deterministic(const RRGraph &g, int current, const route_s
 		zlog_level(delta_log, ROUTER_V3, " [cost: %g known_cost: %g][occ/cap: %d/%d pres: %g acc: %g][edge_delay: %g edge_R: %g node_R: %g node_C: %g] \n",
 				item.cost, item.known_cost, 
 				get_occ(congestion, item.rr_node), neighbor_p.capacity, get_pres_cost(congestion, item.rr_node), get_acc_cost(congestion, item.rr_node),
-				e_p.switch_delay, e_p.R, neighbor_p.R, neighbor_p.C);
+				sw->Tdel, sw->R, neighbor_p.R, neighbor_p.C);
 	}
 }
 
@@ -300,7 +303,7 @@ vector<const sink_t *> route_net_deterministic(const RRGraph &g, int vpr_id, con
 					/* linkage to vpr */
 					prevptr = new s_trace();
 					prevptr->index = parent_rr_node;
-					prevptr->iswitch = get_edge_props(g, edge).index;
+					prevptr->iswitch = get_edge_props(g, edge).switch_index;
 					prevptr->next = tptr;
 					tptr = prevptr;
 

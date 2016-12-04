@@ -627,9 +627,9 @@ void init_channel_only_graph(RRGraph &channel_g)
 
 			auto &e_p = get_edge_props(channel_g, e);
 			
-			e_p.buffered = switch_inf[si].buffered; 
-			e_p.switch_delay = switch_inf[si].Tdel; 
-			e_p.R = switch_inf[si].R; 
+			//e_p.buffered = switch_inf[si].buffered; 
+			//e_p.switch_delay = switch_inf[si].Tdel; 
+			//e_p.R = switch_inf[si].R; 
 		}
 	}
 	//printf("RR graph num vertices: %d\n", num_vertices(channel_g));
@@ -1933,9 +1933,9 @@ void init_partitioned_graph_3(int num_partitions, RRGraph &g, vector<RRGraph *> 
 			
 			auto &e_p = get_edge_props(g, e);
 			
-			e_p.buffered = switch_inf[si].buffered; 
-			e_p.switch_delay = switch_inf[si].Tdel; 
-			e_p.R = switch_inf[si].R; 
+			//e_p.buffered = switch_inf[si].buffered; 
+			//e_p.switch_delay = switch_inf[si].Tdel; 
+			//e_p.R = switch_inf[si].R; 
 
 			auto &orig_e = add_edge(orig_g, i, neighbor_id);
 			get_edge_props(orig_g, orig_e) = get_edge_props(g, e);
@@ -2038,9 +2038,9 @@ void init_partitioned_graph_2(int num_partitions, RRGraph &g, vector<RRGraph *> 
 			
 			auto &e_p = get_edge_props(g, e);
 			
-			e_p.buffered = switch_inf[si].buffered; 
-			e_p.switch_delay = switch_inf[si].Tdel; 
-			e_p.R = switch_inf[si].R; 
+			//e_p.buffered = switch_inf[si].buffered; 
+			//e_p.switch_delay = switch_inf[si].Tdel; 
+			//e_p.R = switch_inf[si].R; 
 		}
 	}
 	printf("RR graph num vertices: %d\n", num_vertices(g));

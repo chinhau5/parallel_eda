@@ -30,10 +30,13 @@ void expand_neighbors_with_fine_grain_lock(const RRGraph &g, int current, const 
 
 		const auto &e_p = get_edge_props(g, e);
 
+		extern struct s_switch_inf *switch_inf;
+		const struct s_switch_inf *sw = &switch_inf[e_p.switch_index];
+
 		const route_state_t *current_state = &state[current];
 
-		float upstream_R = e_p.R + neighbor_p.R;
-		if (!e_p.buffered) {
+		float upstream_R = sw->R + neighbor_p.R;
+		if (!sw->buffered) {
 			upstream_R += current_state->upstream_R;
 		}
 		item.upstream_R = upstream_R;
@@ -55,10 +58,10 @@ void expand_neighbors_with_fine_grain_lock(const RRGraph &g, int current, const 
 		/*}*/
 		//float delay = get_delay(e_p, neighbor_p, unbuffered_upstream_R);
 		float delay;
-		if (e_p.buffered) {
-			delay = e_p.switch_delay + neighbor_p.C * (e_p.R + 0.5 * neighbor_p.R);
+		if (sw->buffered) {
+			delay = sw->Tdel + neighbor_p.C * (sw->R + 0.5 * neighbor_p.R);
 		} else {
-			delay = e_p.switch_delay + neighbor_p.C * (current_state->upstream_R + e_p.R + 0.5 * neighbor_p.R);
+			delay = sw->Tdel + neighbor_p.C * (current_state->upstream_R + sw->R + 0.5 * neighbor_p.R);
 		}
 
 		item.delay = current_state->delay + delay;
@@ -82,7 +85,7 @@ void expand_neighbors_with_fine_grain_lock(const RRGraph &g, int current, const 
 		zlog_level(delta_log, ROUTER_V3, " [cost: %g known_cost: %g][occ/cap: %d/%d pres: %g acc: %g][edge_delay: %g edge_R: %g node_R: %g node_C: %g] \n",
 				item.cost, item.known_cost, 
 				congestion[item.rr_node].cong.occ, neighbor_p.capacity, congestion[item.rr_node].cong.pres_cost, congestion[item.rr_node].cong.acc_cost,
-				e_p.switch_delay, e_p.R, neighbor_p.R, neighbor_p.C);
+				sw->Tdel, sw->R, neighbor_p.R, neighbor_p.C);
 	}
 }
 
