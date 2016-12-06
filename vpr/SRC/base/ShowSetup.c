@@ -181,16 +181,18 @@ static void ShowRouterOpts(INP struct s_router_opts RouterOpts) {
 		case NO_TIMING:
 			vpr_printf(TIO_MESSAGE_INFO, "NO_TIMING\n");
 			break;
-			case BARRIER:
-				vpr_printf(TIO_MESSAGE_INFO, "BARRIER\n");
-				break;
-			case FINE_GRAINED:
-				vpr_printf(TIO_MESSAGE_INFO, "FINE_GRAINED\n");
-				break;
-			case HYBRID:
-				vpr_printf(TIO_MESSAGE_INFO, "HYBRID\n");
-				break;
-				
+		case BARRIER:
+			vpr_printf(TIO_MESSAGE_INFO, "BARRIER\n");
+			break;
+		case FINE_GRAINED:
+			vpr_printf(TIO_MESSAGE_INFO, "FINE_GRAINED\n");
+			break;
+		case HYBRID:
+			vpr_printf(TIO_MESSAGE_INFO, "HYBRID\n");
+			break;
+		case PARTITIONING:
+			vpr_printf(TIO_MESSAGE_INFO, "PARTITIONING\n");
+			break;
 		default:
 			vpr_printf(TIO_MESSAGE_INFO, "<Unknown>\n");
 			exit(1);

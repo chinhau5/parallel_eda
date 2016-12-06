@@ -880,6 +880,9 @@ ReadRouterAlgorithm(INP char **Args, OUTP enum e_router_algorithm *Algo) {
 	case OT_HYBRID:
 		*Algo = HYBRID;
 		break;
+	case OT_PARTITIONING:
+		*Algo = PARTITIONING;
+		break;
 	default:
 		Error(*PrevArgs);
 	}

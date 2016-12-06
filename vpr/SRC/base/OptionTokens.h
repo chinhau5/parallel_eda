@@ -117,6 +117,7 @@ enum e_OptionArgToken {
 	OT_BARRIER,
 	OT_FINE_GRAINED,
 	OT_HYBRID,
+	OT_PARTITIONING,
 	OT_SCH_IND,
 	OT_SCH_FAST,
 	OT_ARG_UNKNOWN /* Must be last since used for counting enum items */

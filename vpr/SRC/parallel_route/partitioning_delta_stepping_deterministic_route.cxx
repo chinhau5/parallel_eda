@@ -3216,7 +3216,7 @@ bool partitioning_delta_stepping_deterministic_route_virtual(t_router_opts *opts
 		for (int i = 0; i < router.nets.size(); ++i) {
 			for (int j = 0; j < router.nets[i].size(); ++j) {
 				const auto *vnet = router.nets[i][j];
-				fprintf(nrt, "%d %d %g %d %d %g\n", i, router.net_router[vnet->global_index], duration_cast<nanoseconds>(router.net_route_time[vnet->global_index]).count()/1e9, vnet->index, vnet->sinks.size(), bg::area(vnet->bounding_box));
+				fprintf(nrt, "%d %d %d %g %d %d %d %g\n", i, router.nets[i].size(), router.net_router[vnet->global_index], duration_cast<nanoseconds>(router.net_route_time[vnet->global_index]).count()/1e9, vnet->index, vnet->net->sinks.size(), vnet->sinks.size(), bg::area(vnet->bounding_box));
 			}
 		}
 
