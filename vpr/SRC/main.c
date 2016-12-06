@@ -18,6 +18,7 @@
 /*#include <glog/logging.h>*/
 #include <zlog.h>
 #include <chrono>
+#include <fstream>
 #include <mpi.h>
 /*#include <mcheck.h>*/
 /*#include "tbb/task_scheduler_init.h"*/
@@ -283,6 +284,29 @@ void print_context(int pid, int rank)
 #endif
 }
 
+void get_mem_usage(unsigned long &vm, unsigned long &rss)
+{
+#ifdef __linux__
+	using std::ifstream;
+
+	// 'file' stat seems to give the most reliable results
+	//
+	ifstream stat_stream("/proc/self/statm");
+
+	stat_stream >> vm >> rss; // don't care about the rest
+
+	stat_stream.close();
+
+	unsigned long page_size_kb = sysconf(_SC_PAGE_SIZE) / 1024; // in case x86-64 is configured to use 2MB pages*/
+
+	vm *= page_size_kb;
+	rss *= page_size_kb;
+
+	/*vm_usage     = vsize / 1024.0;*/
+	/*resident_set = rss * page_size_kb;*/
+#endif
+}
+
 int main(int argc, char **argv) {
 	t_options Options;
 	t_arch Arch;
@@ -355,7 +379,7 @@ int main(int argc, char **argv) {
 	}
 #endif
 
-#if defined(__linux__) 
+#if defined(__linux__) && !defined(VPR_MPI)
 	cpu_set_t cpuset;
 	CPU_ZERO(&cpuset);
 	CPU_SET(4, &cpuset);
@@ -415,7 +439,15 @@ int main(int argc, char **argv) {
 	/*LOG(INFO) << "test";*/
 
 	/* Read options, architecture, and circuit netlist */
+	unsigned long old_vm, old_rss;
+	get_mem_usage(old_vm, old_rss);
+	printf("before vpr_init, vm %lu rss %lu\n", old_vm, old_rss);
+
 	vpr_init(argc, argv, &Options, &vpr_setup, &Arch);
+
+	unsigned long new_vm, new_rss;
+	get_mem_usage(new_vm, new_rss);
+	printf("after vpr_init, vm %lu rss %lu\n", new_vm, new_rss);
 
 	if (setvbuf(stdout, NULL, _IONBF, 0)) {
 		exit(-1);
@@ -428,6 +460,10 @@ int main(int argc, char **argv) {
 
 	if (vpr_setup.PlacerOpts.doPlacement || vpr_setup.RouterOpts.doRouting) {
 		vpr_init_pre_place_and_route(vpr_setup, Arch);
+
+		get_mem_usage(new_vm, new_rss);
+		printf("after vpr init pre place and route, vm %lu rss %lu\n", new_vm, new_rss);
+
 		vpr_place_and_route(vpr_setup, Arch);
 #if 0
 		if(vpr_setup.RouterOpts.doRouting) {

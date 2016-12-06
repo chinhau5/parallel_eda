@@ -13,10 +13,10 @@ bool bucket_remove(Buckets &buckets, float delta, vector<bool> &in_bucket, const
 
 int bucket_get_non_empty(const Buckets &buckets);
 
-template<typename EdgeProperties, typename Callbacks>
+template<typename Edge, typename Callbacks>
 void relax(Buckets &buckets, float delta, vector<bool> &in_bucket, const vector<bool> &vertex_deleted,
-		float *known_distance, float *distance, cache_edge_t<EdgeProperties> *prev_edge,
-		int v, float new_known_distance, float new_distance, const cache_edge_t<EdgeProperties> &edge,
+		float *known_distance, float *distance, Edge *prev_edge,
+		int v, float new_known_distance, float new_distance, const Edge &edge,
 		Callbacks &callbacks)
 {
 	if (new_known_distance < known_distance[v] && new_distance < distance[v]) {
@@ -33,22 +33,22 @@ void relax(Buckets &buckets, float delta, vector<bool> &in_bucket, const vector<
 	}
 }
 
-template<typename EdgeProperties, typename EdgeWeightFunc>
-bool is_light_edge(const cache_edge_t<EdgeProperties> &e, const EdgeWeightFunc &edge_weight, float delta)
+template<typename Edge, typename EdgeWeightFunc>
+bool is_light_edge(const Edge &e, const EdgeWeightFunc &edge_weight, float delta)
 {
 	return edge_weight(e).second <= delta;
 }
 
-template<typename EdgeProperties>
+template<typename Edge>
 struct existing_source_t {
 	int node;
 	float known_distance;
 	float distance;
-	cache_edge_t<EdgeProperties> prev_edge;
+	Edge prev_edge;
 };
 
-template<typename VertexProperties, typename EdgeProperties, typename EdgeWeightFunc, typename Callbacks>
-void delta_stepping(cache_graph_t<VertexProperties, EdgeProperties> &g, const vector<existing_source_t<EdgeProperties>> &sources, int sink, float delta, float *known_distance, float *distance, cache_edge_t<EdgeProperties> *prev_edge, const EdgeWeightFunc &edge_weight, Callbacks &callbacks)
+template<typename Graph, typename Edge, typename EdgeWeightFunc, typename Callbacks>
+void delta_stepping(const Graph &g, const vector<existing_source_t<Edge>> &sources, int sink, float delta, float *known_distance, float *distance, Edge *prev_edge, const EdgeWeightFunc &edge_weight, Callbacks &callbacks)
 {
 	Buckets buckets;
 	vector<bool> in_bucket(num_vertices(g), false);

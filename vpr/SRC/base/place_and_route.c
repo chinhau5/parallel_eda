@@ -46,6 +46,8 @@ void free_pb_data(t_pb *pb);
 
 /************************* Subroutine Definitions ****************************/
 
+void get_mem_usage(unsigned long &vm, unsigned long &rss);
+
 void place_and_route_new(enum e_operation operation,
 		struct s_placer_opts placer_opts, char *place_file, char *net_file,
 		char *arch_file, char *route_file,
@@ -109,6 +111,10 @@ void place_and_route_new(enum e_operation operation,
 
 	fflush(stdout);
 
+	unsigned long old_vm, old_rss;
+	get_mem_usage(old_vm, old_rss);
+	printf("after read_place, vm %lu rss %lu\n", old_vm, old_rss);
+
 	if (!router_opts.doRouting)
 		return;
 
@@ -141,6 +147,9 @@ void place_and_route_new(enum e_operation operation,
 		}
 
 		t_net_timing *net_timing = alloc_net_timing(clb_net, num_nets);
+
+		get_mem_usage(old_vm, old_rss);
+		printf("after timing graph and net timing, vm %lu rss %lu\n", old_vm, old_rss);
 
 		success = try_route_new(width_fac, router_opts, det_routing_arch,
 				segment_inf, timing_inf, net_timing, chan_width_dist,

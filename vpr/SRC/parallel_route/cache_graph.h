@@ -12,7 +12,7 @@ template<typename Properties>
 struct cache_edge_t {
 	int a;
 	int b;
-	unsigned long properties;	
+	int properties;	
 
 	bool operator==(const cache_edge_t &other) const
 	{
@@ -70,7 +70,7 @@ struct cache_graph_t {
 
 	static cache_edge_t<EdgeProperties> null_edge()
 	{
-		return { -1, -1, std::numeric_limits<unsigned long>::max() };
+		return { -1, -1, -1 };
 	}
 
 	class const_edge_iterator : public boost::iterator_facade<const_edge_iterator, const cache_edge_t<EdgeProperties>, boost::forward_traversal_tag> {
@@ -473,7 +473,7 @@ const cache_edge_t<EdgeProperties> &add_edge(cache_graph_t<VertexProperties, Edg
 	assert(find_if(begin(v_a.edges), end(v_a.edges), [&g, b] (const cache_edge_t<EdgeProperties> &e) -> bool { return e.b == b; }) == end(v_a.edges));
 
 	v_a.edge_props.emplace_back();
-	v_a.edges.emplace_back(cache_edge_t<EdgeProperties>{ a, b, v_a.edge_props.size()-1 });
+	v_a.edges.emplace_back(cache_edge_t<EdgeProperties>{ a, b, (int)(v_a.edge_props.size()-1) });
 
 	return v_a.edges.back();
 }

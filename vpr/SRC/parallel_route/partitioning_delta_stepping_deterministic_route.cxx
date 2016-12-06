@@ -1804,16 +1804,16 @@ void test_misr(const vector<net_t> &nets)
 	printf("max_con: %d ave_con: %g\n", max_con, nets.size()*1.0/subiter);
 }
 
-template<typename EdgeProperties>
-bool operator<(const existing_source_t<EdgeProperties> &a, const existing_source_t<EdgeProperties> &b)
+template<typename Edge>
+bool operator<(const existing_source_t<Edge> &a, const existing_source_t<Edge> &b)
 {
 	return a.distance > b.distance;
 }
 
-template<typename VertexProperties, typename EdgeProperties, typename EdgeWeightFunc, typename Callbacks>
-void dijkstra(cache_graph_t<VertexProperties, EdgeProperties> &g, const vector<existing_source_t<EdgeProperties>> &sources, int sink, float *known_distance, float *distance, cache_edge_t<EdgeProperties> *prev_edge, const EdgeWeightFunc &edge_weight, Callbacks &callbacks)
+template<typename Graph, typename Edge, typename EdgeWeightFunc, typename Callbacks>
+void dijkstra(const Graph &g, const vector<existing_source_t<Edge>> &sources, int sink, float *known_distance, float *distance, Edge *prev_edge, const EdgeWeightFunc &edge_weight, Callbacks &callbacks)
 {
-	using Item = existing_source_t<EdgeProperties>;
+	using Item = existing_source_t<Edge>;
 	std::priority_queue<Item> heap;
 
 	for (const auto &s : sources) {
@@ -2159,16 +2159,16 @@ class DeltaSteppingRouter {
 			}
 		}
 
-		template<typename VertexProperties, typename EdgeProperties, typename EdgeWeightFunc, typename Callbacks>
-		friend void delta_stepping(cache_graph_t<VertexProperties, EdgeProperties> &g, const vector<existing_source_t<EdgeProperties>> &sources, int sink, float delta, float *known_distance, float *distance, cache_edge_t<EdgeProperties> *prev_edge, const EdgeWeightFunc &edge_weight, Callbacks &callbacks);
+		template<typename Graph, typename Edge, typename EdgeWeightFunc, typename Callbacks>
+		friend void delta_stepping(const Graph &g, const vector<existing_source_t<Edge>> &sources, int sink, float delta, float *known_distance, float *distance, Edge *prev_edge, const EdgeWeightFunc &edge_weight, Callbacks &callbacks);
 
-		template<typename VertexProperties, typename EdgeProperties, typename EdgeWeightFunc, typename Callbacks>
-		friend void dijkstra(cache_graph_t<VertexProperties, EdgeProperties> &g, const vector<existing_source_t<EdgeProperties>> &sources, int sink, float *known_distance, float *distance, cache_edge_t<EdgeProperties> *prev_edge, const EdgeWeightFunc &edge_weight, Callbacks &callbacks);
+		template<typename Graph, typename Edge, typename EdgeWeightFunc, typename Callbacks>
+		friend void dijkstra(const Graph &g, const vector<existing_source_t<Edge>> &sources, int sink, float *known_distance, float *distance, Edge *prev_edge, const EdgeWeightFunc &edge_weight, Callbacks &callbacks);
 
-		template<typename EdgeProperties, typename Callbacks>
+		template<typename Edge, typename Callbacks>
 		friend void relax(Buckets &buckets, float delta, vector<bool> &in_bucket, const vector<bool> &vertex_deleted,
-					float *known_distance, float *distance, cache_edge_t<EdgeProperties> *predecessor,
-					int v, float new_known_distance, float new_distance, const cache_edge_t<EdgeProperties> &edge,
+					float *known_distance, float *distance, Edge *predecessor,
+					int v, float new_known_distance, float new_distance, const Edge &edge,
 					Callbacks &callbacks);
 
 	public:
@@ -2248,7 +2248,7 @@ class DeltaSteppingRouter {
 				sprintf_rr_node(sink->rr_node, buffer);
 				zlog_level(delta_log, ROUTER_V3, "Current sink: %s\n", buffer);
 
-				vector<existing_source_t<rr_edge_property_t>> sources;
+				vector<existing_source_t<RREdge>> sources;
 
 				for (const auto &rt_node : route_tree_get_nodes(rt)) {
 					const auto &rt_node_p = get_vertex_props(rt.graph, rt_node);

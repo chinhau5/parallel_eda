@@ -934,8 +934,8 @@ typedef struct s_rr_node {
 		switches = NULL;
 		num_edges = 0;
 		fan_in = 0;
-		num_reservation = 0;
-		occ_by_thread = NULL;
+		//num_reservation = 0;
+		//occ_by_thread = NULL;
 		//num_wire_drivers = 0;
 		//num_opin_drivers = 0;
 	}
@@ -947,16 +947,16 @@ typedef struct s_rr_node {
 	short ptc_num;
 
 	short cost_index;
-	short capacity;
 	short occ;
-	std::set<int> occupant_net_id;
-	std::set<std::pair<int, int>> driver_nets;
-	int **occ_by_thread;
-	int num_reservation;
-	float weighted_pres_cost;
-	float pres_cost;
-	float acc_cost;
-	pthread_mutex_t lock; /* protects occ pres_cost and acc_cost */
+	short capacity;
+	//std::set<int> occupant_net_id;
+	//std::set<std::pair<int, int>> driver_nets;
+	//int **occ_by_thread;
+	//int num_reservation;
+	//float weighted_pres_cost;
+	//float pres_cost;
+	//float acc_cost;
+	//pthread_mutex_t lock; [> protects occ pres_cost and acc_cost <]
 	short fan_in;
 	short num_edges;
 	t_rr_type type;
@@ -981,7 +981,7 @@ typedef struct s_rr_node {
 
 	int z; /* For IPIN, source, and sink nodes, helps identify which location this rr_node belongs to */
 
-	std::set<int> reachable_nodes;
+	//std::set<int> reachable_nodes;
 
 } t_rr_node;
 /* Main structure describing one routing resource node.  Everything in       *

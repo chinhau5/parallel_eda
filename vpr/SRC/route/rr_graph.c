@@ -251,9 +251,9 @@ void test_dfs()
 
 	for (int i = 0; i < num_rr_nodes; ++i) {
 		dzlog_debug("Node %d can reach\n", i);
-		for (const auto &n : rr_node[i].reachable_nodes) {
-			dzlog_debug("%d ", n);	
-		}
+		/*for (const auto &n : rr_node[i].reachable_nodes) {*/
+			/*dzlog_debug("%d ", n);	*/
+		/*}*/
 		dzlog_debug("\n");	
 	}
 }
@@ -293,7 +293,7 @@ void postorder_dfs(int inode, NodeColor *node_color)
 		for (int iedge = 0; iedge < current->num_edges; ++iedge) {
 			int child_inode = current->edges[iedge];
 
-			current->reachable_nodes.insert(child_inode);
+			/*current->reachable_nodes.insert(child_inode);*/
 
 			dzlog_debug("Child: %d color: %d ", child_inode, node_color[child_inode]);
 
@@ -325,8 +325,8 @@ void postorder_dfs(int inode, NodeColor *node_color)
 					/*dzlog_debug("%d\n", n);*/
 				/*}*/
 
-				current->reachable_nodes.insert(
-						child->reachable_nodes.begin(), child->reachable_nodes.end());
+				/*current->reachable_nodes.insert(*/
+						/*child->reachable_nodes.begin(), child->reachable_nodes.end());*/
 			}
 			node_color[item.inode] = NodeColor::BLACK;
 			s.pop_back();
@@ -349,12 +349,12 @@ void explore_nodes(int inode, bool *visited, int &visit_count, int level)
 		}
 
 		for (int iedge = 0; iedge < rr_node[inode].num_edges; ++iedge) {
-			rr_node[inode].reachable_nodes.insert(rr_node[inode].edges[iedge]);
+			/*rr_node[inode].reachable_nodes.insert(rr_node[inode].edges[iedge]);*/
 		}
 		for (int iedge = 0; iedge < rr_node[inode].num_edges; ++iedge) {
 			t_rr_node *neighbor = &rr_node[rr_node[inode].edges[iedge]];
-			rr_node[inode].reachable_nodes.insert(
-					neighbor->reachable_nodes.begin(), neighbor->reachable_nodes.end());
+			/*rr_node[inode].reachable_nodes.insert(*/
+					/*neighbor->reachable_nodes.begin(), neighbor->reachable_nodes.end());*/
 		}
 	}
 }
@@ -524,9 +524,9 @@ void build_rr_graph(INP t_graph_type graph_type, INP int L_num_types,
 	L_rr_edge_done = (boolean *) my_malloc(sizeof(boolean) * num_rr_nodes);
 	memset(L_rr_edge_done, 0, sizeof(boolean) * num_rr_nodes);
 
-	for (int i = 0; i < num_rr_nodes; ++i) {
-		assert(!pthread_mutex_init(&rr_node[i].lock, NULL));
-	}
+	/*for (int i = 0; i < num_rr_nodes; ++i) {*/
+		/*assert(!pthread_mutex_init(&rr_node[i].lock, NULL));*/
+	/*}*/
 
 	/* These are data structures used by the the unidir opin mapping. */
 	if (UNI_DIRECTIONAL == directionality) {
@@ -603,10 +603,10 @@ void build_rr_graph(INP t_graph_type graph_type, INP int L_num_types,
 			delayless_switch, directionality, wire_to_ipin_switch, &Fc_clipped, directs, num_directs, clb_to_clb_directs);
 
 
-	for (i = 0; i < num_rr_nodes; i++) {
-		rr_node[i].acc_cost = 1;
-		rr_node[i].pres_cost = 1;
-	}
+	/*for (i = 0; i < num_rr_nodes; i++) {*/
+		/*rr_node[i].acc_cost = 1;*/
+		/*rr_node[i].pres_cost = 1;*/
+	/*}*/
 
 #ifdef MUX_SIZE_DIST_DISPLAY
 	if (UNI_DIRECTIONAL == directionality)

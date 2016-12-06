@@ -289,6 +289,8 @@ void dump_all_net_bounding_boxes_area(const std::vector<net_t> &nets);
 
 void init_nets(std::vector<net_t> &nets, std::vector<net_t> &global_nets, int bb_factor);
 
+void get_mem_usage(unsigned long &vm, unsigned long &rss);
+
 boolean try_route_new(int width_fac, struct s_router_opts router_opts,
 		struct s_det_routing_arch det_routing_arch, t_segment_inf * segment_inf,
 		t_timing_inf timing_inf, t_net_timing *net_timing, 
@@ -361,6 +363,10 @@ boolean try_route_new(int width_fac, struct s_router_opts router_opts,
 #else
 	vpr_printf(TIO_MESSAGE_INFO, "Build rr_graph took %g seconds.\n", (float)(end - begin) / CLK_PER_SEC);
 #endif
+
+	unsigned long old_vm, old_rss;
+	get_mem_usage(old_vm, old_rss);
+	printf("after build rr graph, vm %lu rss %lu\n", old_vm, old_rss);
 
 	/* Allocate and load some additional rr_graph information needed only by *
 	 * the router.                                                           */

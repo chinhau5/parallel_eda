@@ -869,7 +869,7 @@ void encode_path(int *data, int size, int bit_width, int net_id, int first_rr_no
 
 void route_net_mpi_nonblocking_send_recv_encoded(const RRGraph &g, int vpr_id, int net_id, const source_t *source, const vector<sink_t *> &sinks, const t_router_opts *params, float pres_fac, const vector<net_t> &nets, const vector<vector<net_t *>> &partition_nets, int current_net_index, route_state_t *state, congestion_t *congestion, route_tree_t &rt, t_net_timing &net_timing, vector<vector<RRNode>> &net_route_trees, mpi_context_t *mpi, perf_t *perf, mpi_perf_t *mpi_perf, bool delayed_progress)
 {
-    using clock = std::chrono::high_resolution_clock;
+    using clock = myclock;
 
 	std::priority_queue<route_state_t> heap;
 

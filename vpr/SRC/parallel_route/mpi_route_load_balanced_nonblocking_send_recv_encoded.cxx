@@ -67,7 +67,7 @@ struct net_graph_edge_prop {
 	int weight;
 };
 
-using our_clock = std::chrono::high_resolution_clock;
+using our_clock = myclock;
 
 static void partition(vector<net_t *> &nets, const vector<our_clock::duration> *net_route_time, bool load_balanced, int num_partitions, int current_level, int initial_comm_size, vector<int> &net_partition_id, vector<vector<net_t *>> &partition_nets)
 {
@@ -748,12 +748,12 @@ bool mpi_route_load_balanced_nonblocking_send_recv_encoded(t_router_opts *opts, 
     our_clock::duration total_wait_time = our_clock::duration::zero();
     our_clock::duration total_combine_time = our_clock::duration::zero();
     our_clock::duration total_last_sync_time = our_clock::duration::zero();
-    our_clock::duration total_last_progress_time = our_clock::duration::zero();
+    //our_clock::duration total_last_progress_time = our_clock::duration::zero();
 	 //mpi 
     our_clock::duration total_sync_time = our_clock::duration::zero();
     our_clock::duration total_broadcast_time = our_clock::duration::zero();
 	int total_num_syncs_while_expanding = 0;
-    our_clock::duration total_send_testsome_time = our_clock::duration::zero();
+    //our_clock::duration total_send_testsome_time = our_clock::duration::zero();
 
 	mpi.buffer_size = 1024;
 #if 0
@@ -792,7 +792,7 @@ bool mpi_route_load_balanced_nonblocking_send_recv_encoded(t_router_opts *opts, 
         our_clock::duration wait_time = our_clock::duration::zero();
         our_clock::duration combine_time = our_clock::duration::zero();
         our_clock::duration last_sync_time = our_clock::duration::zero();
-        our_clock::duration last_progress_time = our_clock::duration::zero();
+        //our_clock::duration last_progress_time = our_clock::duration::zero();
 
         //for (int i = 0; i < opts->num_threads; ++i) {
             //sprintf(buffer, LOG_PATH_PREFIX"iter_%d_tid_%d.log", iter, i);
@@ -828,7 +828,7 @@ bool mpi_route_load_balanced_nonblocking_send_recv_encoded(t_router_opts *opts, 
 
 		mpi_perf.total_sync_time = our_clock::duration::zero();
 		mpi_perf.total_broadcast_time = our_clock::duration::zero();
-		mpi_perf.total_send_testsome_time = our_clock::duration::zero();
+		//mpi_perf.total_send_testsome_time = our_clock::duration::zero();
 		mpi_perf.num_syncs_while_expanding = 0;
 		for (int i = 0; i < mpi.comm_size; ++i) {
 			mpi.num_pending_reqs_by_time[i].clear();
@@ -1133,9 +1133,9 @@ bool mpi_route_load_balanced_nonblocking_send_recv_encoded(t_router_opts *opts, 
 		sprintf(buffer, "%s/net_route_time_iter_%d_rank_%d.txt", dirname, iter, mpi.rank);
 		FILE *net_route_time_f = fopen(buffer, "w");
 		for (const auto &net : partition_nets[mpi.rank]) {
-			float route_time = duration_cast<nanoseconds>(net_route_time[iter][net->local_id]).count() / 1e9;
+			float one_net_route_time = duration_cast<nanoseconds>(net_route_time[iter][net->local_id]).count() / 1e9;
 			float mpi_time = duration_cast<nanoseconds>(net_mpi_time[iter][net->local_id]).count() / 1e9;
-			fprintf(net_route_time_f, "%d %lu %g %g %ld %g %ld %g\n", net->local_id, net->sinks.size(), bg::area(box(point(net->bounding_box.xmin, net->bounding_box.ymin), point(net->bounding_box.xmax, net->bounding_box.ymax))), route_time, net_route_time[iter][net->local_id].count(), mpi_time, net_mpi_time[iter][net->local_id].count(), mpi_time/route_time*100);
+			fprintf(net_route_time_f, "%d %lu %g %g %ld %g %ld %g\n", net->local_id, net->sinks.size(), bg::area(box(point(net->bounding_box.xmin, net->bounding_box.ymin), point(net->bounding_box.xmax, net->bounding_box.ymax))), one_net_route_time, net_route_time[iter][net->local_id].count(), mpi_time, net_mpi_time[iter][net->local_id].count(), mpi_time/one_net_route_time*100);
 		}
 		fclose(net_route_time_f);
 
@@ -1153,8 +1153,8 @@ bool mpi_route_load_balanced_nonblocking_send_recv_encoded(t_router_opts *opts, 
 		total_sync_time += mpi_perf.total_sync_time;
 		total_broadcast_time += mpi_perf.total_broadcast_time;
 		total_num_syncs_while_expanding += mpi_perf.num_syncs_while_expanding;
-		total_send_testsome_time += mpi_perf.total_send_testsome_time;
-		total_last_progress_time += last_progress_time;
+		//total_send_testsome_time += mpi_perf.total_send_testsome_time;
+		//total_last_progress_time += last_progress_time;
 		total_last_sync_time += last_sync_time;
 		total_actual_route_time += actual_route_time;
         total_route_time += route_time;
@@ -1683,9 +1683,9 @@ bool mpi_route_load_balanced_nonblocking_send_recv_encoded(t_router_opts *opts, 
 			double d_broadcast_time = duration_cast<nanoseconds>(mpi_perf.total_broadcast_time).count() / 1e9;
 			MPI_Gather(&d_broadcast_time, 1, MPI_DOUBLE, all_broadcast_time.data(), 1, MPI_DOUBLE, 0, prev_comm);
 
-			vector<double> all_send_testsome_time(prev_comm_size);
-			double d_send_testsome_time = duration_cast<nanoseconds>(mpi_perf.total_send_testsome_time).count() / 1e9;
-			MPI_Gather(&d_send_testsome_time, 1, MPI_DOUBLE, all_send_testsome_time.data(), 1, MPI_DOUBLE, 0, prev_comm);
+			//vector<double> all_send_testsome_time(prev_comm_size);
+			//double d_send_testsome_time = duration_cast<nanoseconds>(mpi_perf.total_send_testsome_time).count() / 1e9;
+			//MPI_Gather(&d_send_testsome_time, 1, MPI_DOUBLE, all_send_testsome_time.data(), 1, MPI_DOUBLE, 0, prev_comm);
 
 		vector<double> all_last_sync_time(prev_comm_size);
 		double d_last_sync_time = duration_cast<nanoseconds>(last_sync_time).count() / 1e9;
@@ -1698,9 +1698,9 @@ bool mpi_route_load_balanced_nonblocking_send_recv_encoded(t_router_opts *opts, 
 		double d_wait_time = duration_cast<nanoseconds>(wait_time).count() / 1e9;
 		MPI_Gather(&d_wait_time, 1, MPI_DOUBLE, all_wait_time.data(), 1, MPI_DOUBLE, 0, prev_comm);
 
-		vector<double> all_last_progress_time(prev_comm_size);
-		double d_last_progress_time = duration_cast<nanoseconds>(last_progress_time).count() / 1e9;
-		MPI_Gather(&d_last_progress_time, 1, MPI_DOUBLE, all_last_progress_time.data(), 1, MPI_DOUBLE, 0, prev_comm);
+		//vector<double> all_last_progress_time(prev_comm_size);
+		//double d_last_progress_time = duration_cast<nanoseconds>(last_progress_time).count() / 1e9;
+		//MPI_Gather(&d_last_progress_time, 1, MPI_DOUBLE, all_last_progress_time.data(), 1, MPI_DOUBLE, 0, prev_comm);
 
 		if (prev_rank == 0) {
 			printf("Iteration time: %g\n", duration_cast<nanoseconds>(iter_time).count() / 1e9);
@@ -1711,11 +1711,11 @@ bool mpi_route_load_balanced_nonblocking_send_recv_encoded(t_router_opts *opts, 
 				root_print_percentage("\t\t\tSync time: ", "%g (%g) ", all_sync_time, all_route_time, prev_rank, prev_comm_size);
 				root_print("\t\t\tNum syncs while expanding: ", "%d ", all_num_syncs_while_expanding, prev_rank, prev_comm_size);
 				root_print_percentage("\t\t\tBroadcast time: ", "%g (%g) ", all_broadcast_time, all_route_time, prev_rank, prev_comm_size);
-				root_print_percentage("\t\t\tSend testsome time: ", "%g (%g) ", all_send_testsome_time, all_route_time, prev_rank, prev_comm_size);
+				//root_print_percentage("\t\t\tSend testsome time: ", "%g (%g) ", all_send_testsome_time, all_route_time, prev_rank, prev_comm_size);
 			root_print_percentage("\t\tLast sync time: ", "%g (%g) ", all_last_sync_time, all_route_time, prev_rank, prev_comm_size);
 			root_print("\t\tNum last syncs: ", "%d ", all_num_last_syncs, prev_rank, prev_comm_size);
 			root_print_percentage("\t\tWait time: ", "%g (%g) ", all_wait_time, all_route_time, prev_rank, prev_comm_size);
-			root_print_percentage("\t\tLast progress time: ", "%g (%g) ", all_last_progress_time, all_route_time, prev_rank, prev_comm_size);
+			//root_print_percentage("\t\tLast progress time: ", "%g (%g) ", all_last_progress_time, all_route_time, prev_rank, prev_comm_size);
 
 		if (prev_rank == 0) {
 			printf("\tUpdate cost time: %g s.\n", duration_cast<nanoseconds>(update_cost_time).count() / 1e9);
@@ -1945,9 +1945,9 @@ bool mpi_route_load_balanced_nonblocking_send_recv_encoded(t_router_opts *opts, 
 			double d_total_broadcast_time = duration_cast<nanoseconds>(total_broadcast_time).count() / 1e9;
 			MPI_Gather(&d_total_broadcast_time, 1, MPI_DOUBLE, all_total_broadcast_time.data(), 1, MPI_DOUBLE, 0, MPI_COMM_WORLD);
 
-			vector<double> all_total_send_testsome_time(initial_comm_size);
-			double d_total_send_testsome_time = duration_cast<nanoseconds>(total_send_testsome_time).count() / 1e9;
-			MPI_Gather(&d_total_send_testsome_time, 1, MPI_DOUBLE, all_total_send_testsome_time.data(), 1, MPI_DOUBLE, 0, MPI_COMM_WORLD);
+			//vector<double> all_total_send_testsome_time(initial_comm_size);
+			//double d_total_send_testsome_time = duration_cast<nanoseconds>(total_send_testsome_time).count() / 1e9;
+			//MPI_Gather(&d_total_send_testsome_time, 1, MPI_DOUBLE, all_total_send_testsome_time.data(), 1, MPI_DOUBLE, 0, MPI_COMM_WORLD);
 
 		vector<double> all_total_last_sync_time(initial_comm_size);
 		double d_total_last_sync_time = duration_cast<nanoseconds>(total_last_sync_time).count() / 1e9;
@@ -1957,18 +1957,18 @@ bool mpi_route_load_balanced_nonblocking_send_recv_encoded(t_router_opts *opts, 
 		double d_total_wait_time = duration_cast<nanoseconds>(total_wait_time).count() / 1e9;
 		MPI_Gather(&d_total_wait_time, 1, MPI_DOUBLE, all_total_wait_time.data(), 1, MPI_DOUBLE, 0, MPI_COMM_WORLD);
 
-		vector<double> all_total_last_progress_time(initial_comm_size);
-		double d_total_last_progress_time = duration_cast<nanoseconds>(total_last_progress_time).count() / 1e9;
-		MPI_Gather(&d_total_last_progress_time, 1, MPI_DOUBLE, all_total_last_progress_time.data(), 1, MPI_DOUBLE, 0, MPI_COMM_WORLD);
+		//vector<double> all_total_last_progress_time(initial_comm_size);
+		//double d_total_last_progress_time = duration_cast<nanoseconds>(total_last_progress_time).count() / 1e9;
+		//MPI_Gather(&d_total_last_progress_time, 1, MPI_DOUBLE, all_total_last_progress_time.data(), 1, MPI_DOUBLE, 0, MPI_COMM_WORLD);
 
 	root_print("\tTotal route time: ", "%g ", all_total_route_time, initial_rank, initial_comm_size);
 		root_print_percentage("\t\tTotal actual route time: ", "%g (%g) ", all_total_actual_route_time, all_total_route_time, initial_rank, initial_comm_size);
 			root_print_percentage("\t\t\tTotal sync time: ", "%g (%g) ", all_total_sync_time, all_total_route_time, initial_rank, initial_comm_size);
 			root_print_percentage("\t\t\tTotal broadcast time: ", "%g (%g) ", all_total_broadcast_time, all_total_route_time, initial_rank, initial_comm_size);
-			root_print_percentage("\t\t\tTotal send testsome time: ", "%g (%g) ", all_total_send_testsome_time, all_total_route_time, initial_rank, initial_comm_size);
+			//root_print_percentage("\t\t\tTotal send testsome time: ", "%g (%g) ", all_total_send_testsome_time, all_total_route_time, initial_rank, initial_comm_size);
 		root_print_percentage("\t\tTotal last sync time: ", "%g (%g) ", all_total_last_sync_time, all_total_route_time, initial_rank, initial_comm_size);
 		root_print_percentage("\t\tTotal wait time: ", "%g (%g) ", all_total_wait_time, all_total_route_time, initial_rank, initial_comm_size);
-		root_print_percentage("\t\tTotal last progress time: ", "%g (%g) ", all_total_last_progress_time, all_total_route_time, initial_rank, initial_comm_size);
+		//root_print_percentage("\t\tTotal last progress time: ", "%g (%g) ", all_total_last_progress_time, all_total_route_time, initial_rank, initial_comm_size);
 	//root_print("\tTotal update cost time: ", "%g ", all_route_time, initial_rank, prev_comm_size);
 	//root_print("\tTotal analyze timing time: ", "%g ", all_route_time, prev_rank, prev_comm_size);
 	//root_print("\tTotal combine time: ", "%g ", all_route_time, prev_rank, prev_comm_size);
