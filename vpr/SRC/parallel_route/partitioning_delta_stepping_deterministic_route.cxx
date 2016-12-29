@@ -96,6 +96,21 @@ struct rtree_value_equal {
 	}
 };
 
+//template<typename Net>
+//struct partition_t {
+	//vector<Net *> nets;
+	//partition_t *left;
+	//partition_t *right;
+//};
+
+//void create_partitions_internal(const vector<net_t *> nets, vector<> &sorted_ver_edges, vector<> &sorted_hor_edges, bool horizontal_split)
+//{
+//}
+
+//void create_partitions()
+//{
+//}
+
 void split_bb_4(net_t &net, float bb_area_threshold, vector<new_virtual_net_t> &virtual_nets)
 {
 	using point_f = typename bg::model::point<float, 2, bg::cs::cartesian>;

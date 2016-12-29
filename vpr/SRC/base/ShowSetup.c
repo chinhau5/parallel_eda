@@ -250,6 +250,8 @@ static void ShowRouterOpts(INP struct s_router_opts RouterOpts) {
 		vpr_printf(TIO_MESSAGE_INFO, "RouterOpts.progress_freq: %d\n", RouterOpts.progress_freq);
 		vpr_printf(TIO_MESSAGE_INFO, "RouterOpts.log_dir: %s\n", RouterOpts.log_dir);
 		vpr_printf(TIO_MESSAGE_INFO, "RouterOpts.bb_area_threshold_scale: %g\n", RouterOpts.bb_area_threshold_scale);
+		vpr_printf(TIO_MESSAGE_INFO, "RouterOpts.delayed_sync: %s\n", RouterOpts.delayed_sync ? "on" : "off");
+		vpr_printf(TIO_MESSAGE_INFO, "RouterOpts.pure_rr: %s\n", RouterOpts.pure_rr ? "on" : "off");
 
 		vpr_printf(TIO_MESSAGE_INFO, "RouterOpts.scheduler: ");
 		switch (RouterOpts.scheduler) {

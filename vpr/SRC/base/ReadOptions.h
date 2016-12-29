@@ -95,6 +95,8 @@ struct s_options {
     int progress_freq;
     char *log_dir;
     float bb_area_threshold_scale;
+    boolean delayed_sync;
+    boolean pure_rr;
 
 	/* Timing-driven router options only */
 	float astar_fac;

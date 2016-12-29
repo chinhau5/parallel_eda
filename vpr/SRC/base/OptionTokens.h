@@ -91,6 +91,8 @@ enum e_OptionBaseToken {
 	OT_PROGRESS_FREQ,
 	OT_LOG_DIR,
 	OT_BB_AREA_THRESHOLD_SCALE,
+	OT_DELAYED_SYNC,
+	OT_PURE_RR,
 	OT_BASE_UNKNOWN /* Must be last since used for counting enum items */
 };
 

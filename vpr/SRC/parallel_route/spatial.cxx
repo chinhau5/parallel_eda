@@ -2711,7 +2711,7 @@ void init_displ(int num_procs, int current_level, const vector<pair<box, net_t *
 	}
 }
 
-void sync_net_delay(const vector<vector<net_t *>> &partitions, int procid, int num_procs, int *recvcounts, int *displs, int current_level, MPI_Comm comm, t_net_timing *net_timing)
+void sync_net_delay(const vector<vector<net_t *>> &partitions, int procid, int num_procs, int *recvcounts, int *displs, MPI_Comm comm, t_net_timing *net_timing)
 {
 	int num_delays = 0;
 	for (auto &net : partitions[procid]) {

@@ -127,6 +127,10 @@ void bootstrap_irecv_combined(mpi_context_t *mpi)
 
 void unicast_nonblocking(int data_index, int size, int dst, int tag, mpi_context_t *mpi)
 {
+	assert(size <= mpi->buffer_size);
+
+	mpi->max_send_data_size = std::max(mpi->max_send_data_size, size);
+
 	int req_index = get_free_req(mpi, data_index);
 	int error;
 
@@ -157,10 +161,6 @@ void unicast_nonblocking(int data_index, int size, int dst, int tag, mpi_context
 
 void broadcast_nonblocking(int data_index, int size, int tag, mpi_context_t *mpi)
 {
-	assert(size <= mpi->buffer_size);
-
-	mpi->max_send_data_size = std::max(mpi->max_send_data_size, size);
-
 	for (int i = 0; i < mpi->comm_size; ++i) {
 		if (i != mpi->rank) {
 			zlog_level(delta_log, ROUTER_V2, "Sent packet from %d to %d\n", mpi->rank, i);
@@ -867,7 +867,7 @@ void encode_path(int *data, int size, int bit_width, int net_id, int first_rr_no
 #endif
 }
 
-void route_net_mpi_nonblocking_send_recv_encoded(const RRGraph &g, int vpr_id, int net_id, const source_t *source, const vector<sink_t *> &sinks, const t_router_opts *params, float pres_fac, const vector<net_t> &nets, const vector<vector<net_t *>> &partition_nets, int current_net_index, route_state_t *state, congestion_t *congestion, route_tree_t &rt, t_net_timing &net_timing, vector<vector<RRNode>> &net_route_trees, mpi_context_t *mpi, perf_t *perf, mpi_perf_t *mpi_perf, bool delayed_progress)
+void route_net_mpi_nonblocking_send_recv_encoded(const RRGraph &g, int vpr_id, int net_id, const source_t *source, const vector<sink_t *> &sinks, const t_router_opts *params, float pres_fac, const vector<net_t> &nets, const vector<vector<net_t *>> &partition_nets, int current_net_index, route_state_t *state, congestion_t *congestion, route_tree_t &rt, t_net_timing &net_timing, vector<vector<RRNode>> &net_route_trees, mpi_context_t *mpi, perf_t *perf, mpi_perf_t *mpi_perf, bool delayed_sync)
 {
     using clock = myclock;
 
@@ -940,6 +940,11 @@ void route_net_mpi_nonblocking_send_recv_encoded(const RRGraph &g, int vpr_id, i
 
 	int isink = 0;
 	RRNode existing_opin = RRGraph::null_vertex();
+	int all_data_index; 
+	int all_data_offset = 0;
+	if (mpi->comm_size > 1 && delayed_sync) {
+		all_data_index = get_free_buffer(mpi, mpi->buffer_size);
+	}
 	for (const auto &sink : sorted_sinks) {
 		//if (delayed_progress && isink > 0 && mpi->comm_size > 1) {
 			//auto progress_start = clock::now();
@@ -1030,7 +1035,7 @@ void route_net_mpi_nonblocking_send_recv_encoded(const RRGraph &g, int vpr_id, i
 					return true;
 				}, heap, perf);
 
-				if (count > 0 && count % params->progress_freq == 0 && mpi->comm_size > 1) {
+				if (count > 0 && count % params->progress_freq == 0 && mpi->comm_size > 1 && !delayed_sync) {
 					auto progress_start = clock::now();
 					sync_combined(nets, congestion, g, pres_fac, net_route_trees, mpi, mpi_perf);
 					//progress_sends_testsome(mpi);
@@ -1139,17 +1144,28 @@ void route_net_mpi_nonblocking_send_recv_encoded(const RRGraph &g, int vpr_id, i
 				int tag = COST_UPDATE_TAG+net_id;
 #endif
 				int packet_size = payload_size+header_size;
-				int data_index = get_free_buffer(mpi, packet_size);
 
-				assert(data_index >= mpi->comm_size);
+				if (!delayed_sync) {
+					int data_index = get_free_buffer(mpi, packet_size);
 
-				int *data = mpi->pending_send_data_nbc[data_index]->data();
+					assert(data_index >= mpi->comm_size);
 
-				encode_path(data, packet_size, mpi->bit_width, net_id, first_rr_node, edges);
+					int *data = mpi->pending_send_data_nbc[data_index]->data();
 
-				zlog_level(delta_log, ROUTER_V3, "Broadcasting cost update, net %d sink %d\n", net_id, sink->rr_node);
+					encode_path(data, packet_size, mpi->bit_width, net_id, first_rr_node, edges);
 
-				selective_broadcast(data_index, packet_size, tag, mpi);
+					zlog_level(delta_log, ROUTER_V3, "Broadcasting cost update, net %d sink %d\n", net_id, sink->rr_node);
+
+					selective_broadcast(data_index, packet_size, tag, mpi);
+				} else {
+					assert(all_data_offset + packet_size <= mpi->buffer_size);
+
+					int *data = &((mpi->pending_send_data_nbc[all_data_index]->data())[all_data_offset]);
+
+					encode_path(data, packet_size, mpi->bit_width, net_id, first_rr_node, edges);
+
+					all_data_offset += packet_size;
+				}
 
 				if (mpi_perf) {
 					mpi_perf->total_broadcast_time += clock::now()-broadcast_start;
@@ -1163,7 +1179,7 @@ void route_net_mpi_nonblocking_send_recv_encoded(const RRGraph &g, int vpr_id, i
 			zlog_level(delta_log, ROUTER_V2, "Routed sink %d\n", sink->rr_node);
 		}
 
-		if (mpi->comm_size > 1) {
+		if (mpi->comm_size > 1 && !delayed_sync) {
 #if 0
 			auto sync_start = clock::now();
 
@@ -1199,6 +1215,21 @@ void route_net_mpi_nonblocking_send_recv_encoded(const RRGraph &g, int vpr_id, i
 		heap = std::priority_queue<route_state_t>();
 
 		++isink;
+	}
+
+	if (mpi->comm_size > 1 && delayed_sync) {
+#ifdef USE_FIXED_TAG
+		int tag = FIXED_TAG;
+#else
+		int tag = COST_UPDATE_TAG+net_id;
+#endif
+		selective_broadcast(all_data_index, all_data_offset, tag, mpi);
+
+		auto sync_start = clock::now();
+		sync_combined(nets, congestion, g, pres_fac, net_route_trees, mpi, mpi_perf);
+		if (mpi_perf) {
+			mpi_perf->total_sync_time += clock::now()-sync_start;
+		}
 	}
 
 	zlog_level(delta_log, ROUTER_V2, "Routed net %d\n", vpr_id);

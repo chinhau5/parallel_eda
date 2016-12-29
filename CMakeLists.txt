@@ -16,10 +16,11 @@ if (CMAKE_SYSTEM_NAME STREQUAL "Linux")
 		#/home/chinhau/Downloads/metis-5.1.0/build/Linux-x86_64/libmetis
 		#/home/chinhau/Downloads/tbb44_20160526oss/lib/intel64/gcc4.4/
 		#/home/chinhau/zlog/lib
-		#/home/akkumar/Downloads/metis-5.1.0/build/Linux-x86_64/libmetis
-		#/home/akkumar/Downloads/tbb44_20160526oss/lib/intel64/gcc4.4
-		#/home/akkumar/Downloads/boost_1_60_0/stage/lib
-		#/home/akkumar/zlog/lib
+		/home/akkumar/Downloads/metis-5.1.0/build/Linux-x86_64/libmetis
+		/home/akkumar/Downloads/tbb44_20160526oss/lib/intel64/gcc4.4
+		/home/akkumar/Downloads/boost_1_60_0/stage/lib
+		/home/akkumar/zlog/lib
+		/home/akkumar/libs/lib
 		#/home/svu/a0045424/Downloads/metis-5.1.0/build/Linux-x86_64/libmetis
 		#/home/svu/a0045424/Downloads/tbb44_20160526oss/lib/intel64/gcc4.4
 		#/home/svu/a0045424/Downloads/boost_1_60_0/stage/lib
@@ -80,7 +81,7 @@ if (CMAKE_SYSTEM_NAME STREQUAL "Linux")
 		boost_thread
 		tbb
 		metis
-		mlpack
+		#mlpack
 		)
 else()
 	set(link_libs

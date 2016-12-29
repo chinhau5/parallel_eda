@@ -752,6 +752,8 @@ struct s_router_opts {
 	int progress_freq;
 	char *log_dir;
 	float bb_area_threshold_scale;
+	boolean delayed_sync;
+	boolean pure_rr;
 };
 
 /* All the parameters controlling the router's operation are in this        *

@@ -35,7 +35,7 @@ void init_datatypes();
 
 void sync_recalc_occ(congestion_t *congestion, int num_vertices, int procid, int num_procs, MPI_Comm comm);
 void sync_nets(vector<net_t> &nets, vector<net_t> &global_nets, int procid, MPI_Comm comm);
-void sync_net_delay(const vector<vector<net_t *>> &partitions, int procid, int num_procs, int *recvcounts, int *displs, int current_level, MPI_Comm comm, t_net_timing *net_timing);
+void sync_net_delay(const vector<vector<net_t *>> &partitions, int procid, int num_procs, int *recvcounts, int *displs, MPI_Comm comm, t_net_timing *net_timing);
 void free_circuit();
 void init_displ(const vector<vector<net_t*>> &partitions, int **recvcounts, int **displs);
 void init_displ_nets(const vector<vector<net_t*>> &partitions, int **recvcounts, int **displs);
@@ -69,7 +69,7 @@ struct net_graph_edge_prop {
 
 using our_clock = myclock;
 
-static void partition(vector<net_t *> &nets, const vector<our_clock::duration> *net_route_time, bool load_balanced, int num_partitions, int current_level, int initial_comm_size, vector<int> &net_partition_id, vector<vector<net_t *>> &partition_nets)
+static void partition(vector<net_t *> &nets, const vector<our_clock::duration> *net_route_time, bool load_balanced, bool pure_rr, int num_partitions, int current_level, int initial_comm_size, vector<int> &net_partition_id, vector<vector<net_t *>> &partition_nets)
 {
 	std::fill(begin(net_partition_id), end(net_partition_id), -1);
 
@@ -123,16 +123,30 @@ static void partition(vector<net_t *> &nets, const vector<our_clock::duration> *
 				return a->sinks.size() > b->sinks.size();
 				});
 
-		for (int rank = 0; rank < num_partitions; ++rank) {
-			for (int i = rank*pow(2, current_level); i < sorted_nets.size(); i += initial_comm_size) {
-				for (int j = 0; j < pow(2, current_level) && i+j < sorted_nets.size(); ++j) {
-					zlog_level(delta_log, ROUTER_V3, "Rank %d net index %d num sinks %d\n", rank, i+j, sorted_nets[i+j]->sinks.size());
+		if (!pure_rr) {
+			for (int rank = 0; rank < num_partitions; ++rank) {
+				for (int i = rank*pow(2, current_level); i < sorted_nets.size(); i += initial_comm_size) {
+					for (int j = 0; j < pow(2, current_level) && i+j < sorted_nets.size(); ++j) {
+						zlog_level(delta_log, ROUTER_V3, "Rank %d net index %d num sinks %d\n", rank, i+j, sorted_nets[i+j]->sinks.size());
 
-					assert(sorted_nets[i+j]->local_id < net_partition_id.size());
+						assert(sorted_nets[i+j]->local_id < net_partition_id.size());
 
-					net_partition_id[sorted_nets[i+j]->local_id] = rank;
+						net_partition_id[sorted_nets[i+j]->local_id] = rank;
 
-					partition_nets[rank].push_back(sorted_nets[i+j]);
+						partition_nets[rank].push_back(sorted_nets[i+j]);
+					}
+				}
+			}
+		} else {
+			for (int rank = 0; rank < num_partitions; ++rank) {
+				for (int i = rank; i < sorted_nets.size(); i += num_partitions) {
+					zlog_level(delta_log, ROUTER_V3, "Rank %d net index %d num sinks %d\n", rank, i, sorted_nets[i]->sinks.size());
+
+					assert(sorted_nets[i]->local_id < net_partition_id.size());
+
+					net_partition_id[sorted_nets[i]->local_id] = rank;
+
+					partition_nets[rank].push_back(sorted_nets[i]);
 				}
 			}
 		}
@@ -216,11 +230,11 @@ static void move_route_trees(const vector<net_t *> &nets, const vector<int> &old
 	//
 }
 
-static void repartition(vector<net_t *> &nets, const vector<our_clock::duration> *net_route_time, bool load_balanced, int num_partitions, int current_level, int initial_comm_size, vector<int> &net_partition_id, vector<vector<net_t *>> &partition_nets, const RRGraph &g, vector<route_tree_t> &route_trees, vector<vector<RRNode>> &net_route_trees, t_net_timing *net_timing, mpi_context_t &mpi)
+static void repartition(vector<net_t *> &nets, const vector<our_clock::duration> *net_route_time, bool load_balanced, bool pure_rr, int num_partitions, int current_level, int initial_comm_size, vector<int> &net_partition_id, vector<vector<net_t *>> &partition_nets, const RRGraph &g, vector<route_tree_t> &route_trees, vector<vector<RRNode>> &net_route_trees, t_net_timing *net_timing, mpi_context_t &mpi)
 {
 	vector<int> old_net_partition_id = net_partition_id;
 
-	partition(nets, net_route_time, load_balanced, num_partitions, current_level, initial_comm_size, net_partition_id, partition_nets);
+	partition(nets, net_route_time, load_balanced, pure_rr, num_partitions, current_level, initial_comm_size, net_partition_id, partition_nets);
 
 	move_route_trees(nets, old_net_partition_id, net_partition_id, g, route_trees, net_route_trees, net_timing, mpi);
 }
@@ -632,7 +646,7 @@ bool mpi_route_load_balanced_nonblocking_send_recv_encoded(t_router_opts *opts, 
 	vector<int> net_partition_id(nets.size());
 	vector<vector<net_t *>> partition_nets;
 
-	partition(nets_ptr, nullptr, opts->load_balanced, mpi.comm_size, current_level, initial_comm_size, net_partition_id, partition_nets);
+	partition(nets_ptr, nullptr, opts->load_balanced, opts->pure_rr, mpi.comm_size, current_level, initial_comm_size, net_partition_id, partition_nets);
 
 	//sprintf(buffer, "iter_0_rank_%d_partition_nets.txt", mpi.rank);
 	//FILE *file = fopen(buffer, "w");
@@ -755,7 +769,7 @@ bool mpi_route_load_balanced_nonblocking_send_recv_encoded(t_router_opts *opts, 
 	int total_num_syncs_while_expanding = 0;
     //our_clock::duration total_send_testsome_time = our_clock::duration::zero();
 
-	mpi.buffer_size = 1024;
+	mpi.buffer_size = 262144;
 #if 0
 	mpi.pending_recv_data_flat.resize(mpi.comm_size);
 	for (int pid = 0; pid < mpi.comm_size; ++pid) {
@@ -878,7 +892,7 @@ bool mpi_route_load_balanced_nonblocking_send_recv_encoded(t_router_opts *opts, 
 		if (iter == 1 && opts->load_balanced && mpi.comm_size > 1) {
 			sync_net_route_time(partition_nets, net_route_time[0], &mpi);
 
-			repartition(nets_ptr, &net_route_time[0], opts->load_balanced, mpi.comm_size, current_level, initial_comm_size, net_partition_id, partition_nets, partitioner.orig_g, route_trees, net_route_trees, net_timing, mpi);
+			repartition(nets_ptr, &net_route_time[0], opts->load_balanced, opts->pure_rr, mpi.comm_size, current_level, initial_comm_size, net_partition_id, partition_nets, partitioner.orig_g, route_trees, net_route_trees, net_timing, mpi);
 
 			//sprintf(buffer, "iter_%d_rank_%d_partition_nets.txt", iter, mpi.rank);
 			//FILE *file = fopen(buffer, "w");
@@ -997,7 +1011,7 @@ bool mpi_route_load_balanced_nonblocking_send_recv_encoded(t_router_opts *opts, 
 			//auto route_start = our_clock::now();
 
 			if (!sinks.empty()) {
-				route_net_mpi_nonblocking_send_recv_encoded(partitioner.orig_g, net->vpr_id, net->local_id, &net->source, sinks, opts, pres_fac, nets, partition_nets, current_net_index, states, congestion, route_trees[net->local_id], net_timing[net->vpr_id], net_route_trees, &mpi, &perf, &mpi_perf, false);
+				route_net_mpi_nonblocking_send_recv_encoded(partitioner.orig_g, net->vpr_id, net->local_id, &net->source, sinks, opts, pres_fac, nets, partition_nets, current_net_index, states, congestion, route_trees[net->local_id], net_timing[net->vpr_id], net_route_trees, &mpi, &perf, &mpi_perf, opts->delayed_sync);
 
 				++thread_num_nets_routed;
 				++thread_num_nets_to_route;
@@ -1415,7 +1429,7 @@ bool mpi_route_load_balanced_nonblocking_send_recv_encoded(t_router_opts *opts, 
 
 		init_displ(partition_nets, &recvcounts, &displs);
 
-		sync_net_delay(partition_nets, mpi.rank, mpi.comm_size, recvcounts, displs, current_level, mpi.comm, net_timing);
+		sync_net_delay(partition_nets, mpi.rank, mpi.comm_size, recvcounts, displs, mpi.comm, net_timing);
 
 		int num_crits = 0;
 		for (int i = 0; i < mpi.comm_size; ++i) {
@@ -1495,6 +1509,7 @@ bool mpi_route_load_balanced_nonblocking_send_recv_encoded(t_router_opts *opts, 
 			routed = true;	
         } else {
 			int not_decreasing = (num_overused_nodes >= prev_num_overused_nodes && iter > 10) ? 1 : 0;
+			//int not_decreasing = 1;
 			//int not_decreasing = iter > 1;
 			//int not_decreasing = current_level+1 < partitioner.result_pid_by_level.size(); [> testing <]
 			//int not_decreasing = current_level+1 <= std::log2(initial_comm_size); [> testing <]
@@ -1572,7 +1587,7 @@ bool mpi_route_load_balanced_nonblocking_send_recv_encoded(t_router_opts *opts, 
 
 				sync_net_route_time(partition_nets, net_route_time[iter], &mpi);
 
-				repartition(nets_ptr, &net_route_time[iter], opts->load_balanced, mpi.comm_size/2, current_level+1, initial_comm_size, net_partition_id, partition_nets, partitioner.orig_g, route_trees, net_route_trees, net_timing, mpi);
+				repartition(nets_ptr, &net_route_time[iter], opts->load_balanced, opts->pure_rr, mpi.comm_size/2, current_level+1, initial_comm_size, net_partition_id, partition_nets, partitioner.orig_g, route_trees, net_route_trees, net_timing, mpi);
 
 				//sprintf(buffer, "iter_%d_rank_%d_partition_nets.txt", iter, mpi.rank);
 				//FILE *file = fopen(buffer, "w");

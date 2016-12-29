@@ -541,6 +541,16 @@ static void SetupRouterOpts(INP t_options Options, INP boolean TimingEnabled,
 	if (Options.Count[OT_BB_AREA_THRESHOLD_SCALE]) {
 		RouterOpts->bb_area_threshold_scale = Options.bb_area_threshold_scale;
 	}
+
+	RouterOpts->delayed_sync = FALSE;
+	if (Options.Count[OT_DELAYED_SYNC]) {
+		RouterOpts->delayed_sync = Options.delayed_sync;
+	}
+
+	RouterOpts->pure_rr = FALSE;
+	if (Options.Count[OT_PURE_RR]) {
+		RouterOpts->pure_rr = Options.pure_rr;
+	}
 }
 
 static void SetupAnnealSched(INP t_options Options,

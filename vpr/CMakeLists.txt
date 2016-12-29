@@ -159,10 +159,11 @@ if (CMAKE_SYSTEM_NAME STREQUAL "Linux")
 		#/home/chinhau/Downloads/tbb44_20160128oss/include
 		#/home/chinhau/Downloads/metis-5.1.0/include/
 		#/home/chinhau/zlog/include
-		#/home/akkumar/Downloads/boost_1_60_0/
-		#/home/akkumar/Downloads/tbb44_20160526oss/include
-		#/home/akkumar/Downloads/metis-5.1.0/include/
-		#/home/akkumar/zlog/include
+		/home/akkumar/Downloads/boost_1_60_0/
+		/home/akkumar/Downloads/tbb44_20160526oss/include
+		/home/akkumar/Downloads/metis-5.1.0/include/
+		/home/akkumar/zlog/include
+		/home/akkumar/libs/include
 		#/home/svu/a0045424/Downloads/boost_1_60_0/
 		#/home/svu/a0045424/Downloads/tbb44_20160526oss/include
 		#/home/svu/a0045424/Downloads/metis-5.1.0/include/
