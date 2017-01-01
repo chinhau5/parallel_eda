@@ -81,15 +81,15 @@ static void partition(vector<net_t *> &nets, const vector<our_clock::duration> *
 	vector<net_t *> sorted_nets = nets;
 
 	if (load_balanced) {
-		if (net_route_time) {
-			std::sort(begin(sorted_nets), end(sorted_nets), [&net_route_time] (const net_t *a, const net_t *b) -> bool {
-					return (*net_route_time)[a->local_id] > (*net_route_time)[b->local_id];
-					});
-		} else {
+		//if (net_route_time) {
+			//std::sort(begin(sorted_nets), end(sorted_nets), [&net_route_time] (const net_t *a, const net_t *b) -> bool {
+					//return (*net_route_time)[a->local_id] > (*net_route_time)[b->local_id];
+					//});
+		//} else {
 			std::sort(begin(sorted_nets), end(sorted_nets), [] (const net_t *a, const net_t *b) -> bool {
 					return a->sinks.size() > b->sinks.size();
 					});
-		}
+		//}
 
 		using HeapElement = pair<our_clock::duration, int>;
 		std::priority_queue<HeapElement, vector<HeapElement>, std::greater<HeapElement>> heap;
@@ -754,6 +754,7 @@ bool mpi_route_load_balanced_nonblocking_send_recv_encoded(t_router_opts *opts, 
 	//vector<vector<sink_t *>> fixed_sinks(nets.size());
 	unsigned long prev_num_overused_nodes = std::numeric_limits<unsigned long>::max();
 
+    our_clock::duration total_load_balancing_time = our_clock::duration::zero();
     our_clock::duration total_actual_route_time = our_clock::duration::zero();
     our_clock::duration total_route_time = our_clock::duration::zero();
     our_clock::duration total_update_cost_time = our_clock::duration::zero();
@@ -798,6 +799,7 @@ bool mpi_route_load_balanced_nonblocking_send_recv_encoded(t_router_opts *opts, 
 	mpi.max_pending_send_reqs_by_rank.resize(mpi.comm_size);
 
     for (iter = 0; iter < opts->max_router_iterations && !routed && !idling; ++iter) {
+        our_clock::duration load_balancing_time = our_clock::duration::zero();
         our_clock::duration actual_route_time = our_clock::duration::zero();
         our_clock::duration route_time = our_clock::duration::zero();
         our_clock::duration update_cost_time = our_clock::duration::zero();
@@ -876,8 +878,6 @@ bool mpi_route_load_balanced_nonblocking_send_recv_encoded(t_router_opts *opts, 
         
         auto iter_start = our_clock::now();
 
-        auto route_start = our_clock::now();
-
 		//for (int i = 0; i < mpi.comm_size; ++i) {
 			//num_recvs_called[i] = 0;
 		//}
@@ -890,9 +890,13 @@ bool mpi_route_load_balanced_nonblocking_send_recv_encoded(t_router_opts *opts, 
 		//
 
 		if (iter == 1 && opts->load_balanced && mpi.comm_size > 1) {
+			auto load_balancing_start = our_clock::now();
+
 			sync_net_route_time(partition_nets, net_route_time[0], &mpi);
 
 			repartition(nets_ptr, &net_route_time[0], opts->load_balanced, opts->pure_rr, mpi.comm_size, current_level, initial_comm_size, net_partition_id, partition_nets, partitioner.orig_g, route_trees, net_route_trees, net_timing, mpi);
+
+			load_balancing_time = our_clock::now() - load_balancing_start;
 
 			//sprintf(buffer, "iter_%d_rank_%d_partition_nets.txt", iter, mpi.rank);
 			//FILE *file = fopen(buffer, "w");
@@ -904,6 +908,8 @@ bool mpi_route_load_balanced_nonblocking_send_recv_encoded(t_router_opts *opts, 
 			//}
 			//fclose(file);
 		}
+
+        auto route_start = our_clock::now();
 
 		//bootstrap_irecv(&mpi);
 		bootstrap_irecv_combined(&mpi);
@@ -1170,6 +1176,7 @@ bool mpi_route_load_balanced_nonblocking_send_recv_encoded(t_router_opts *opts, 
 		//total_send_testsome_time += mpi_perf.total_send_testsome_time;
 		//total_last_progress_time += last_progress_time;
 		total_last_sync_time += last_sync_time;
+		total_load_balancing_time += load_balancing_time;
 		total_actual_route_time += actual_route_time;
         total_route_time += route_time;
 		total_wait_time += wait_time;
@@ -1679,6 +1686,10 @@ bool mpi_route_load_balanced_nonblocking_send_recv_encoded(t_router_opts *opts, 
         total_iter_time += iter_time;
 		total_combine_time += combine_time;
 
+		vector<double> all_load_balancing_time(prev_comm_size);
+		double d_load_balancing_time = duration_cast<nanoseconds>(load_balancing_time).count() / 1e9;
+		MPI_Gather(&d_load_balancing_time, 1, MPI_DOUBLE, all_load_balancing_time.data(), 1, MPI_DOUBLE, 0, prev_comm);
+
 		vector<double> all_route_time(prev_comm_size);
 		double d_route_time = duration_cast<nanoseconds>(route_time).count() / 1e9;
 		MPI_Gather(&d_route_time, 1, MPI_DOUBLE, all_route_time.data(), 1, MPI_DOUBLE, 0, prev_comm);
@@ -1721,6 +1732,7 @@ bool mpi_route_load_balanced_nonblocking_send_recv_encoded(t_router_opts *opts, 
 			printf("Iteration time: %g\n", duration_cast<nanoseconds>(iter_time).count() / 1e9);
 		}
 
+		root_print("\tLoad balancing time: ", "%g ", all_load_balancing_time, prev_rank, prev_comm_size);
 		root_print("\tRoute time: ", "%g ", all_route_time, prev_rank, prev_comm_size);
 			root_print_percentage("\t\tActual route time: ", "%g (%g) ", all_actual_route_time, all_route_time, prev_rank, prev_comm_size);
 				root_print_percentage("\t\t\tSync time: ", "%g (%g) ", all_sync_time, all_route_time, prev_rank, prev_comm_size);
@@ -1944,6 +1956,10 @@ bool mpi_route_load_balanced_nonblocking_send_recv_encoded(t_router_opts *opts, 
 		}
 	}
 
+	vector<double> all_total_load_balancing_time(initial_comm_size);
+	double d_total_load_balancing_time = duration_cast<nanoseconds>(total_load_balancing_time).count() / 1e9;
+	MPI_Gather(&d_total_load_balancing_time, 1, MPI_DOUBLE, all_total_load_balancing_time.data(), 1, MPI_DOUBLE, 0, MPI_COMM_WORLD);
+
 	vector<double> all_total_route_time(initial_comm_size);
 	double d_total_route_time = duration_cast<nanoseconds>(total_route_time).count() / 1e9;
 	MPI_Gather(&d_total_route_time, 1, MPI_DOUBLE, all_total_route_time.data(), 1, MPI_DOUBLE, 0, MPI_COMM_WORLD);
@@ -1976,6 +1992,7 @@ bool mpi_route_load_balanced_nonblocking_send_recv_encoded(t_router_opts *opts, 
 		//double d_total_last_progress_time = duration_cast<nanoseconds>(total_last_progress_time).count() / 1e9;
 		//MPI_Gather(&d_total_last_progress_time, 1, MPI_DOUBLE, all_total_last_progress_time.data(), 1, MPI_DOUBLE, 0, MPI_COMM_WORLD);
 
+	root_print("\tTotal load balancing time: ", "%g ", all_total_load_balancing_time, initial_rank, initial_comm_size);
 	root_print("\tTotal route time: ", "%g ", all_total_route_time, initial_rank, initial_comm_size);
 		root_print_percentage("\t\tTotal actual route time: ", "%g (%g) ", all_total_actual_route_time, all_total_route_time, initial_rank, initial_comm_size);
 			root_print_percentage("\t\t\tTotal sync time: ", "%g (%g) ", all_total_sync_time, all_total_route_time, initial_rank, initial_comm_size);
