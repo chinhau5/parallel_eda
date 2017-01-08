@@ -126,6 +126,7 @@ set(srcs
 	SRC/parallel_route/barrier.c
 	SRC/parallel_route/bounding_box.c
 	#SRC/parallel_route/advanced_parallel_route_timing.c
+	SRC/parallel_route/new_partitioner.cxx
 	SRC/timing/net_delay.c
 	SRC/timing/path_delay2.c
 	SRC/timing/path_delay.c

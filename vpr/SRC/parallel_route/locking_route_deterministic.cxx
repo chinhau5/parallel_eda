@@ -151,7 +151,14 @@ bool locking_route_deterministic(t_router_opts *opts, int run)
 	//vector<vector<virtual_net_t>> virtual_nets_by_net;
 	//create_clustered_virtual_nets(nets, 5, opts->max_sink_bb_area, virtual_nets_by_net);
 
-	vector<congestion_t> global(num_vertices(g), { 0, 1, 1, 0 });
+	vector<congestion_t> global(num_vertices(g));
+
+	for (int i = 0; i < global.size(); ++i) {
+		global[i].occ = 0;
+		global[i].acc_cost = 1;
+		global[i].pres_cost = 1;
+		global[i].recalc_occ = 0;
+	}
 
 	vector<congestion_local_t> congestion(opts->num_threads);
 	for (int i = 0; i < opts->num_threads; ++i) {

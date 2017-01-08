@@ -83,6 +83,9 @@ RouteTreeNode route_tree_add_rr_node(route_tree_t &rt, RRNode rr_node, const RRG
 		rt.rr_node_to_rt_node[rr_node] = rt_node;
 		rt_node_p = &get_vertex_props(rt.graph, rt_node);
 		rt_node_p->rr_node = rr_node;
+		/* a sneaky bug when the route tree is cleared and new nodes reuse the old memory */
+		/* causing the check assert(!rt_node_p->valid) to fail */
+		rt_node_p->valid = false;
 	} else {
 		rt_node_p = &get_vertex_props(rt.graph, iter->second);
 		assert(rt_node_p->rr_node == rr_node);

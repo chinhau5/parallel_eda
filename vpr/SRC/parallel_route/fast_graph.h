@@ -564,7 +564,7 @@ void clear_edges(fast_graph_t<VertexProperties, EdgeProperties> &g)
 template<typename VertexProperties, typename EdgeProperties>
 void clear_vertices(fast_graph_t<VertexProperties, EdgeProperties> &g)
 {
-	clear_edges(g);
+	//clear_edges(g);
 	g.vertices.clear();
 }
 

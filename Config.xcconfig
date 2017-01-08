@@ -1,0 +1,9 @@
+//
+//  Config.xcconfig
+//  Router
+//
+//  Created by Chin Hau Hoo on 12/2/16.
+//
+//
+GCC_PRECOMPILE_PREFIX_HEADER = YES
+GCC_PREFIX_HEADER = vpr/SRC/parallel_route/pch.h

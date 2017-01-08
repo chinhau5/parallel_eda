@@ -293,6 +293,12 @@ void update_one_cost_internal(RRNode rr_node, const RRGraph &g, congestion_locke
 
 void update_one_cost_internal(RRNode rr_node, const RRGraph &g, congestion_t *congestion, /*int net_id, */int delta, float pres_fac)
 {
+	//bool locked = false;
+	//if (!congestion[rr_node].lock.try_lock()) {
+		//assert(false);
+	//} else {
+		//locked = true;
+	//}
 	congestion[rr_node].occ += delta;
 
 	assert(congestion[rr_node].occ >= 0);
@@ -304,6 +310,10 @@ void update_one_cost_internal(RRNode rr_node, const RRGraph &g, congestion_t *co
 	} else {
 		congestion[rr_node].pres_cost = 1 + (congestion[rr_node].occ + 1 - rr_node_p.capacity) * pres_fac;
 	}
+
+	//if (locked) {
+		//congestion[rr_node].lock.unlock();
+	//}
 
 	char buffer[256];
 	sprintf_rr_node(rr_node, buffer);

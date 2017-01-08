@@ -279,6 +279,8 @@ void check_route_tree(const route_tree_t &rt, const net_t &net, RRGraph &g)
 
 	sort(visited_sinks.begin(), visited_sinks.end());
 	sort(sinks.begin(), sinks.end());
+
+	assert(!sinks.empty());
 	
 	if (visited_sinks != sinks) {
 		zlog_error(delta_log, "Error: Visited %lu sinks out of %lu sinks of net %d\n", visited_sinks.size(), sinks.size(), net.vpr_id);

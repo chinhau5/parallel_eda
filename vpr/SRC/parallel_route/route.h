@@ -162,6 +162,7 @@ typedef struct virtual_net_t {
 //
 
 typedef struct congestion_t {
+	//tbb::spin_mutex lock;
 	int occ;
 	float pres_cost;
 	float acc_cost;
