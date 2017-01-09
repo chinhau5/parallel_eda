@@ -70,6 +70,8 @@ typedef struct source_t {
 	int rr_node;
 	int x;
 	int y;
+	//int xhigh;
+	//int yhigh;
 } source_t;
 
 typedef struct sink_t {
@@ -79,6 +81,8 @@ typedef struct sink_t {
 	int rr_node;
 	int x;
 	int y;
+	//int xhigh;
+	//int yhigh;
 	//source_t source;
 	bounding_box_t current_bounding_box;
 	//bounding_box_t previous_bounding_box;

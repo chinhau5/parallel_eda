@@ -350,6 +350,12 @@ void init_nets(vector<net_t> &nets, vector<net_t> &global_nets, int bb_factor, b
 		int p = clb_net[i].node_block_pin[0];
 		net.source.x = block[b].x;
 		net.source.y = block[b].y + block[b].type->pin_height[p];
+		//net.source.xhigh = block[b].x;
+		//net.source.yhigh = block[b].y + block[b].type->height - 1;
+		//assert(net.source.x == rr_node[net.source.rr_node].xlow
+				//&& net.source.xhigh == rr_node[net.source.rr_node].xhigh
+				//&& net.source.y == rr_node[net.source.rr_node].ylow
+				//&& net.source.yhigh == rr_node[net.source.rr_node].yhigh);
 
 		bl.x = net.source.x;
 		bl.y = net.source.y;
@@ -376,6 +382,12 @@ void init_nets(vector<net_t> &nets, vector<net_t> &global_nets, int bb_factor, b
 			int p = clb_net[i].node_block_pin[j];
 			sink.x = block[b].x;
 			sink.y = block[b].y + block[b].type->pin_height[p];
+			//sink.xhigh = block[b].x;
+			//sink.yhigh = block[b].y + block[b].type->height - 1;
+			//assert(sink.x == rr_node[sink.rr_node].xlow
+					//&& sink.xhigh == rr_node[sink.rr_node].xhigh
+					//&& sink.y == rr_node[sink.rr_node].ylow
+					//&& sink.yhigh == rr_node[sink.rr_node].yhigh);
 			sink.criticality_fac = std::numeric_limits<float>::max();
 			/* initially all sink will be reached from the net's source */
 			/* this is later updated during scheduling */
