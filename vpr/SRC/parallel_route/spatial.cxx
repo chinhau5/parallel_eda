@@ -2713,6 +2713,9 @@ void init_displ(int num_procs, int current_level, const vector<pair<box, net_t *
 
 void sync_net_delay(const vector<vector<net_t *>> &partitions, int procid, int num_procs, int *recvcounts, int *displs, MPI_Comm comm, t_net_timing *net_timing)
 {
+	assert(procid >= 0 && procid < partitions.size());
+	assert(partitions.size() == num_procs);
+
 	int num_delays = 0;
 	for (auto &net : partitions[procid]) {
 		num_delays += net->sinks.size();

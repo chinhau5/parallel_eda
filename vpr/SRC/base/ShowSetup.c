@@ -252,6 +252,22 @@ static void ShowRouterOpts(INP struct s_router_opts RouterOpts) {
 		vpr_printf(TIO_MESSAGE_INFO, "RouterOpts.bb_area_threshold_scale: %g\n", RouterOpts.bb_area_threshold_scale);
 		vpr_printf(TIO_MESSAGE_INFO, "RouterOpts.delayed_sync: %s\n", RouterOpts.delayed_sync ? "on" : "off");
 		vpr_printf(TIO_MESSAGE_INFO, "RouterOpts.pure_rr: %s\n", RouterOpts.pure_rr ? "on" : "off");
+		vpr_printf(TIO_MESSAGE_INFO, "RouterOpts.mpi_buffer_size: %d\n", RouterOpts.mpi_buffer_size);
+
+		vpr_printf(TIO_MESSAGE_INFO, "RouterOpts.part_sort_metric: ");
+		switch (RouterOpts.part_sort_metric) {
+		case PartSortMetric::RouteTime:
+			vpr_printf(TIO_MESSAGE_INFO, "route time\n");
+			break;
+		case PartSortMetric::NumSinks:
+			vpr_printf(TIO_MESSAGE_INFO, "num sinks\n");
+			break;
+		default:
+			vpr_printf(TIO_MESSAGE_INFO, "Unknown part sort metric\n");
+			exit(-1);
+		}
+
+		vpr_printf(TIO_MESSAGE_INFO, "RouterOpts.new_load_balance: %s\n", RouterOpts.new_load_balance ? "on" : "off");
 
 		vpr_printf(TIO_MESSAGE_INFO, "RouterOpts.scheduler: ");
 		switch (RouterOpts.scheduler) {

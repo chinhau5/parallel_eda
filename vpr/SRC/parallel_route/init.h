@@ -3,8 +3,6 @@
 
 #include "new_rr_graph.h"
 
-void init_logging();
-
 void init_graph(RRGraph &g);
 void init_graph(RRGraph &g, vector<vector<RRNode>> &sink_in_nodes, vector<vector<RRNode>> &ipin_in_nodes);
 void delete_graph(RRGraph &g);

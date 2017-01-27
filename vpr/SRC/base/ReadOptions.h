@@ -97,6 +97,9 @@ struct s_options {
     float bb_area_threshold_scale;
     boolean delayed_sync;
     boolean pure_rr;
+    int mpi_buffer_size;
+    PartSortMetric part_sort_metric;
+    boolean new_load_balance;
 
 	/* Timing-driven router options only */
 	float astar_fac;

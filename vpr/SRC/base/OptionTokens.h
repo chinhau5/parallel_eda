@@ -93,6 +93,9 @@ enum e_OptionBaseToken {
 	OT_BB_AREA_THRESHOLD_SCALE,
 	OT_DELAYED_SYNC,
 	OT_PURE_RR,
+	OT_MPI_BUFFER_SIZE,
+	OT_PART_SORT,
+	OT_NEW_LOAD_BALANCE,
 	OT_BASE_UNKNOWN /* Must be last since used for counting enum items */
 };
 
@@ -120,6 +123,8 @@ enum e_OptionArgToken {
 	OT_FINE_GRAINED,
 	OT_HYBRID,
 	OT_PARTITIONING,
+	OT_PART_SORT_ROUTE_TIME,
+	OT_PART_SORT_NUM_SINKS,
 	OT_SCH_IND,
 	OT_SCH_FAST,
 	OT_ARG_UNKNOWN /* Must be last since used for counting enum items */

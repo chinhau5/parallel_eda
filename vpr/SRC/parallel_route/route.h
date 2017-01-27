@@ -84,6 +84,7 @@ typedef struct sink_t {
 	//int xhigh;
 	//int yhigh;
 	//source_t source;
+	struct new_virtual_net_t *vnet;
 	bounding_box_t current_bounding_box;
 	//bounding_box_t previous_bounding_box;
 	//bounding_box_t scheduler_bounding_box;

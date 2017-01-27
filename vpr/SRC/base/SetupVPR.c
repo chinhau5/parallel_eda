@@ -551,6 +551,21 @@ static void SetupRouterOpts(INP t_options Options, INP boolean TimingEnabled,
 	if (Options.Count[OT_PURE_RR]) {
 		RouterOpts->pure_rr = Options.pure_rr;
 	}
+
+	RouterOpts->mpi_buffer_size = 262144;
+	if (Options.Count[OT_MPI_BUFFER_SIZE]) {
+		RouterOpts->mpi_buffer_size = Options.mpi_buffer_size;
+	}
+
+	RouterOpts->part_sort_metric = PartSortMetric::RouteTime;
+	if (Options.Count[OT_PART_SORT]) {
+		RouterOpts->part_sort_metric = Options.part_sort_metric;
+	}
+
+	RouterOpts->new_load_balance = FALSE;
+	if (Options.Count[OT_NEW_LOAD_BALANCE]) {
+		RouterOpts->new_load_balance = Options.new_load_balance;
+	}
 }
 
 static void SetupAnnealSched(INP t_options Options,

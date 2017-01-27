@@ -60,6 +60,19 @@ void partition_internal(const std::vector<std::pair<point, int>> &xsorted_items,
 	assert(xsorted_items.size() == ysorted_items.size());
 	assert(!xsorted_items.empty());
 
+	for (int i = 0; i < xsorted_items.size(); ++i) {
+		if (i > 0) {
+			printf("x[%d] = %d x[%d] = %d\n", i-1, bg::get<0>(xsorted_items[i-1].first), i, bg::get<0>(xsorted_items[i].first));
+			assert(bg::get<0>(xsorted_items[i-1].first) <= bg::get<0>(xsorted_items[i].first));
+		}
+	}
+	for (int i = 0; i < ysorted_items.size(); ++i) {
+		if (i > 0) {
+			printf("y[%d] = %d y[%d] = %d\n", i-1, bg::get<1>(ysorted_items[i-1].first), i, bg::get<1>(ysorted_items[i].first));
+			assert(bg::get<1>(ysorted_items[i-1].first) <= bg::get<1>(ysorted_items[i].first));
+		}
+	}
+
 	box bb = bg::make_inverse<box>();
 	for (const auto &item : xsorted_items) {
 		bg::expand(bb, item.first);

@@ -81,4 +81,8 @@ bool box_overlap(const BoundingBox &box_a, const BoundingBox &box_b)
 	return overlap(a_hor, b_hor) && overlap(a_vert, b_vert);
 }
 
+void expand_and_clip(box &b, const std::pair<int, int> &xexpand, const std::pair<int, int> &yexpand, const std::pair<int, int> &max);
+
+void make_l_segment(const point &source, const point &sink, bool xfirst, const std::pair<int, int> &xexpand, const std::pair<int, int> &yexpand, const std::pair<int, int> &max, std::vector<box> &boxes);
+
 #endif

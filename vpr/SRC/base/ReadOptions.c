@@ -35,6 +35,8 @@ static char **ReadRouterAlgorithm(INP char **Args,
 		OUTP enum e_router_algorithm *Algo);
 static char **ReadScheduler(INP char **Args,
 		OUTP SchedulerType *Algo);
+static char **ReadPartSort(INP char **Args,
+		OUTP PartSortMetric *Algo);
 static char **ReadPackerAlgorithm(INP char **Args,
 		OUTP enum e_packer_algorithm *Algo);
 static char **ReadBaseCostType(INP char **Args,
@@ -493,6 +495,12 @@ ProcessOption(INP char **Args, INOUTP t_options * Options) {
 		return ReadOnOff(Args, &Options->delayed_sync);
 	case OT_PURE_RR:
 		return ReadOnOff(Args, &Options->pure_rr);
+	case OT_MPI_BUFFER_SIZE:
+		return ReadInt(Args, &Options->mpi_buffer_size);
+	case OT_PART_SORT:
+		return ReadPartSort(Args, &Options->part_sort_metric);
+	case OT_NEW_LOAD_BALANCE:
+		return ReadOnOff(Args, &Options->new_load_balance);
 			
 		/* Routing options valid only for timing-driven routing */
 	case OT_ASTAR_FAC:
@@ -829,6 +837,27 @@ ReadPackerAlgorithm(INP char **Args, OUTP enum e_packer_algorithm *Algo) {
 		break;
 	case OT_BRUTE_FORCE:
 		*Algo = PACK_BRUTE_FORCE;
+		break;
+	default:
+		Error(*PrevArgs);
+	}
+
+	return Args;
+}
+
+static char **
+ReadPartSort(INP char **Args, OUTP PartSortMetric *metric) {
+	enum e_OptionArgToken Token;
+	char **PrevArgs;
+
+	PrevArgs = Args;
+	Args = ReadToken(Args, &Token);
+	switch (Token) {
+	case OT_PART_SORT_ROUTE_TIME:
+		*metric = PartSortMetric::RouteTime;
+		break;
+	case OT_PART_SORT_NUM_SINKS:
+		*metric = PartSortMetric::NumSinks;
 		break;
 	default:
 		Error(*PrevArgs);

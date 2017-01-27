@@ -712,9 +712,11 @@ enum e_base_cost_type {
 	INTRINSIC_DELAY, DELAY_NORMALIZED, DEMAND_ONLY
 };
 
-#define NO_FIXED_CHANNEL_WIDTH -1
-
 enum class SchedulerType { IND, FAST };
+
+enum class PartSortMetric { RouteTime, NumSinks };
+
+#define NO_FIXED_CHANNEL_WIDTH -1
 
 typedef struct s_router_opts t_router_opts;
 struct s_router_opts {
@@ -754,6 +756,9 @@ struct s_router_opts {
 	float bb_area_threshold_scale;
 	boolean delayed_sync;
 	boolean pure_rr;
+	int mpi_buffer_size;
+	PartSortMetric part_sort_metric;
+	boolean new_load_balance;
 };
 
 /* All the parameters controlling the router's operation are in this        *
