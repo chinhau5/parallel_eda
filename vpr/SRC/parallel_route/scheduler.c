@@ -7,7 +7,7 @@
 #include "zlog.h"
 #include "vpr_types.h"
 #include "route.h"
-#include "scheduler.h"
+#include "old_misr.h"
 #include "utility.h"
 
 namespace bg = boost::geometry;

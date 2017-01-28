@@ -4,7 +4,7 @@
 #include <mlpack/methods/kmeans/refined_start.hpp>
 #include "geometry.h"
 #include "route.h"
-#include "partition.h"
+#include "metis_partitioner.h"
 
 using namespace std;
 

@@ -122,7 +122,7 @@ set(srcs
 	SRC/parallel_route/utility.c
 	#SRC/parallel_route/net_cluster.cxx
 	#SRC/parallel_route/scheduler.c
-	SRC/parallel_route/bounding_boxes.cxx
+	SRC/parallel_route/interpart_nets.cxx
 	SRC/parallel_route/barrier.c
 	SRC/parallel_route/bounding_box.c
 	#SRC/parallel_route/advanced_parallel_route_timing.c

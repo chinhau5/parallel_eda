@@ -9,16 +9,16 @@
 #include "route.h"
 #include "route_tree.h"
 #include "trace.h"
-#include "scheduler.h"
+#include "old_misr.h"
 #include "geometry.h"
 #include "quadtree.h"
 #include "utility.h"
-#include "cluster.h"
+#include "net_cluster.h"
 #include "args.h"
 #include "init.h"
 #include "congestion.h"
 #include "router.h"
-#include "partition.h"
+#include "metis_partitioner.h"
 
 using std::chrono::duration_cast;
 using std::chrono::nanoseconds;
