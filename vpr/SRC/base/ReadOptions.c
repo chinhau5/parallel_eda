@@ -910,11 +910,14 @@ ReadRouterAlgorithm(INP char **Args, OUTP enum e_router_algorithm *Algo) {
 	case OT_BARRIER:
 		*Algo = BARRIER;
 		break;
-	case OT_HYBRID:
-		*Algo = HYBRID;
+	case OT_DIST_MEM:
+		*Algo = DIST_MEM;
 		break;
 	case OT_PARTITIONING:
 		*Algo = PARTITIONING;
+		break;
+	case OT_SPECULATIVE:
+		*Algo = SPECULATIVE;
 		break;
 	default:
 		Error(*PrevArgs);

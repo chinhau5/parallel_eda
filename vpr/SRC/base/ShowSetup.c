@@ -187,11 +187,14 @@ static void ShowRouterOpts(INP struct s_router_opts RouterOpts) {
 		case FINE_GRAINED:
 			vpr_printf(TIO_MESSAGE_INFO, "FINE_GRAINED\n");
 			break;
-		case HYBRID:
-			vpr_printf(TIO_MESSAGE_INFO, "HYBRID\n");
+		case DIST_MEM:
+			vpr_printf(TIO_MESSAGE_INFO, "MPI\n");
 			break;
 		case PARTITIONING:
 			vpr_printf(TIO_MESSAGE_INFO, "PARTITIONING\n");
+			break;
+		case SPECULATIVE:
+			vpr_printf(TIO_MESSAGE_INFO, "SPECULATIVE\n");
 			break;
 		default:
 			vpr_printf(TIO_MESSAGE_INFO, "<Unknown>\n");

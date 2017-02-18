@@ -45,6 +45,8 @@ bool mpi_route_load_balanced_ibcast(t_router_opts *opts, struct s_det_routing_ar
 bool mpi_route_load_balanced_nonblocking_send_recv_encoded(t_router_opts *opts, struct s_det_routing_arch det_routing_arch, t_direct_inf *directs, int num_directs, t_segment_inf *segment_inf, t_timing_inf timing_inf);
 bool partitioning_delta_stepping_deterministic_route(t_router_opts *opts);
 bool partitioning_delta_stepping_deterministic_route_virtual(t_router_opts *opts);
+bool speculative_deterministic_route(t_router_opts *opts);
+bool speculative_deterministic_route_hb(t_router_opts *opts);
 bool new_astar_route(t_router_opts *opts);
 
 
@@ -391,8 +393,8 @@ boolean try_route_new(int width_fac, struct s_router_opts router_opts,
 			/*success = try_parallel_timing_driven_route_top(router_opts, net_timing,*/
 					/*clb_opins_used_locally,timing_inf.timing_analysis_enabled);*/
 			break;
-		case HYBRID:
-			vpr_printf(TIO_MESSAGE_INFO, "Confirming Router Algorithm: HYBRID.\n");
+		case DIST_MEM:
+			vpr_printf(TIO_MESSAGE_INFO, "Confirming Router Algorithm: MPI.\n");
 			assert(router_opts.route_type != GLOBAL);
 			/*success = locking_route_deterministic(&router_opts, 0);*/
 			success = mpi_route_load_balanced_nonblocking_send_recv_encoded(&router_opts, det_routing_arch, directs, num_directs, segment_inf, timing_inf);
@@ -401,6 +403,9 @@ boolean try_route_new(int width_fac, struct s_router_opts router_opts,
 			break;
 		case PARTITIONING:
 			success = partitioning_delta_stepping_deterministic_route_virtual(&router_opts);
+			break;
+		case SPECULATIVE:
+			success = speculative_deterministic_route_hb(&router_opts);
 			break;
 		default:
 			success = FALSE;

@@ -162,7 +162,7 @@ bool locking_route_deterministic(t_router_opts *opts, int run)
 
 	vector<congestion_local_t> congestion(opts->num_threads);
 	for (int i = 0; i < opts->num_threads; ++i) {
-		congestion[i].tid = i;
+		//congestion[i].tid = i;
 		congestion[i].global = global.data();
 		congestion[i].local.resize(num_vertices(g), { 0, 1 });
 	}
@@ -308,7 +308,7 @@ bool locking_route_deterministic(t_router_opts *opts, int run)
 						pthread_barrier_wait(&barrier);
 #endif
 
-						commit(&congestion[tid], commit_lock, g, pres_fac);
+						//commit(&congestion[tid], commit_lock, g, pres_fac);
 
 #ifdef __linux__
 						pthread_barrier_wait(&barrier);
@@ -348,7 +348,7 @@ bool locking_route_deterministic(t_router_opts *opts, int run)
 						pthread_barrier_wait(&barrier);
 #endif
 
-						commit(&congestion[tid], commit_lock, g, pres_fac);
+						//commit(&congestion[tid], commit_lock, g, pres_fac);
 
 #ifdef __linux__
 						pthread_barrier_wait(&barrier);

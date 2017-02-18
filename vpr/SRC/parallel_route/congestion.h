@@ -36,13 +36,18 @@ inline float get_acc_cost(const congestion_local_t *local, int node)
 
 void update_one_cost_internal(RRNode rr_node, const RRGraph &g, congestion_t *congestion, /*int net_id, */int delta, float pres_fac);
 
-inline void commit(congestion_local_t *local, tbb::spin_mutex &lock, const RRGraph &g, float pres_fac)
+inline void commit(congestion_local_t *local, const RRGraph &g, float pres_fac)
 {
 	for (const auto &dirty_node : local->dirty_nodes) {
-		lock.lock();
-		update_one_cost_internal(dirty_node, g, local->global, local->local[dirty_node].occ_delta, pres_fac);
-		lock.unlock();
-		local->local[dirty_node].occ_delta = 0;
+		if (local->local[dirty_node].occ_delta != 0) {
+			local->locks[dirty_node].lock();
+
+			update_one_cost_internal(dirty_node, g, local->global, local->local[dirty_node].occ_delta, pres_fac);
+
+			local->locks[dirty_node].unlock();
+
+			local->local[dirty_node].occ_delta = 0;
+		}
 	}
 	local->dirty_nodes.clear();
 }
@@ -144,6 +149,11 @@ inline void add_recalc_occ(congestion_t *congestion, int node, int delta)
 	congestion[node].recalc_occ += delta;
 }
 
+//inline void add_recalc_occ(congestion_local_t *local, int node, int delta)
+//{
+	//local->global[node].recalc_occ += delta;
+//}
+
 void update_one_cost(const RRGraph &g, congestion_locked_t *congestion, const vector<RRNode>::const_iterator &rr_nodes_begin, const vector<RRNode>::const_iterator &rr_nodes_end, /*int net_id,*/ int delta, float pres_fac, bool lock, lock_perf_t *lock_perf);
 
 void update_one_cost(const RRGraph &g, congestion_t *congestion, const vector<RRNode>::const_iterator &rr_nodes_begin, const vector<RRNode>::const_iterator &rr_nodes_end, int delta, float pres_fac);
@@ -161,6 +171,8 @@ void update_one_cost_internal(RRNode rr_node, const RRGraph &g, congestion_local
 void update_one_cost_internal_mpi_rma(RRNode rr_node, const RRGraph &g, const vector<int> &pid, int this_pid, congestion_t *congestion, MPI_Win win, /*int net_id, */int delta, float pres_fac);
 
 void update_one_cost_internal_mpi_send(RRNode rr_node, const RRGraph &g, congestion_t *congestion, int delta, float pres_fac, int this_pid, int num_procs, MPI_Comm comm);
+
+void update_first_order_congestion(congestion_t *congestion, RRNode rr_node, int delta, int capacity, float pres_fac);
 
 template<typename Congestion>
 void update_costs(const RRGraph &g, Congestion *congestion, float pres_fac, float acc_fac)

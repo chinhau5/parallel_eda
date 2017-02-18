@@ -84,6 +84,7 @@ typedef struct sink_t {
 	//int xhigh;
 	//int yhigh;
 	//source_t source;
+	box bounding_box;
 	struct new_virtual_net_t *vnet;
 	bounding_box_t current_bounding_box;
 	//bounding_box_t previous_bounding_box;
@@ -185,11 +186,21 @@ typedef struct local_cost_t {
 } local_cost_t;
 
 typedef struct congestion_local_t {
-	int tid;
+	//int tid;
 	congestion_t *global;
+	tbb::spin_mutex *locks;
 	vector<local_cost_t> local;
 	set<int> dirty_nodes;
 } congestion_local_t;
+
+typedef struct congestion_local_2_t {
+	//int tid;
+	//congestion_t *global;
+	//vector<local_cost_t> *all_local;
+	//int coalesced_
+	//vector<local_cost_t> coalesced_local;
+	//set<int> dirty_nodes;
+} congestion_local_2_t;
 
 typedef struct route_state_t {
 	int rr_node;

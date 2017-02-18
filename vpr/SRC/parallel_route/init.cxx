@@ -394,6 +394,8 @@ void init_nets(vector<net_t> &nets, vector<net_t> &global_nets, int bb_factor, b
 			//sink.source = net.source;
 			//sink.bb_factor = bb_factor;
 			sink.current_bounding_box = get_bounding_box(net.source, sink, bb_factor); 
+			bg::assign_values(sink.bounding_box, sink.current_bounding_box.xmin, sink.current_bounding_box.ymin,
+					sink.current_bounding_box.xmax, sink.current_bounding_box.ymax);
 
 			sprintf_rr_node(sink.rr_node, buffer);
 			zlog_debug(net_log, "Net %d sink %d (%s) bounding box %d-%d %d-%d\n", net.vpr_id, sink.id, buffer, sink.current_bounding_box.xmin, sink.current_bounding_box.xmax, sink.current_bounding_box.ymin, sink.current_bounding_box.ymax);
@@ -449,6 +451,8 @@ void init_nets(vector<net_t> &nets, vector<net_t> &global_nets, int bb_factor, b
 		if (large_bb) {
 			for (auto &sink : net.sinks) {
 				sink.current_bounding_box = bb;
+				bg::assign_values(sink.bounding_box, bb.xmin, bb.ymin,
+						bb.xmax, bb.ymax);
 			}
 		}
 

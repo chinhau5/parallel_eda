@@ -18,7 +18,9 @@
 #include "geometry.h"
 #include "clock.h"
 #include "new_partitioner.h"
+#include "barrier.h"
 #include "blockingconcurrentqueue.h"
+#include "dijkstra.h"
 
 //#include <mlpack/methods/kmeans/kmeans.hpp>
 //#include <mlpack/methods/kmeans/refined_start.hpp>
@@ -2744,81 +2746,6 @@ void test_misr(const vector<net_t> &nets)
 	printf("max_con: %d ave_con: %g\n", max_con, nets.size()*1.0/subiter);
 }
 
-template<typename Edge>
-bool operator<(const existing_source_t<Edge> &a, const existing_source_t<Edge> &b)
-{
-	return a.distance > b.distance;
-}
-
-template<typename Graph, typename Edge, typename EdgeWeightFunc, typename Callbacks>
-void dijkstra(const Graph &g, const vector<existing_source_t<Edge>> &sources, int sink, float *known_distance, float *distance, Edge *prev_edge, const EdgeWeightFunc &edge_weight, Callbacks &callbacks)
-{
-	using Item = existing_source_t<Edge>;
-	std::priority_queue<Item> heap;
-
-	for (const auto &s : sources) {
-		heap.push(s);
-	}
-
-	bool found = false;
-	while (!heap.empty() && !found) {
-		Item item = heap.top();
-		heap.pop();
-
-		zlog_level(delta_log, ROUTER_V3, "Current: %d [kd=%g okd=%g] [d=%g od=%g] prev=%d\n",
-					item.node, item.known_distance, known_distance[item.node], item.distance, distance[item.node], get_source(g, item.prev_edge));
-		callbacks.popped_node(item.node);
-
-		//if (!callbacks.expand_node(item.node)) {
-			//continue;
-		//}
-
-		if (item.distance < distance[item.node]) {
-			assert(item.known_distance <= known_distance[item.node]);
-
-			known_distance[item.node] = item.known_distance;
-			distance[item.node] = item.distance;
-			prev_edge[item.node] = item.prev_edge;
-
-			zlog_level(delta_log, ROUTER_V3, "Relaxing %d\n", item.node);
-			callbacks.relax_node(item.node, item.prev_edge);
-
-			if (item.node != sink) {
-				for (const auto &e : get_out_edges(g, item.node)) {
-					int v = get_target(g, e);
-
-					zlog_level(delta_log, ROUTER_V3, "\tNeighbor: %d\n", v);
-
-					if (!callbacks.expand_node(v)) {
-						continue;
-					}
-
-					const auto &weight = edge_weight(e);
-					float kd = known_distance[item.node] + weight.first;
-					float d = known_distance[item.node] + weight.second;
-
-					//zlog_level(delta_log, ROUTER_V3, "\t[w1 %X w2 %X] [kd=%X okd=%X] [d=%X od=%X] [kd=%g okd=%g] [d=%g od=%g]\n",
-							//*(unsigned int *)&weight.first, *(unsigned int *)&weight.second, *(unsigned int *)&kd, *(unsigned int *)&known_distance[v], *(unsigned int *)&d, *(unsigned int *)&distance[v], kd, known_distance[v], d, distance[v]);
-
-					if (d < distance[v]) {
-						assert(kd <= known_distance[v]);
-
-						zlog_level(delta_log, ROUTER_V3, "\tPushing neighbor %d to heap\n", v);
-
-						callbacks.push_node(v);
-
-						heap.push({ v, kd, d, e });
-					}
-				}
-			} else {
-				found = true;
-			}
-		}
-	}
-
-	assert(found);
-}
-
 typedef struct extra_route_state_t {
 	float upstream_R;
 	float delay;
@@ -3203,8 +3130,8 @@ class DeltaSteppingRouter {
 		template<typename Graph, typename Edge, typename EdgeWeightFunc, typename Callbacks>
 		friend void delta_stepping(const Graph &g, const vector<existing_source_t<Edge>> &sources, int sink, float delta, float *known_distance, float *distance, Edge *prev_edge, const EdgeWeightFunc &edge_weight, Callbacks &callbacks);
 
-		template<typename Graph, typename Edge, typename EdgeWeightFunc, typename Callbacks>
-		friend void dijkstra(const Graph &g, const vector<existing_source_t<Edge>> &sources, int sink, float *known_distance, float *distance, Edge *prev_edge, const EdgeWeightFunc &edge_weight, Callbacks &callbacks);
+		template<typename Graph, typename Edge, typename EdgeWeightFunc, typename ExpandCheckFunc, typename Callbacks>
+		friend void dijkstra(const Graph &g, const vector<existing_source_t<Edge>> &sources, int sink, float *known_distance, float *distance, Edge *prev_edge, const ExpandCheckFunc &expand_node, const EdgeWeightFunc &edge_weight, Callbacks &callbacks);
 
 		template<typename Edge, typename Callbacks>
 		friend void relax(Buckets &buckets, float delta, vector<bool> &in_bucket, const vector<bool> &vertex_deleted,
@@ -3329,7 +3256,7 @@ class DeltaSteppingRouter {
 				}
 
 				//delta_stepping(_g, sources, sink->rr_node, delta, _known_distance, _distance, _prev_edge, [this] (const RREdge &e) -> pair<float, float> { return get_edge_weight(e); }, *this);
-				dijkstra(_g, sources, sink->rr_node, _known_distance, _distance, _prev_edge, [this] (const RREdge &e) -> pair<float, float> { return get_edge_weight(e); }, *this);
+				dijkstra(_g, sources, sink->rr_node, _known_distance, _distance, _prev_edge, [this] (int rr_node) -> bool { return expand_node(rr_node); }, [this] (const RREdge &e) -> pair<float, float> { return get_edge_weight(e); }, *this);
 
 				backtrack(sink->rr_node, rt, added_rr_nodes);
 
@@ -3535,37 +3462,6 @@ public:
 	{
 		reset(_initial_count);
 	}
-};
-
-class SpinningBarrier {
-	private:
-		int _count;
-		std::atomic<int> _bar; // Counter of threads, faced barrier.
-		std::atomic<int> _passed; // Number of barriers, passed by all threads.
-
-	public:
-		SpinningBarrier(int count)
-			: _count(count), _bar(0), _passed(0)
-		{
-		}
-
-		void wait()
-		{
-			int passed_old = _passed.load(std::memory_order_relaxed);
-
-			if (_bar.fetch_add(1) == (_count - 1)) {
-				// The last thread, faced barrier.
-				_bar.store(0, std::memory_order_relaxed);
-				// Synchronize and store in one operation.
-				_passed.store(passed_old + 1, std::memory_order_relaxed);
-			} else {
-				// Not the last thread. Wait others.
-				while (_passed.load(std::memory_order_relaxed) == passed_old) {
-				}
-				// Need to synchronize cache with other threads, passed barrier.
-				//std::atomic_thread_fence(std::memory_order_acquire);
-			}
-		}
 };
 
 using heap_item_t = pair<int, new_virtual_net_t *>;
