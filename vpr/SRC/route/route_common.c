@@ -47,6 +47,7 @@ bool partitioning_delta_stepping_deterministic_route(t_router_opts *opts);
 bool partitioning_delta_stepping_deterministic_route_virtual(t_router_opts *opts);
 bool speculative_deterministic_route(t_router_opts *opts);
 bool speculative_deterministic_route_hb(t_router_opts *opts);
+bool speculative_deterministic_route_hb_fine(t_router_opts *opts);
 bool new_astar_route(t_router_opts *opts);
 
 
@@ -405,7 +406,7 @@ boolean try_route_new(int width_fac, struct s_router_opts router_opts,
 			success = partitioning_delta_stepping_deterministic_route_virtual(&router_opts);
 			break;
 		case SPECULATIVE:
-			success = speculative_deterministic_route_hb(&router_opts);
+			success = speculative_deterministic_route_hb_fine(&router_opts);
 			break;
 		default:
 			success = FALSE;

@@ -434,6 +434,10 @@ void update_one_cost(const RRGraph &g, congestion_t *congestion, const vector<RR
 
 void update_first_order_congestion(congestion_t *congestion, RRNode rr_node, int delta, int capacity, float pres_fac)
 {
+	char buffer[256];
+	sprintf_rr_node(rr_node, buffer);
+	zlog_level(delta_log, ROUTER_V2, "Update cost of %s delta: %d old_occ: %d pres_fac: %g\n", buffer, delta, congestion[rr_node].occ, pres_fac);
+
 	congestion[rr_node].occ += delta;
 
 	assert(congestion[rr_node].occ >= 0);
@@ -443,8 +447,4 @@ void update_first_order_congestion(congestion_t *congestion, RRNode rr_node, int
 	} else {
 		congestion[rr_node].pres_cost = 1 + (congestion[rr_node].occ + 1 - capacity) * pres_fac;
 	}
-
-	char buffer[256];
-	sprintf_rr_node(rr_node, buffer);
-	zlog_level(delta_log, ROUTER_V2, "Update cost of %s delta: %d new_occ: %d pres_fac: %g\n", buffer, delta, congestion[rr_node].occ, pres_fac);
 }

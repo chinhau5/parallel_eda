@@ -118,6 +118,7 @@ set(srcs
 	SRC/parallel_route/partitioning_delta_stepping_deterministic_route.cxx
 	SRC/parallel_route/speculative_deterministic_route.cxx
 	SRC/parallel_route/speculative_deterministic_route_hb.cxx
+	SRC/parallel_route/speculative_deterministic_route_hb_fine.cxx
 	SRC/parallel_route/det_mutex.cxx
 	SRC/parallel_route/delta_stepping.cxx
 	SRC/parallel_route/route_tree.c
@@ -155,7 +156,7 @@ if (CMAKE_SYSTEM_NAME STREQUAL "Linux")
 		/usr/local/include
 		#/opt/intel/vtune_amplifier_xe/include/
 		#/opt/intel/tbb/include/
-		#/home/chinhau5/Downloads/boost_1_60_0/
+		/home/chinhau5/Downloads/boost_1_60_0/
 		/home/chinhau5/Downloads/tbb44_20160526oss/include
 		/home/chinhau5/Downloads/tbb2017_20161128oss/include
 		/home/chinhau5/Downloads/metis-5.1.0/include/

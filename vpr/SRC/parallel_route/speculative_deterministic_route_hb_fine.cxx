@@ -47,8 +47,8 @@ typedef struct global_route_state_t {
 } global_route_state_t;
 
 typedef struct worker_sync_t {
-	/*alignas(64)*/ tbb::atomic<int> stop_routing;
-	/*alignas(64)*/ tbb::atomic<int> net_index;
+	/*alignas(64)*/ std::atomic<int> stop_routing;
+	/*alignas(64)*/ std::atomic<int> net_index;
 #ifdef PTHREAD_BARRIER
 	/*alignas(64)*/ pthread_barrier_t barrier;
 #else
@@ -75,7 +75,7 @@ struct mod_t {
 
 using Mods = vector<mod_t> *;
 
-struct overlap_t {
+struct region_t {
 	int gid;
 	box bb;
 	det_mutex_t mutex;
@@ -87,9 +87,9 @@ struct overlap_t {
 template<typename Net>
 struct /*alignas(64)*/ router_t {
 	vector<Net> nets;
-	vector<vector<overlap_t *>> overlaps;
-	vector<overlap_t *> flat_overlaps;
-	tbb::atomic<int> iter;
+	vector<region_t *> fpga_regions;
+	vector<region_t *> rr_regions;
+	std::atomic<int> iter;
 	worker_sync_t sync;
 	RRGraph g;
 	global_route_state_t state;
@@ -109,6 +109,8 @@ struct /*alignas(64)*/ router_t {
 	vector<dijkstra_stats_t> net_stats;
 	vector<int> net_router;
 };
+
+void rand_delay();
 
 thread_local int tl_tid;
 
@@ -154,45 +156,74 @@ static bool inside_bb(const rr_node_property_t &node, const box &bb)
 	return inside;
 }
 
+static bool inside_region(const rr_node_property_t &node, const box &bb)
+{
+	int x, y;
+	if (node.type == CHANX || node.type == CHANY) {
+		if (node.inc_direction) {
+			x = node.xlow;
+			y = node.ylow;
+		} else {
+			x = node.xhigh;
+			y = node.yhigh;
+		}
+	} else {
+		x = node.xlow;
+		y = node.ylow;
+	}
+
+	bool inside;
+	if (x >= bg::get<bg::min_corner, 0>(bb)
+			&& x <= bg::get<bg::max_corner, 0>(bb)
+			&& y >= bg::get<bg::min_corner, 1>(bb)
+			&& y <= bg::get<bg::max_corner, 1>(bb)) {
+		inside = true;
+	} else {
+		inside = false;
+	}
+
+	return inside;
+}
+
 static router_t<net_t *> *g_router;
 
-void overlap_acquire(overlap_t &o, int tid)
+void region_acquire(region_t &o, int tid)
 {
 	det_mutex_lock(o.mutex, tid);
 }
 
-void overlap_release(overlap_t &o, int tid)
+void region_release(region_t &o, int tid)
 {
 	det_mutex_unlock(o.mutex, tid);
 }
 
-//void overlap_add_mod(overlap_t &o, int rr_node, int delta, int tid)
+//void region_add_mod(region_t &o, int rr_node, int delta, int tid)
 //{
-	//overlap_acquire(o, tid);
+	//region_acquire(o, tid);
 
 	//mod_t m;
 	//m.node = rr_node;
 	//m.delta = rr_node;
 	//o.mods[tid].emplace_back(m);
 
-	//overlap_release(o, tid);
+	//region_release(o, tid);
 //}
 
-void overlap_add_mod(overlap_t &o, int tid, vector<mod_t> *mods)
+void region_add_mod(region_t &o, int tid, vector<mod_t> *mods)
 {
-	overlap_acquire(o, tid);
+	region_acquire(o, tid);
 
-	zlog_level(delta_log, ROUTER_V3, "[Net %d] Adding mods (size %d) to overlap %d (old size %d)\n", g_router->e_state[tid].inet->load(), mods->size(), o.gid, o.mods[tid].size());
+	zlog_level(delta_log, ROUTER_V3, "[Net %d] Adding mods (size %d) to region %d (old size %d)\n", g_router->e_state[tid].inet->load(), mods->size(), o.gid, o.mods[tid].size());
 
 	o.mods[tid].emplace_back(mods);
 
-	overlap_release(o, tid);
+	region_release(o, tid);
 }
 
 //template<typename Callback>
-//void overlap_get_mods(overlap_t &o, int tid, const Callback &f)
+//void region_get_mods(region_t &o, int tid, const Callback &f)
 //{
-	//overlap_acquire(o, tid);
+	//region_acquire(o, tid);
 
 	//for (int i = 0; i < o.mods.size(); ++i) {
 		//if (i == tid) {
@@ -208,15 +239,15 @@ void overlap_add_mod(overlap_t &o, int tid, vector<mod_t> *mods)
 		//o.num_committed_mods[tid][i] = o.mods[i].size();
 	//}
 
-	//overlap_release(o, tid);
+	//region_release(o, tid);
 //}
 
 template<typename Callback>
-void overlap_get_mods(overlap_t &o, int tid, const Callback &f)
+void region_get_mods(region_t &o, int tid, const Callback &f)
 {
-	overlap_acquire(o, tid);
+	region_acquire(o, tid);
 
-	zlog_level(delta_log, ROUTER_V3, "[Net %d] Thread %d Getting mods in overlap %d\n", g_router->e_state[tid].inet->load(), tl_tid, o.gid);
+	zlog_level(delta_log, ROUTER_V3, "[Net %d] Thread %d Getting mods in region %d\n", g_router->e_state[tid].inet->load(), tl_tid, o.gid);
 
 	for (int i = 0; i < o.mods.size(); ++i) {
 		if (i == tid) {
@@ -226,7 +257,7 @@ void overlap_get_mods(overlap_t &o, int tid, const Callback &f)
 
 		assert(o.num_committed_mods[tid][i] <= o.mods[i].size());
 
-		zlog_level(delta_log, ROUTER_V3, "[Net %d Overlap %d] Mods from thread %d. Commited: %d Size: %d\n", g_router->e_state[tid].inet->load(), o.gid, i, o.num_committed_mods[tid][i], o.mods[i].size());
+		zlog_level(delta_log, ROUTER_V3, "[Net %d region %d] Mods from thread %d. Commited: %d Size: %d\n", g_router->e_state[tid].inet->load(), o.gid, i, o.num_committed_mods[tid][i], o.mods[i].size());
 
 		for (int j = o.num_committed_mods[tid][i]; j < o.mods[i].size(); ++j) {
 			zlog_level(delta_log, ROUTER_V3, "Mods %d size %d\n", j, o.mods[i][j]->size());
@@ -238,10 +269,10 @@ void overlap_get_mods(overlap_t &o, int tid, const Callback &f)
 		o.num_committed_mods[tid][i] = o.mods[i].size();
 	}
 
-	overlap_release(o, tid);
+	region_release(o, tid);
 }
 
-void overlap_clear_mods(overlap_t &o)
+void region_clear_mods(region_t &o)
 {
 	for (int i = 0; i < o.mods.size(); ++i) {
 		for (int j = 0; j < o.mods[i].size(); ++j) {
@@ -257,79 +288,61 @@ void overlap_clear_mods(overlap_t &o)
 	}
 }
 
-void mods_add(vector<overlap_t *> &overlaps, const RRGraph &g, int rr_node, int delta, vector<Mods> &mods)
+void mods_add(int rr_node, int delta, vector<region_t *> &rr_regions, vector<Mods> &mods)
 {
-	assert(overlaps.size() == mods.size());
+	mod_t m;
+	m.node = rr_node;
+	m.delta = delta;
 
-	for (int i = 0; i < overlaps.size(); ++i) {
-		if (!overlaps[i]) {
-			assert(!mods[i]);
-			continue;
-		}
+	region_t *r = rr_regions[rr_node];
 
-		if (inside_bb(get_vertex_props(g, rr_node), overlaps[i]->bb)) {
-			mod_t m;
-			m.node = rr_node;
-			m.delta = delta;
-			if (!mods[i]) {
-				mods[i] = new vector<mod_t>;
-			}
-			mods[i]->emplace_back(m);
-		}
+	assert(r->gid >= 0 && r->gid < mods.size());
+
+	if (!mods[r->gid]) {
+		mods[r->gid] = new vector<mod_t>;
 	}
+
+	mods[r->gid]->emplace_back(m);
 }
 
-void mods_commit(vector<overlap_t *> &overlaps, int tid, vector<Mods> &mods)
+void mods_commit(vector<Mods> &mods, int tid, vector<region_t *> &fpga_regions)
 {
-	assert(mods.size() == overlaps.size());
-
-	for (int i = 0; i < overlaps.size(); ++i) {
-		if (!overlaps[i]) {
-			assert(!mods[i]);
-			continue;
-		}
-
+	for (int i = 0; i < mods.size(); ++i) {
 		if (mods[i]) {
-			overlap_add_mod(*overlaps[i], tid, mods[i]);
+			region_add_mod(*fpga_regions[i], tid, mods[i]);
 		}
 	}
 }
 
-template<typename ToSync, typename DoneSync>
-void sync(vector<overlap_t *> &overlaps, const ToSync &to_sync, const DoneSync &done_sync, int tid, const RRGraph &g, congestion_t *congestion, float pres_fac)
-{
-	assert((overlaps.size() % 2) == 0);
-
-	for (int i = 0; i < overlaps.size(); ++i) {
-		overlap_t *o = overlaps[i];
-
-		if (o == nullptr) {
-			continue;
-		}
-
-		//assert(o->id >= 0);
-
-		if (to_sync(i, o)) {
-			int num_updates = 0;
-			overlap_get_mods(*o, tid, [&g, &congestion, &pres_fac, &num_updates] (const mod_t &m) -> void {
-					const auto &props = get_vertex_props(g, m.node);
-					update_first_order_congestion(congestion, m.node, m.delta, props.capacity, pres_fac);
-					++num_updates;
-					});
-			//overlap_set_commited(*o, _instance);
-			//_acquired_overlaps[o->id] = true;
-			done_sync(i, o);
-			
-			zlog_level(delta_log, ROUTER_V3, "Num updates in overlap %d = %d\n", o->gid, num_updates);
-		} else {
-			zlog_level(delta_log, ROUTER_V3, "Not getting mods in overlap %d\n", o->gid);
-		}
-	}
-}
-
-//void overlap_set_commited(overlap_t &o, int tid)
+//template<typename ToSync, typename DoneSync>
+//void sync(vector<region_t *> &regions, const ToSync &to_sync, const DoneSync &done_sync, int tid, const RRGraph &g, congestion_t *congestion, float pres_fac)
 //{
-	//overlap_acquire(o, tid);
+	//for (int i = 0; i < regions.size(); ++i) {
+		//region_t *o = regions[i];
+
+		//assert(o);
+
+		//if (to_sync(i, o)) {
+			//int num_updates = 0;
+			//region_get_mods(*o, tid, [&g, &congestion, &pres_fac, &num_updates] (const mod_t &m) -> void {
+					//const auto &props = get_vertex_props(g, m.node);
+					//update_first_order_congestion(congestion, m.node, m.delta, props.capacity, pres_fac);
+					//++num_updates;
+					//});
+			////region_set_commited(*o, _instance);
+			////_acquired_regions[o->id] = true;
+			//done_sync(i, o);
+			
+			//zlog_level(delta_log, ROUTER_V3, "Num updates in region %d = %d\n", o->gid, num_updates);
+		//} else {
+			//zlog_level(delta_log, ROUTER_V3, "Not getting mods in region %d\n", o->gid);
+		//}
+	//}
+//}
+
+//void region_set_commited(region_t &o, int tid)
+//{
+	//region_acquire(o, tid);
 
 	//for (int i = 0; i < o.mods.size(); ++i) {
 		//if (i == tid) {
@@ -339,13 +352,13 @@ void sync(vector<overlap_t *> &overlaps, const ToSync &to_sync, const DoneSync &
 		//o.num_committed_mods[tid][i] = o.mods[i].size();
 	//}
 
-	//overlap_release(o, tid);
+	//region_release(o, tid);
 //}
 
-//void commit(vector<overlap_t *> &overlaps, const RRGraph &g, int node, int delta, int tid)
+//void commit(vector<region_t *> &regions, const RRGraph &g, int node, int delta, int tid)
 //{
-	//[>TODO: cache the in_overlap checking<]
-	//for (auto &o : overlaps) {
+	//[>TODO: cache the in_region checking<]
+	//for (auto &o : regions) {
 		//if (o == nullptr) {
 			//continue;
 		//}
@@ -353,7 +366,7 @@ void sync(vector<overlap_t *> &overlaps, const ToSync &to_sync, const DoneSync &
 		//assert(o->id >= 0);
 
 		//if (inside_bb(get_vertex_props(g, node), o->bb)) {
-			//overlap_add_mod(*o, node, delta, tid);
+			//region_add_mod(*o, node, delta, tid);
 		//}
 	//}
 //}
@@ -361,6 +374,8 @@ void sync(vector<overlap_t *> &overlaps, const ToSync &to_sync, const DoneSync &
 class SpeculativeDeterministicRouter {
 	private:
 		RRGraph &_g;
+		vector<region_t *> &_fpga_regions;
+		vector<region_t *> &_rr_regions;
 
 		float _astar_fac;
 
@@ -381,14 +396,13 @@ class SpeculativeDeterministicRouter {
 
 		route_tree_t *_current_rt;
 
-		vector<overlap_t *> *_current_overlaps;
-		vector<bool> _acquired_overlaps;
+		vector<bool> _acquired_regions;
 
 		const sink_t *_current_sink;
 
 		dijkstra_stats_t _stats;
 
-		static tbb::atomic<int> _num_instances;
+		static std::atomic<int> _num_instances;
 		int _instance;
 
 	private:
@@ -534,10 +548,21 @@ class SpeculativeDeterministicRouter {
 			}
 			extern t_rr_indexed_data *rr_indexed_data;
 
-			sync(*_current_overlaps,
-					[this, &v_p] (int id, const overlap_t *o) -> bool { return /*!_acquired_overlaps[id] &&*/ inside_bb(v_p, o->bb); },
-					[this] (int id, const overlap_t *o) -> void { _acquired_overlaps[id] = true; },
-					_instance, _g, _congestion, _pres_fac);
+			region_t *r = _rr_regions[v];
+
+			if (!_acquired_regions[r->gid]) {
+				region_get_mods(*r, _instance, [this] (const mod_t &m) -> void {
+						const auto &props = get_vertex_props(_g, m.node);
+						update_first_order_congestion(_congestion, m.node, m.delta, props.capacity, _pres_fac);
+						});
+				_acquired_regions[r->gid] = true;
+			}
+
+			//sync(_rr_regions,
+					//[this, &v_p] (int id, const region_t *o) -> bool { return !_acquired_regions[id];  },
+					////[this, &v_p] (int id, const region_t *o) -> bool { return true;  },
+					//[this] (int id, const region_t *o) -> void { _acquired_regions[id] = true; },
+					//_instance, _g, _congestion, _pres_fac);
 
 			float congestion_cost = rr_indexed_data[v_p.cost_index].base_cost * get_acc_cost(_congestion, v) * get_pres_cost(_congestion, v);
 			float known_cost = _current_sink->criticality_fac * delay + (1 - _current_sink->criticality_fac) * congestion_cost;
@@ -608,10 +633,10 @@ class SpeculativeDeterministicRouter {
 			const auto &sink_node_p = get_vertex_props(_g, sink_node);
 			assert(inside_bb(sink_node_p, _current_sink->bounding_box));
 
-			vector<Mods> mods(_current_overlaps->size(), nullptr);
+			vector<Mods> mods(_fpga_regions.size(), nullptr);
 			update_first_order_congestion(_congestion, sink_node, 1, sink_node_p.capacity, _pres_fac);
-			//commit(*_current_overlaps, _g, sink_node, 1, _instance);
-			mods_add(*_current_overlaps, _g, sink_node, 1, mods);
+			//commit(*_current_regions, _g, sink_node, 1, _instance);
+			mods_add(sink_node, 1, _rr_regions, mods);
 
 			added_rr_nodes.push_back(sink_node);
 
@@ -655,8 +680,8 @@ class SpeculativeDeterministicRouter {
 					assert(inside_bb(rr_node_p, _current_sink->bounding_box));
 
 					update_first_order_congestion(_congestion, parent_rr_node, 1, rr_node_p.capacity, _pres_fac);
-					//commit(*_current_overlaps, _g, parent_rr_node, 1, _instance);
-					mods_add(*_current_overlaps, _g, parent_rr_node, 1, mods);
+					//commit(*_current_regions, _g, parent_rr_node, 1, _instance);
+					mods_add(parent_rr_node, 1, _rr_regions, mods);
 
 					added_rr_nodes.push_back(parent_rr_node);
 				}
@@ -667,7 +692,7 @@ class SpeculativeDeterministicRouter {
 				edge = get_previous_edge(parent_rr_node, rt);
 			}
 
-			mods_commit(*_current_overlaps, _instance, mods);
+			mods_commit(mods, _instance, _fpga_regions);
 		}
 
 		//template<typename Graph, typename Edge, typename EdgeWeightFunc, typename Callbacks>
@@ -683,8 +708,8 @@ class SpeculativeDeterministicRouter {
 					//Callbacks &callbacks);
 
 	public:
-		SpeculativeDeterministicRouter(RRGraph &g, congestion_t **congestion, exec_state_t *e_state, const float &pres_fac)
-			: _g(g), _pres_fac(pres_fac), _modified_node_added(num_vertices(g), false)
+		SpeculativeDeterministicRouter(RRGraph &g, congestion_t **congestion, vector<region_t *> &fpga_regions, vector<region_t *> &rr_regions, exec_state_t *e_state, const float &pres_fac)
+			: _g(g), _fpga_regions(fpga_regions), _rr_regions(rr_regions), _pres_fac(pres_fac), _modified_node_added(num_vertices(g), false) 
 		{
 			_known_distance = new float[num_vertices(g)];
 			_distance = new float[num_vertices(g)];
@@ -703,6 +728,8 @@ class SpeculativeDeterministicRouter {
 
 			_congestion = congestion[_instance];
 			_e_state = &e_state[_instance];
+
+			_acquired_regions.resize(fpga_regions.size());
 
 			reset_stats();
 		}
@@ -729,7 +756,7 @@ class SpeculativeDeterministicRouter {
 			return _stats;
 		}
 
-		void route(const source_t *source, const vector<const sink_t *> &sinks, float astar_fac, route_tree_t &rt, vector<overlap_t *> &overlaps, vector<RRNode> &added_rr_nodes, t_net_timing &net_timing)
+		void route(const source_t *source, const vector<const sink_t *> &sinks, float astar_fac, route_tree_t &rt, vector<RRNode> &added_rr_nodes, t_net_timing &net_timing)
 		{
 			char buffer[256];
 
@@ -754,14 +781,12 @@ class SpeculativeDeterministicRouter {
 					});
 
 			_current_rt = &rt;
-			_current_overlaps = &overlaps;
-			_acquired_overlaps.resize(overlaps.size());
 
 			int isink = 0;
 			for (const auto &sink : sorted_sinks) {
 				_current_sink = sink;
 
-				std::fill(begin(_acquired_overlaps), end(_acquired_overlaps), false);
+				std::fill(begin(_acquired_regions), end(_acquired_regions), false);
 
 				sprintf_rr_node(sink->rr_node, buffer);
 				//zlog_level(delta_log, ROUTER_V3, "Current sink: %s BB %d->%d, %d->%d\n", buffer, sink->current_bounding_box.xmin, sink->current_bounding_box.xmax, sink->current_bounding_box.ymin, sink->current_bounding_box.ymax);
@@ -802,8 +827,6 @@ class SpeculativeDeterministicRouter {
 				//delta_stepping(_g, sources, sink->rr_node, delta, _known_distance, _distance, _prev_edge, [this] (const RREdge &e) -> pair<float, float> { return get_edge_weight(e); }, *this);
 				dijkstra(_g, sources, sink->rr_node, _known_distance, _distance, _prev_edge, [this] (int rr_node) -> bool { return expand_node(rr_node); }, [this] (const RREdge &e) -> pair<float, float> { return get_edge_weight(e); }, *this);
 
-				std::fill(begin(_acquired_overlaps), end(_acquired_overlaps), false);
-
 				backtrack(sink->rr_node, rt, added_rr_nodes);
 
 				assert(get_vertex_props(rt.graph, route_tree_get_rt_node(rt, sink->rr_node)).delay == _state[sink->rr_node].delay);
@@ -835,42 +858,23 @@ class SpeculativeDeterministicRouter {
 		}
 };
 
-tbb::atomic<int> SpeculativeDeterministicRouter::_num_instances = 0;
+std::atomic<int> SpeculativeDeterministicRouter::_num_instances{ 0 };
 
 //struct vec_clock_t {
 	//vector<int> counts;
 //};
+//
 
-void wait_for_threads(exec_state_t *e_state, int num_threads, int tid, int window_size)
+int get_next_net(det_mutex_t &lock, int tid, std::atomic<int> &net_index)
 {
-	int cur = *e_state[tid].inet;
-	bool exceeded_window;
-
-	zlog_level(delta_log, ROUTER_V3, "Starting to wait for threads\n");
-
-	int count = 0;
-
-	do {
-		exceeded_window = false;
-		for (int i = 0; i < num_threads && !exceeded_window; ++i) {
-			if (i == tid) {
-				continue;
-			}
-			int delta = *e_state[tid].inet - *e_state[i].inet; 
-			assert(delta >= -window_size);
-			exceeded_window = delta > window_size;
-		}
-
-		//++count;
-		//if ((count % 1024) == 0) {
-			//++(*e_state[tid].logical_clock);
-			//count = 0;
-		//}
-		++(*e_state[tid].logical_clock);
-	} while (exceeded_window);
+	int inet;
+	det_mutex_lock(lock, tid);	
+	inet = net_index++;
+	det_mutex_unlock(lock, tid);
+	return inet;
 }
 
-void do_work(router_t<net_t *> *router, SpeculativeDeterministicRouter &net_router)
+static void do_work_2(router_t<net_t *> *router, SpeculativeDeterministicRouter &net_router)
 {
 #ifdef PTHREAD_BARRIER
 	pthread_barrier_wait(&router->sync.barrier);
@@ -886,7 +890,7 @@ void do_work(router_t<net_t *> *router, SpeculativeDeterministicRouter &net_rout
 
 	char buffer[256];
 
-	sprintf(buffer, "%d", router->iter);
+	sprintf(buffer, "%d", router->iter.load());
 	zlog_put_mdc("iter", buffer);
 
 	vector<timer::duration> net_route_time(router->nets.size(), timer::duration::max());
@@ -894,21 +898,21 @@ void do_work(router_t<net_t *> *router, SpeculativeDeterministicRouter &net_rout
 			{ std::numeric_limits<int>::max(), std::numeric_limits<int>::max(), std::numeric_limits<int>::max() });
 	vector<int> routed_nets;
 
+	det_mutex_t lock;
+
+	det_mutex_init(lock, router->e_state.data(), router->num_threads);
+
 	auto pure_route_time = timer::duration::zero();
 	auto wait_time = timer::duration::zero();
 
 	auto route_start = timer::now();
 
-	//int last_inet = -1;
+	int inet;
 
-	while ((*router->e_state[tid].inet = router->sync.net_index++) < router->nets.size()) {
-		int inet = *router->e_state[tid].inet;
+	while ((inet = get_next_net(lock, tid, router->sync.net_index)) < router->nets.size()) {
+		*router->e_state[tid].inet = inet;
 
 		net_t &net = *router->nets[inet];
-
-		auto wait_start = timer::now();
-		wait_for_threads(router->e_state.data(), router->num_threads, tid, router->window_size);
-		wait_time += timer::now()-wait_start;
 
 		//last_inet = inet;
 
@@ -922,13 +926,10 @@ void do_work(router_t<net_t *> *router, SpeculativeDeterministicRouter &net_rout
 
 		auto real_net_route_start = timer::now();
 
-		zlog_level(delta_log, ROUTER_V3, "Routing inet %d net %d num sinks %d Overlaps: ", inet, net.local_id, net.sinks.size());
-		for (int i = 0; i < router->overlaps[inet].size(); ++i) {
-			if (router->overlaps[inet][i]) {
-				zlog_level(delta_log, ROUTER_V3, "%d, ", router->overlaps[inet][i]->gid);
-			}
-		}
-		zlog_level(delta_log, ROUTER_V3, "\n");
+		zlog_level(delta_log, ROUTER_V3, "Routing inet %d net %d num sinks %d\n", inet, net.local_id, net.sinks.size());
+		//if (router->iter > 0) {
+			//printf("Routing inet %d net %d num sinks %d\n", inet, net.local_id, net.sinks.size());
+		//}
 
 		if (router->iter > 0) {
 			//for (const auto &rt_node : route_tree_get_nodes(router->state.back_route_trees[net.local_id])) {
@@ -943,7 +944,7 @@ void do_work(router_t<net_t *> *router, SpeculativeDeterministicRouter &net_rout
 			//}
 			//}
 
-			vector<Mods> mods(router->overlaps[inet].size(), nullptr);
+			vector<Mods> mods(router->fpga_regions.size(), nullptr);
 
 			for (const auto &rr_node : router->state.back_added_rr_nodes[net.local_id]) {
 				const auto &rr_node_p = get_vertex_props(router->g, rr_node);
@@ -957,11 +958,11 @@ void do_work(router_t<net_t *> *router, SpeculativeDeterministicRouter &net_rout
 						//&& rr_node_p.ylow <= vnet->sinks[0]->current_bounding_box.ymax);
 				//assert(!outside_bb(rr_node_p, net->bounding_boxes));
 				update_first_order_congestion(router->state.congestion[tid], rr_node, -1, rr_node_p.capacity, router->pres_fac);
-				//commit(router->overlaps[inet], router->g, rr_node, 1, tid);
-				mods_add(router->overlaps[inet], router->g, rr_node, -1, mods);
+				//commit(router->regions[inet], router->g, rr_node, 1, tid);
+				mods_add(rr_node, -1, router->rr_regions, mods);
 			}
 
-			mods_commit(router->overlaps[inet], tid, mods);
+			mods_commit(mods, tid, router->fpga_regions);
 		}
 
 		vector<const sink_t *> sinks;
@@ -973,7 +974,7 @@ void do_work(router_t<net_t *> *router, SpeculativeDeterministicRouter &net_rout
 
 		net_router.reset_stats();
 
-		net_router.route(source, sinks, router->params.astar_fac, router->state.route_trees[net.local_id], router->overlaps[inet], router->state.added_rr_nodes[net.local_id], router->state.net_timing[net.vpr_id]); 
+		net_router.route(source, sinks, router->params.astar_fac, router->state.route_trees[net.local_id], router->state.added_rr_nodes[net.local_id], router->state.net_timing[net.vpr_id]); 
 
 		net_route_time[net.local_id] = timer::now()-real_net_route_start;
 		pure_route_time += net_route_time[net.local_id];
@@ -998,10 +999,191 @@ void do_work(router_t<net_t *> *router, SpeculativeDeterministicRouter &net_rout
 
 	//assert(last_inet != -1);
 	auto last_sync_start = timer::now();
-	sync(router->flat_overlaps,
-			[] (int id, const overlap_t *o) -> bool { return true; },
-			[] (int id, const overlap_t *o) -> void {  },
-			tid, router->g, router->state.congestion[tid], router->pres_fac);
+	for (auto &r : router->fpga_regions) {
+		region_get_mods(*r, tid, [&router, &tid] (const mod_t &m) -> void {
+				const auto &props = get_vertex_props(router->g, m.node);
+				update_first_order_congestion(router->state.congestion[tid], m.node, m.delta, props.capacity, router->pres_fac);
+				});
+	}
+	//sync(router->fpga_regions,
+			//[] (int id, const region_t *o) -> bool { return true; },
+			//[] (int id, const region_t *o) -> void {  },
+			//tid, router->g, router->state.congestion[tid], router->pres_fac);
+	router->time[tid].last_sync_time = timer::now()-last_sync_start;
+
+	router->time[tid].route_time = timer::now()-route_start;
+	router->time[tid].wait_time = wait_time;
+	router->time[tid].pure_route_time = pure_route_time; 
+
+	router->stats[tid].num_heap_pops = 0;
+	router->stats[tid].num_heap_pushes = 0;
+	router->stats[tid].num_neighbor_visits = 0;
+
+	for (const auto &r : routed_nets) {
+		router->net_route_time[r] = net_route_time[r];
+		router->net_stats[r] = net_stats[r];
+		router->net_router[r] = tid;
+
+		router->stats[tid].num_heap_pops += net_stats[r].num_heap_pops;
+		router->stats[tid].num_heap_pushes += net_stats[r].num_heap_pushes;
+		router->stats[tid].num_neighbor_visits += net_stats[r].num_neighbor_visits;
+	}
+
+#ifdef PTHREAD_BARRIER 
+	pthread_barrier_wait(&router->sync.barrier);
+#else
+	router->sync.barrier->wait(
+			[&router, &tid] () -> void {
+				++(*router->e_state[tid].logical_clock);
+			});
+
+#endif
+}
+
+static void do_work(router_t<net_t *> *router, SpeculativeDeterministicRouter &net_router)
+{
+#ifdef PTHREAD_BARRIER
+	pthread_barrier_wait(&router->sync.barrier);
+#else
+	router->sync.barrier->wait();
+#endif
+
+	assert(net_router.get_num_instances() == router->num_threads);
+
+	int tid = net_router.get_instance();
+
+	tl_tid = tid;
+
+	char buffer[256];
+
+	sprintf(buffer, "%d", router->iter.load());
+	zlog_put_mdc("iter", buffer);
+
+	vector<timer::duration> net_route_time(router->nets.size(), timer::duration::max());
+	vector<dijkstra_stats_t> net_stats(router->nets.size(),
+			{ std::numeric_limits<int>::max(), std::numeric_limits<int>::max(), std::numeric_limits<int>::max() });
+	vector<int> routed_nets;
+
+	auto pure_route_time = timer::duration::zero();
+	auto wait_time = timer::duration::zero();
+
+	auto route_start = timer::now();
+
+//#define ROUND_ROBIN
+
+	//int last_inet = -1;
+#ifdef ROUND_ROBIN
+	int inet = tid;
+#endif
+
+#ifndef ROUND_ROBIN
+	while ((*router->e_state[tid].inet = router->sync.net_index++) < router->nets.size()) {
+		int inet = *router->e_state[tid].inet;
+#else
+	while (inet < router->nets.size()) {
+		*router->e_state[tid].inet = inet;
+#endif
+		net_t &net = *router->nets[inet];
+
+		//last_inet = inet;
+
+		//router->sync.lock.lock();
+
+		//assert(!router->sync.global_pending_nets.empty());
+		//vnet = router->sync.global_pending_nets.front();
+		//router->sync.global_pending_nets.pop();
+
+		//router->sync.lock.unlock();
+
+		auto real_net_route_start = timer::now();
+
+		zlog_level(delta_log, ROUTER_V3, "Routing inet %d net %d num sinks %d\n", inet, net.local_id, net.sinks.size());
+		//if (router->iter > 0) {
+			//printf("Routing inet %d net %d num sinks %d\n", inet, net.local_id, net.sinks.size());
+		//}
+
+		if (router->iter > 0) {
+			//for (const auto &rt_node : route_tree_get_nodes(router->state.back_route_trees[net.local_id])) {
+			//RRNode rr_node = get_vertex_props(router->state.back_route_trees[net.local_id].graph, rt_node).rr_node;
+			//const auto &rr_node_p = get_vertex_props(router->g, rr_node);
+
+			//if (rr_node_p.xhigh >= _current_sink->current_bounding_box.xmin
+			//&& rr_node_p.xlow <= _current_sink->current_bounding_box.xmax
+			//&& rr_node_p.yhigh >= _current_sink->current_bounding_box.ymin
+			//&& rr_node_p.ylow <= _current_sink->current_bounding_box.ymax) {
+			//update_one_cost_internal(rr_node, router->g, router->state.congestion, -1, router->pres_fac);
+			//}
+			//}
+
+			vector<Mods> mods(router->fpga_regions.size(), nullptr);
+
+			for (const auto &rr_node : router->state.back_added_rr_nodes[net.local_id]) {
+				const auto &rr_node_p = get_vertex_props(router->g, rr_node);
+				//assert(rr_node_p.xlow >= vnet->sinks[0]->current_bounding_box.xmin
+						//&& rr_node_p.xhigh <= vnet->sinks[0]->current_bounding_box.xmax
+						//&& rr_node_p.ylow >= vnet->sinks[0]->current_bounding_box.ymin
+						//&& rr_node_p.yhigh <= vnet->sinks[0]->current_bounding_box.ymax);
+				//assert(rr_node_p.xhigh >= vnet->sinks[0]->current_bounding_box.xmin
+						//&& rr_node_p.xlow <= vnet->sinks[0]->current_bounding_box.xmax
+						//&& rr_node_p.yhigh >= vnet->sinks[0]->current_bounding_box.ymin
+						//&& rr_node_p.ylow <= vnet->sinks[0]->current_bounding_box.ymax);
+				//assert(!outside_bb(rr_node_p, net->bounding_boxes));
+				update_first_order_congestion(router->state.congestion[tid], rr_node, -1, rr_node_p.capacity, router->pres_fac);
+				//commit(router->regions[inet], router->g, rr_node, 1, tid);
+				mods_add(rr_node, -1, router->rr_regions, mods);
+			}
+
+			mods_commit(mods, tid, router->fpga_regions);
+		}
+
+		vector<const sink_t *> sinks;
+		for (int i = 0; i < net.sinks.size(); ++i) {
+			sinks.push_back(&net.sinks[i]);
+		}
+
+		source_t *source = &net.source;
+
+		net_router.reset_stats();
+
+		net_router.route(source, sinks, router->params.astar_fac, router->state.route_trees[net.local_id], router->state.added_rr_nodes[net.local_id], router->state.net_timing[net.vpr_id]); 
+
+		net_route_time[net.local_id] = timer::now()-real_net_route_start;
+		pure_route_time += net_route_time[net.local_id];
+
+		net_stats[net.local_id] = net_router.get_stats();
+
+		routed_nets.push_back(net.local_id);
+
+#ifdef ROUND_ROBIN
+		inet += router->num_threads;
+#endif
+	}
+
+	auto last_barrier_wait_start = timer::now();
+#ifdef PTHREAD_BARRIER 
+	pthread_barrier_wait(&router->sync.barrier);
+#else
+	router->sync.barrier->wait(
+			[&router, &tid] () -> void {
+				++(*router->e_state[tid].logical_clock);
+			});
+#endif
+	router->time[tid].last_barrier_wait_time = timer::now() - last_barrier_wait_start;
+
+	zlog_level(delta_log, ROUTER_V3, "Start last sync\n");
+
+	//assert(last_inet != -1);
+	auto last_sync_start = timer::now();
+	for (auto &r : router->fpga_regions) {
+		region_get_mods(*r, tid, [&router, &tid] (const mod_t &m) -> void {
+				const auto &props = get_vertex_props(router->g, m.node);
+				update_first_order_congestion(router->state.congestion[tid], m.node, m.delta, props.capacity, router->pres_fac);
+				});
+	}
+	//sync(router->fpga_regions,
+			//[] (int id, const region_t *o) -> bool { return true; },
+			//[] (int id, const region_t *o) -> void {  },
+			//tid, router->g, router->state.congestion[tid], router->pres_fac);
 	router->time[tid].last_sync_time = timer::now()-last_sync_start;
 
 	router->time[tid].route_time = timer::now()-route_start;
@@ -1043,7 +1225,7 @@ static void *worker_thread(void *args)
 	router->sync.barrier->wait();
 #endif
 
-	SpeculativeDeterministicRouter net_router(router->g, router->state.congestion, router->e_state.data(), router->pres_fac);
+	SpeculativeDeterministicRouter net_router(router->g, router->state.congestion, router->fpga_regions, router->rr_regions, router->e_state.data(), router->pres_fac);
 
 	char buffer[256];
 	sprintf(buffer, "%d", net_router.get_instance());
@@ -1051,7 +1233,7 @@ static void *worker_thread(void *args)
 	zlog_put_mdc("log_dir", dirname);
 
 	while (!router->sync.stop_routing) {
-		do_work(router, net_router);
+		do_work_2(router, net_router);
 	}
 
 	return nullptr;
@@ -1061,101 +1243,71 @@ void write_routes(const char *fname, const route_tree_t *route_trees, int num_ne
 void write_net_dijkstra_stats(const char *fname, const vector<dijkstra_stats_t> &net_stats);
 void write_congestion_state(const char *fname, const congestion_t *congestion, int num_rr_nodes);
 
-void init_net_overlaps(const vector<net_t *> &nets, exec_state_t *e_state, int num_threads, int window_size, vector<vector<overlap_t *>> &overlaps, vector<overlap_t *> &flat_overlaps, vector<overlap_t> &all_overlaps)
+static void init_fpga_regions(int split, exec_state_t *e_state, int num_threads, vector<region_t> &fpga_regions)
 {
-	overlaps.resize(nets.size());	
+	extern int nx, ny;
+
+	int xsplit = split;
+	int ysplit = (float)ny/nx*xsplit; // take aspect ratio into account
+	int width = ceil((float)(nx+2)/xsplit);
+	int height = ceil((float)(ny+2)/ysplit);
 
 	int gid = 0;
-	int num_overlaps = 0;
 
-	for (int round = 0; round < 2; ++round) {
-		if (round == 1) {
-			all_overlaps.resize(num_overlaps);
+	for (int x = 0; x < nx+2; x += width) {
+		int xmax = std::min(x+width-1, nx+2);
+
+		for (int y = 0; y < ny+2; y += height) {
+			int ymax = std::min(y+height-1, ny+2);
+
+			fpga_regions.emplace_back();
+			auto &r = fpga_regions.back();
+
+			r.gid = gid;
+			bg::assign_values(r.bb, x, y, xmax, ymax);
+			det_mutex_init(r.mutex, e_state, num_threads);
+			r.mods.resize(num_threads);
+			r.num_committed_mods.resize(num_threads);
+			for (auto &n : r.num_committed_mods) {
+				n.resize(num_threads, 0);
+			}
+			++gid;
+
+			zlog_level(delta_log, ROUTER_V3, "FPGA region %d, BB %d,%d %d,%d\n", r.gid,
+					bg::get<bg::min_corner, 0>(r.bb), bg::get<bg::min_corner, 1>(r.bb),
+					bg::get<bg::max_corner, 0>(r.bb), bg::get<bg::max_corner, 1>(r.bb));
 		}
+	}
 
-		for (int i = 0; i < nets.size(); ++i) {
-			for (int j = -window_size; j <= window_size; ++j) {
-				if (j == 0) {
-					//zlog_level(delta_log, ROUTER_V3, "Skipping j %d\n", j);
-					continue;
-				}
-
-				if (i+j < 0 || i+j >= nets.size()) {
-					if (round == 1) {
-						overlaps[i].emplace_back(nullptr);
-					}
-					continue;
-				}
-
-				box cur_box = bg::make<box>(nets[i]->bounding_box.xmin, nets[i]->bounding_box.ymin,
-						nets[i]->bounding_box.xmax, nets[i]->bounding_box.ymax);
-				box other_box = bg::make<box>(nets[i+j]->bounding_box.xmin, nets[i+j]->bounding_box.ymin,
-						nets[i+j]->bounding_box.xmax, nets[i+j]->bounding_box.ymax);
-				box o;
-
-				bool intersect = bg::intersection(cur_box, other_box, o);
-
-				if (round == 0) {
-					if (intersect) {
-						++num_overlaps;
-					}
-				} else {
-					overlap_t *overlap;
-
-					if (intersect) {
-						zlog_level(delta_log, ROUTER_V3, "Net %d (%d,%d %d,%d) overlaps net %d (%d,%d %d,%d)\n",
-								i,
-								bg::get<bg::min_corner, 0>(cur_box), bg::get<bg::min_corner, 1>(cur_box),
-								bg::get<bg::max_corner, 0>(cur_box), bg::get<bg::max_corner, 1>(cur_box),
-								i+j,
-								bg::get<bg::min_corner, 0>(other_box), bg::get<bg::min_corner, 1>(other_box),
-								bg::get<bg::max_corner, 0>(other_box), bg::get<bg::max_corner, 1>(other_box)
-								);
-
-						if (j > 0) {
-							zlog_level(delta_log, ROUTER_V3, "\tNew overlap\n");
-
-							overlap = &all_overlaps[gid];
-							overlap->gid = gid;
-							overlap->bb = o;
-							det_mutex_init(overlap->mutex, e_state, num_threads);
-							overlap->mods.resize(num_threads);
-							overlap->num_committed_mods.resize(num_threads);
-							for (auto &n : overlap->num_committed_mods) {
-								n.resize(num_threads, 0);
-							}
-							++gid;
-						} else {
-							assert(j < 0);
-
-							int existing = window_size + abs(j) - 1;
-
-							zlog_level(delta_log, ROUTER_V3, "\tExisting overlap with net %d, using existing index %d\n", i+j, existing);
-
-							assert(existing >= 0 && existing < overlaps[i+j].size());
-
-							overlap = overlaps[i+j][existing];
-
-							assert(bg::equals(overlap->bb, o));
-						}
-					} else {
-						zlog_level(delta_log, ROUTER_V3, "Net %d does not overlap net %d\n", i, i+j);
-						overlap = nullptr;
-					}
-
-					flat_overlaps.push_back(overlap);
-					overlaps[i].push_back(overlap);
-				}
-			}
-
-			if (round == 1) {
-				assert(overlaps[i].size() == window_size * 2);
-			}
+	for (int i = 0; i < fpga_regions.size(); ++i) {
+		for (int j = i+1; j < fpga_regions.size(); ++j) {
+			assert(!bg::intersects(fpga_regions[i].bb, fpga_regions[j].bb));
 		}
 	}
 }
 
-bool speculative_deterministic_route_hb(t_router_opts *opts)
+static void init_rr_node_regions(const RRGraph &g, vector<region_t> &fpga_regions, vector<region_t *> &rr_regions)
+{
+	rr_regions.resize(num_vertices(g), nullptr);	
+
+	for (int i = 0; i < rr_regions.size(); ++i) {
+		const auto &props = get_vertex_props(g, i);
+
+		int num_regions = 0;
+		for (auto &fpga_r : fpga_regions) {
+			if (inside_region(props, fpga_r.bb)) {
+				assert(!rr_regions[i]);
+				rr_regions[i] = &fpga_r;
+				zlog_level(delta_log, ROUTER_V3, "RR %d is inside region %d\n", i, fpga_r.gid);
+				++num_regions;
+			}
+		}
+
+		assert(num_regions == 1);
+	}
+}
+
+bool speculative_deterministic_route_hb_fine(t_router_opts *opts)
 {
 	char buffer[256];
 
@@ -1218,7 +1370,7 @@ bool speculative_deterministic_route_hb(t_router_opts *opts)
 	vector<net_t> global_nets;
 	init_nets(nets, global_nets, opts->bb_factor, opts->large_bb);
 
-	for (int i = 0; i < 100; ++i) {
+	for (int i = 0; i < nets.size(); ++i) {
 		router.nets.push_back(&nets[i]);
 	}
 	std::sort(begin(router.nets), end(router.nets), [] (const net_t *a, const net_t *b) -> bool {
@@ -1233,8 +1385,12 @@ bool speculative_deterministic_route_hb(t_router_opts *opts)
 
 	router.window_size = router.num_threads * 2;
 
-	vector<overlap_t> all_overlaps;
-	init_net_overlaps(router.nets, router.e_state.data(), opts->num_threads, router.window_size, router.overlaps, router.flat_overlaps, all_overlaps);
+	vector<region_t> fpga_regions;
+	init_fpga_regions(4, router.e_state.data(), opts->num_threads, fpga_regions);
+	for (auto &r : fpga_regions) {
+		router.fpga_regions.push_back(&r);	
+	}
+	init_rr_node_regions(router.g, fpga_regions, router.rr_regions);
 
 	//vector<net_t> nets_copy = nets;
 	//std::sort(begin(nets_copy), end(nets_copy), [] (const net_t &a, const net_t &b) -> bool {
@@ -1411,7 +1567,7 @@ bool speculative_deterministic_route_hb(t_router_opts *opts)
 	timer::duration total_route_time = timer::duration::zero();
 
 	/* just to make sure that we are allocated on the correct NUMA node */
-	SpeculativeDeterministicRouter *net_router = new SpeculativeDeterministicRouter(router.g, router.state.congestion, router.e_state.data(), router.pres_fac);
+	SpeculativeDeterministicRouter *net_router = new SpeculativeDeterministicRouter(router.g, router.state.congestion, router.fpga_regions, router.rr_regions, router.e_state.data(), router.pres_fac);
 
 	sprintf(buffer, "%d", net_router->get_instance());
 	zlog_put_mdc("tid", buffer);
@@ -1419,10 +1575,10 @@ bool speculative_deterministic_route_hb(t_router_opts *opts)
 	bool routed = false;
 	bool has_resched = false;
 	for (; router.iter < opts->max_router_iterations && !routed; ++router.iter) {
-		sprintf(buffer, "%d", router.iter);
+		sprintf(buffer, "%d", router.iter.load());
 		zlog_put_mdc("iter", buffer);
 
-		printf("Routing iteration: %d\n", router.iter);
+		printf("Routing iteration: %d\n", router.iter.load());
 
 		//assert(router.sync.num_incoming_edges.empty());
 
@@ -1462,42 +1618,35 @@ bool speculative_deterministic_route_hb(t_router_opts *opts)
 			update_sink_criticalities(net, router.state.net_timing[net.vpr_id], router.params);
 		}
 
-		for (int i = 0; i < router.overlaps.size(); ++i) {
-			for (int j = 0; j < router.overlaps[i].size(); ++j) {
-				if (router.overlaps[i][j]) {
-					overlap_clear_mods(*router.overlaps[i][j]);
-				}
-			}
+		for (int i = 0; i < router.fpga_regions.size(); ++i) {
+			region_clear_mods(*router.fpga_regions[i]);
 		}
 
-		for (auto &e : router.e_state) {
-			*e.logical_clock = 0;
-			*e.inet = 0;
+		for (int i = 0; i < router.e_state.size(); ++i) {
+			*router.e_state[i].logical_clock = 0;
+			*router.e_state[i].inet = i;
 		}
 
 		//do_virtual_work(&router, *net_router);
-		do_work(&router, *net_router);
+		do_work_2(&router, *net_router);
 
 		/* checking */
-		for (int i = 0; i < router.overlaps.size(); ++i) {
-			for (int j = 0; j < router.overlaps[i].size(); ++j) {
-				if (router.overlaps[i][j]) {
-					for (int k = 0; k < opts->num_threads; ++k) {
-						for (int l = 0; l < opts->num_threads; ++l) {
-							if (l == k) {
-								continue;
-							}
+		for (int i = 0; i < router.fpga_regions.size(); ++i) {
+			for (int k = 0; k < opts->num_threads; ++k) {
+				for (int l = 0; l < opts->num_threads; ++l) {
+					if (l == k) {
+						continue;
+					}
 
-							if (router.overlaps[i][j]->num_committed_mods[k][l] != router.overlaps[i][j]->mods[l].size()) {
-								printf("%d %d %d %d %d %d %d\n", i, j, k, l, router.overlaps[i][j]->gid, router.overlaps[i][j]->num_committed_mods[k][l],
-										router.overlaps[i][j]->mods[l].size());
-								assert(false);
-							}
-						}
+					if (router.fpga_regions[i]->num_committed_mods[k][l] != router.fpga_regions[i]->mods[l].size()) {
+						printf("%d %d %d %d %d %d\n", i, k, l, router.fpga_regions[i]->gid, router.fpga_regions[i]->num_committed_mods[k][l],
+								router.fpga_regions[i]->mods[l].size());
+						assert(false);
 					}
 				}
 			}
 		}
+
 		for (int i = 0; i < opts->num_threads; ++i) {
 			for (int j = 0; j < num_vertices(router.g); ++j) {
 				router.state.congestion[i][j].recalc_occ = 0; 
@@ -1507,6 +1656,16 @@ bool speculative_deterministic_route_hb(t_router_opts *opts)
 				check_route_tree(router.state.route_trees[net.local_id], net, router.g);
 				recalculate_occ(router.state.route_trees[net.local_id], router.g, router.state.congestion[i]);
 			}
+
+			bool valid = true;
+			for (int j = 0; j < num_vertices(router.g); ++j) {
+				if (router.state.congestion[i][j].recalc_occ != router.state.congestion[i][j].occ) {
+					sprintf_rr_node_impl(j, buffer);
+					printf("Node %s occ mismatch, recalc: %d original: %d\n", buffer, router.state.congestion[i][j].recalc_occ, router.state.congestion[i][j].occ);
+					valid = false;
+				}
+			}
+			assert(valid);
 		}
 
 		//printf("Resched time [has_resched %d]: %g\n", has_resched ? 1 : 0, duration_cast<nanoseconds>(resched_time).count()/1e9);
@@ -1625,25 +1784,26 @@ bool speculative_deterministic_route_hb(t_router_opts *opts)
 			//update_cost_time = timer::now()-update_cost_start;
 		}
 
-		if (router.iter == 0) {
-			sprintf(buffer, "%s/routes_iter_%d.txt", dirname, router.iter);
-			write_routes(buffer, router.state.route_trees, nets.size());
-		} else if (routed) {
+		if (routed) {
 			sprintf(buffer, "%s/routes_final.txt", dirname);
-			write_routes(buffer, router.state.route_trees, nets.size());
+		} else {
+			sprintf(buffer, "%s/routes_iter_%d.txt", dirname, router.iter.load());
 		}
+		write_routes(buffer, router.state.route_trees, nets.size());
 
 		if (routed) {
 			sprintf(buffer, "%s/net_dijkstra_stats_final.txt", dirname);
-			write_net_dijkstra_stats(buffer, router.net_stats);
-			sprintf(buffer, "%s/congestion_state_final.txt", dirname);
-			write_congestion_state(buffer, router.state.congestion[0], num_vertices(router.g));
 		} else {
-			sprintf(buffer, "%s/net_dijkstra_stats_%d.txt", dirname, router.iter);
-			write_net_dijkstra_stats(buffer, router.net_stats);
-			sprintf(buffer, "%s/congestion_state_%d.txt", dirname, router.iter);
-			write_congestion_state(buffer, router.state.congestion[0], num_vertices(router.g));
+			sprintf(buffer, "%s/net_dijkstra_stats_%d.txt", dirname, router.iter.load());
 		}
+		write_net_dijkstra_stats(buffer, router.net_stats);
+
+		if (routed) {
+			sprintf(buffer, "%s/congestion_state_final.txt", dirname);
+		} else {
+			sprintf(buffer, "%s/congestion_state_%d.txt", dirname, router.iter.load());
+		}
+		write_congestion_state(buffer, router.state.congestion[0], num_vertices(router.g));
 
 		//auto analyze_timing_start = timer::now();
 
@@ -1668,7 +1828,7 @@ bool speculative_deterministic_route_hb(t_router_opts *opts)
 	}
 
 	if (routed) {
-		printf("Routed in %d iterations\n", router.iter);
+		printf("Routed in %d iterations\n", router.iter.load());
 		printf("Total route time: %g\n", duration_cast<nanoseconds>(total_route_time).count() / 1e9);
 	}
 
