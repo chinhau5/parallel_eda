@@ -26,6 +26,8 @@ using timer = std::chrono::high_resolution_clock;
 using std::chrono::duration_cast;
 using std::chrono::nanoseconds;
 
+//#define PTHREAD_BARRIER
+
 typedef struct extra_route_state_t {
 	float upstream_R;
 	float delay;
@@ -112,7 +114,9 @@ struct /*alignas(64)*/ router_t {
 
 void rand_delay();
 
-thread_local int tl_tid;
+static thread_local int tl_tid;
+static thread_local unsigned long tl_logical_clock_mask;
+static exec_state_t *g_e_state;
 
 static char dirname[256];
 
@@ -185,6 +189,31 @@ static bool inside_region(const rr_node_property_t &node, const box &bb)
 	return inside;
 }
 
+void inc_logical_clock(unsigned long count)
+{
+	if (tl_logical_clock_mask > 0) {
+		assert(g_e_state);
+		*g_e_state[tl_tid].logical_clock += (count & tl_logical_clock_mask);
+	}
+}
+
+void start_logical_clock()
+{
+	tl_logical_clock_mask = std::numeric_limits<unsigned long>::max();
+}
+
+void stop_logical_clock()
+{
+	tl_logical_clock_mask = 0;
+}
+
+void reset_logical_clock()
+{
+	if (g_e_state) {
+		*g_e_state[tl_tid].logical_clock = 0;
+	}
+}
+
 static router_t<net_t *> *g_router;
 
 void region_acquire(region_t &o, int tid)
@@ -242,6 +271,8 @@ void region_add_mod(region_t &o, int tid, vector<mod_t> *mods)
 	//region_release(o, tid);
 //}
 
+#define SHORT_CRIT
+
 template<typename Callback>
 void region_get_mods(region_t &o, int tid, const Callback &f)
 {
@@ -261,9 +292,13 @@ void region_get_mods(region_t &o, int tid, const Callback &f)
 
 		for (int j = o.num_committed_mods[tid][i]; j < o.mods[i].size(); ++j) {
 			zlog_level(delta_log, ROUTER_V3, "Mods %d size %d\n", j, o.mods[i][j]->size());
+#ifdef SHORT_CRIT
+			f(o.mods[i][j]);
+#else
 			for (int k = 0; k < o.mods[i][j]->size(); ++k) {
 				f((*o.mods[i][j])[k]);
 			}
+#endif
 		}
 
 		o.num_committed_mods[tid][i] = o.mods[i].size();
@@ -405,6 +440,8 @@ class SpeculativeDeterministicRouter {
 		static std::atomic<int> _num_instances;
 		int _instance;
 
+		vector<const vector<mod_t> *> _all_mods;
+
 	private:
 		void popped_node(int v)
 		{
@@ -481,7 +518,7 @@ class SpeculativeDeterministicRouter {
 
 		bool expand_node(int node)
 		{
-			++(*_e_state->logical_clock);
+			//++(*_e_state->logical_clock);
 			
 			const auto &prop = get_vertex_props(_g, node);
 
@@ -551,10 +588,23 @@ class SpeculativeDeterministicRouter {
 			region_t *r = _rr_regions[v];
 
 			if (!_acquired_regions[r->gid]) {
+#ifdef SHORT_CRIT
+				_all_mods.clear();	
+				region_get_mods(*r, _instance, [this] (const vector<mod_t> *mods) -> void {
+						_all_mods.push_back(mods);
+						});
+				for (const auto &mods : _all_mods) {
+					for (const auto &m : *mods) {
+						const auto &props = get_vertex_props(_g, m.node);
+						update_first_order_congestion(_congestion, m.node, m.delta, props.capacity, _pres_fac);
+					}
+				}
+#else
 				region_get_mods(*r, _instance, [this] (const mod_t &m) -> void {
 						const auto &props = get_vertex_props(_g, m.node);
 						update_first_order_congestion(_congestion, m.node, m.delta, props.capacity, _pres_fac);
 						});
+#endif
 				_acquired_regions[r->gid] = true;
 			}
 
@@ -640,6 +690,8 @@ class SpeculativeDeterministicRouter {
 
 			added_rr_nodes.push_back(sink_node);
 
+			//++(*_e_state->logical_clock);
+
 			zlog_level(delta_log, ROUTER_V3, "\n");
 
 			RREdge edge = get_previous_edge(sink_node, rt);
@@ -690,6 +742,8 @@ class SpeculativeDeterministicRouter {
 
 				child_rr_node = parent_rr_node;
 				edge = get_previous_edge(parent_rr_node, rt);
+
+				//++(*_e_state->logical_clock);
 			}
 
 			mods_commit(mods, _instance, _fpga_regions);
@@ -730,6 +784,8 @@ class SpeculativeDeterministicRouter {
 			_e_state = &e_state[_instance];
 
 			_acquired_regions.resize(fpga_regions.size());
+
+			_all_mods.reserve(1024);
 
 			reset_stats();
 		}
@@ -822,6 +878,8 @@ class SpeculativeDeterministicRouter {
 					} else {
 						zlog_level(delta_log, ROUTER_V3, "Not reexpanding %s\n", buffer);
 					}
+
+					//++(*_e_state->logical_clock);
 				}
 
 				//delta_stepping(_g, sources, sink->rr_node, delta, _known_distance, _distance, _prev_edge, [this] (const RREdge &e) -> pair<float, float> { return get_edge_weight(e); }, *this);
@@ -841,6 +899,8 @@ class SpeculativeDeterministicRouter {
 
 					assert(_modified_node_added[n]);
 					_modified_node_added[n] = false;
+
+					//++(*_e_state->logical_clock);
 				}
 
 				_modified_nodes.clear();
@@ -885,8 +945,7 @@ static void do_work_2(router_t<net_t *> *router, SpeculativeDeterministicRouter 
 	assert(net_router.get_num_instances() == router->num_threads);
 
 	int tid = net_router.get_instance();
-
-	tl_tid = tid;
+	assert(tl_tid == tid);
 
 	char buffer[256];
 
@@ -908,6 +967,13 @@ static void do_work_2(router_t<net_t *> *router, SpeculativeDeterministicRouter 
 	auto route_start = timer::now();
 
 	int inet;
+
+	stop_logical_clock();
+	reset_logical_clock();
+
+	assert(router->e_state[tid].logical_clock->load() == 0);
+
+	start_logical_clock();
 
 	while ((inet = get_next_net(lock, tid, router->sync.net_index)) < router->nets.size()) {
 		*router->e_state[tid].inet = inet;
@@ -960,6 +1026,8 @@ static void do_work_2(router_t<net_t *> *router, SpeculativeDeterministicRouter 
 				update_first_order_congestion(router->state.congestion[tid], rr_node, -1, rr_node_p.capacity, router->pres_fac);
 				//commit(router->regions[inet], router->g, rr_node, 1, tid);
 				mods_add(rr_node, -1, router->rr_regions, mods);
+				
+				//++(*router->e_state[tid].logical_clock);
 			}
 
 			mods_commit(mods, tid, router->fpga_regions);
@@ -988,10 +1056,11 @@ static void do_work_2(router_t<net_t *> *router, SpeculativeDeterministicRouter 
 #ifdef PTHREAD_BARRIER 
 	pthread_barrier_wait(&router->sync.barrier);
 #else
-	router->sync.barrier->wait(
-			[&router, &tid] () -> void {
-				++(*router->e_state[tid].logical_clock);
-			});
+	//router->sync.barrier->wait(
+			//[&router, &tid] () -> void {
+				//++(*router->e_state[tid].logical_clock);
+			//});
+	router->sync.barrier->wait();
 #endif
 	router->time[tid].last_barrier_wait_time = timer::now() - last_barrier_wait_start;
 
@@ -999,11 +1068,26 @@ static void do_work_2(router_t<net_t *> *router, SpeculativeDeterministicRouter 
 
 	//assert(last_inet != -1);
 	auto last_sync_start = timer::now();
+	vector<const vector<mod_t> *> all_mods;
+	all_mods.reserve(1024);
 	for (auto &r : router->fpga_regions) {
+#ifdef SHORT_CRIT
+		all_mods.clear();
+		region_get_mods(*r, tid, [&all_mods] (const vector<mod_t> *mods) -> void {
+				all_mods.push_back(mods);
+				});
+		for (const auto &mods : all_mods) {
+			for (const auto &m : *mods) {
+				const auto &props = get_vertex_props(router->g, m.node);
+				update_first_order_congestion(router->state.congestion[tid], m.node, m.delta, props.capacity, router->pres_fac);
+			}
+		}
+#else
 		region_get_mods(*r, tid, [&router, &tid] (const mod_t &m) -> void {
 				const auto &props = get_vertex_props(router->g, m.node);
 				update_first_order_congestion(router->state.congestion[tid], m.node, m.delta, props.capacity, router->pres_fac);
 				});
+#endif
 	}
 	//sync(router->fpga_regions,
 			//[] (int id, const region_t *o) -> bool { return true; },
@@ -1032,14 +1116,14 @@ static void do_work_2(router_t<net_t *> *router, SpeculativeDeterministicRouter 
 #ifdef PTHREAD_BARRIER 
 	pthread_barrier_wait(&router->sync.barrier);
 #else
-	router->sync.barrier->wait(
-			[&router, &tid] () -> void {
-				++(*router->e_state[tid].logical_clock);
-			});
-
+	//router->sync.barrier->wait(
+			//[&router, &tid] () -> void {
+				//++(*router->e_state[tid].logical_clock);
+			//});
+	router->sync.barrier->wait();
 #endif
 }
-
+/*
 static void do_work(router_t<net_t *> *router, SpeculativeDeterministicRouter &net_router)
 {
 #ifdef PTHREAD_BARRIER
@@ -1175,10 +1259,10 @@ static void do_work(router_t<net_t *> *router, SpeculativeDeterministicRouter &n
 	//assert(last_inet != -1);
 	auto last_sync_start = timer::now();
 	for (auto &r : router->fpga_regions) {
-		region_get_mods(*r, tid, [&router, &tid] (const mod_t &m) -> void {
-				const auto &props = get_vertex_props(router->g, m.node);
-				update_first_order_congestion(router->state.congestion[tid], m.node, m.delta, props.capacity, router->pres_fac);
-				});
+		//region_get_mods(*r, tid, [&router, &tid] (const mod_t &m) -> void {
+				//const auto &props = get_vertex_props(router->g, m.node);
+				//update_first_order_congestion(router->state.congestion[tid], m.node, m.delta, props.capacity, router->pres_fac);
+				//});
 	}
 	//sync(router->fpga_regions,
 			//[] (int id, const region_t *o) -> bool { return true; },
@@ -1214,6 +1298,7 @@ static void do_work(router_t<net_t *> *router, SpeculativeDeterministicRouter &n
 
 #endif
 }
+*/
 
 static void *worker_thread(void *args)
 {
@@ -1226,6 +1311,13 @@ static void *worker_thread(void *args)
 #endif
 
 	SpeculativeDeterministicRouter net_router(router->g, router->state.congestion, router->fpga_regions, router->rr_regions, router->e_state.data(), router->pres_fac);
+
+	assert(tl_tid == 0);
+	assert(tl_logical_clock_mask == 0);
+
+	tl_tid = net_router.get_instance();
+
+	assert(g_e_state[tl_tid].logical_clock->load() == 0);
 
 	char buffer[256];
 	sprintf(buffer, "%d", net_router.get_instance());
@@ -1309,6 +1401,8 @@ static void init_rr_node_regions(const RRGraph &g, vector<region_t> &fpga_region
 
 bool speculative_deterministic_route_hb_fine(t_router_opts *opts)
 {
+	assert(g_e_state == nullptr);
+
 	char buffer[256];
 
 	int dir_index;
@@ -1382,6 +1476,7 @@ bool speculative_deterministic_route_hb_fine(t_router_opts *opts)
 		e.logical_clock = new std::atomic<unsigned long>(0);
 		e.inet = new std::atomic<int>(0);
 	}
+	g_e_state = router.e_state.data();
 
 	router.window_size = router.num_threads * 2;
 
@@ -1569,6 +1664,13 @@ bool speculative_deterministic_route_hb_fine(t_router_opts *opts)
 	/* just to make sure that we are allocated on the correct NUMA node */
 	SpeculativeDeterministicRouter *net_router = new SpeculativeDeterministicRouter(router.g, router.state.congestion, router.fpga_regions, router.rr_regions, router.e_state.data(), router.pres_fac);
 
+	assert(tl_tid == 0);
+	assert(tl_logical_clock_mask == 0);
+
+	tl_tid = net_router->get_instance();
+
+	assert(g_e_state[tl_tid].logical_clock->load() == 0);
+
 	sprintf(buffer, "%d", net_router->get_instance());
 	zlog_put_mdc("tid", buffer);
 
@@ -1622,9 +1724,10 @@ bool speculative_deterministic_route_hb_fine(t_router_opts *opts)
 			region_clear_mods(*router.fpga_regions[i]);
 		}
 
+		/* must be initialized here to prevent race condition during get_next_net */
 		for (int i = 0; i < router.e_state.size(); ++i) {
-			*router.e_state[i].logical_clock = 0;
-			*router.e_state[i].inet = i;
+			//*router.e_state[i].logical_clock = 0;
+			*router.e_state[i].inet = -i-1; /* guarantees that cur_inet != inet */
 		}
 
 		//do_virtual_work(&router, *net_router);
@@ -1829,8 +1932,8 @@ bool speculative_deterministic_route_hb_fine(t_router_opts *opts)
 
 	if (routed) {
 		printf("Routed in %d iterations\n", router.iter.load());
-		printf("Total route time: %g\n", duration_cast<nanoseconds>(total_route_time).count() / 1e9);
 	}
+	printf("Total route time: %g\n", duration_cast<nanoseconds>(total_route_time).count() / 1e9);
 
 	return false;
 }

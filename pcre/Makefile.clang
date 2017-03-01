@@ -1,0 +1,59 @@
+SRC_ROOT = SRC
+BUILD_ROOT = build
+
+DIRS = /
+
+TARGET = libpcre.a
+
+SRC_DIRS = $(addprefix $(SRC_ROOT)/, $(DIRS))
+BUILD_DIRS = $(addprefix $(BUILD_ROOT)/, $(DIRS))
+
+C_SRCS = $(foreach dir, $(SRC_DIRS), $(wildcard $(dir)/*.c))
+C_OBJS = $(subst $(SRC_ROOT), $(BUILD_ROOT), $(C_SRCS:.c=.o))
+
+CXX_SRCS = $(foreach dir, $(SRC_DIRS), $(wildcard $(dir)/*.cxx))
+CXX_OBJS = $(subst $(SRC_ROOT), $(BUILD_ROOT), $(CXX_SRCS:.cxx=.o))
+
+OBJS = $(C_OBJS) $(CXX_OBJS)
+
+DEPS = $(OBJS:.o=.d)
+
+INCLUDES = $(foreach dir, $(SRC_DIRS), $(addprefix -I, $(dir)))
+
+#INCLUDES += -I../libarchfpga/include -I../printhandler/SRC/TIO_InputOutputHandlers
+#INCLUDES += -I/home/chinhau5/zlog/include
+#INCLUDES += -I/home/chinhau5/Downloads/metis-5.1.0/include/
+
+FLAGS = -ansi -pedantic -Wno-write-strings -Wno-unused-variable -Wno-unused-private-field -DEZXML_NOMMAP -D_POSIX_C_SOURCE
+
+HIDE =
+
+define generateEmitRules
+$(BUILD_ROOT)/$(1)/%.o: $(SRC_ROOT)/$(1)/%.$(2)
+	@echo Emitting $$@
+	$(HIDE)clang++ -std=c++11 -MMD $$(FLAGS) $$(INCLUDES) -c -o $$@ $$< 
+endef
+
+-include $(DEPS)
+
+# Generate rules
+$(foreach dir, $(DIRS), $(eval $(call generateEmitRules,$(dir),c)))
+$(foreach dir, $(DIRS), $(eval $(call generateEmitRules,$(dir),cxx)))
+
+$(BUILD_DIRS):
+	@echo "Creating build dirs" 
+	mkdir -p $@
+
+$(OBJS): | $(BUILD_DIRS)
+
+$(BUILD_ROOT)/$(TARGET): $(OBJS)
+	ar rcs $@ $(OBJS)
+
+.PHONY: all clean
+
+all: $(BUILD_ROOT)/$(TARGET)
+
+clean:
+	rm -f $(BUILD_ROOT)/$(TARGET)
+	rm -f $(OBJS)
+	rm -f $(DEPS)

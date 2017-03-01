@@ -1,0 +1,90 @@
+SRC_ROOT = SRC_TO_BUILD
+BUILD_ROOT = build
+
+DIRS = / base pack parallel_route place power route timing util
+
+TARGET = libvpr.a
+
+SRC_DIRS = $(addprefix $(SRC_ROOT)/, $(DIRS))
+BUILD_DIRS = $(addprefix $(BUILD_ROOT)/, $(DIRS))
+
+C_SRCS = $(foreach dir, $(SRC_DIRS), $(wildcard $(dir)/*.c))
+C_OBJS = $(subst $(SRC_ROOT), $(BUILD_ROOT), $(C_SRCS:.c=.o))
+
+CXX_SRCS = $(foreach dir, $(SRC_DIRS), $(wildcard $(dir)/*.cxx))
+CXX_OBJS = $(subst $(SRC_ROOT), $(BUILD_ROOT), $(CXX_SRCS:.cxx=.o))
+
+OBJS = $(C_OBJS) $(CXX_OBJS)
+LLS = $(OBJS:.o=.ll)
+OPT_LLS = $(OBJS:.o=_opt.ll)
+
+DEPS = $(OBJS:.o=.d)
+
+INCLUDES = $(foreach dir, $(SRC_DIRS), $(addprefix -I, $(dir)))
+
+INCLUDES += -I../libarchfpga/include -I../printhandler/SRC/TIO_InputOutputHandlers
+INCLUDES += -I/home/chinhau5/zlog/include
+INCLUDES += -I/home/chinhau5/Downloads/metis-5.1.0/include/
+
+HIDE =
+
+test:
+	echo $(SRC_DIRS)
+
+define generateEmitRules
+$(BUILD_ROOT)/$(1)/%.ll: $(SRC_ROOT)/$(1)/%.$(2)
+	@echo Emitting $$@
+	$(HIDE)clang++ -O3 -emit-llvm -std=c++11 -MMD $$(INCLUDES) -S -o $$@ $$< 
+endef
+
+define generateOptRules
+$(BUILD_ROOT)/$(1)/%_opt.ll: $(BUILD_ROOT)/$(1)/%.ll /home/chinhau5/scratchpad/llvm_pass/build/libSkeletonPass.so 
+	@echo Instrumenting $$@
+	$(HIDE)opt -load /home/chinhau5/scratchpad/llvm_pass/build/libSkeletonPass.so -hello -S -o $$@ $$< 
+endef
+
+define generateAsmRules
+$(BUILD_ROOT)/$(1)/%.o: $(BUILD_ROOT)/$(1)/%_opt.ll
+	@echo Assembling $$@
+	$(HIDE)clang++ -O3 -std=c++11 -c -o $$@ $$< 
+endef
+
+.SECONDARY: $(LLS) $(OPT_LLS)
+
+# Indicate to make which targets are not files
+# .PHONY: all clean directories 
+#
+# all: directories $(TARGET)
+#
+# $(TARGET): $(OBJS)
+#     $(HIDE)echo Linking $@
+#         $(HIDE)$(CC) $(OBJS) -o $(TARGET)
+#
+#         # Include dependencies
+-include $(DEPS)
+
+# Generate rules
+$(foreach dir, $(DIRS), $(eval $(call generateEmitRules,$(dir),c)))
+$(foreach dir, $(DIRS), $(eval $(call generateEmitRules,$(dir),cxx)))
+$(foreach dir, $(DIRS), $(eval $(call generateOptRules,$(dir))))
+$(foreach dir, $(DIRS), $(eval $(call generateAsmRules,$(dir))))
+
+$(BUILD_DIRS):
+	@echo "Creating build dirs" 
+	mkdir -p $@
+
+$(OBJS): | $(BUILD_DIRS)
+
+$(BUILD_ROOT)/$(TARGET): $(OBJS)
+	ar rcs $@ $(OBJS)
+
+.PHONY: all clean
+
+all: $(BUILD_ROOT)/$(TARGET)
+
+clean:
+	rm -f $(BUILD_ROOT)/$(TARGET)
+	rm -f $(OBJS)
+	rm -f $(DEPS)
+	rm -f $(LLS)
+	rm -f $(OPT_LLS)

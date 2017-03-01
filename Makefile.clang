@@ -1,0 +1,36 @@
+BUILD_ROOT = newbuild
+
+LIBS = vpr/build/libvpr.a libarchfpga/build/libarchfpga.a printhandler/build/libprinthandler.a pcre/build/libpcre.a  
+SUB_DIRS = vpr libarchfpga printhandler pcre
+
+LIB_DIR = /usr/lib/openmpi /home/chinhau5/zlog/lib /home/chinhau5/Downloads/metis-5.1.0/build/Linux-x86_64/libmetis /home/chinhau5/Downloads/tbb2017_20161128oss/lib/intel64/gcc4.7
+LIB_CMD = $(addprefix -L,$(LIB_DIR))
+
+comma = ,
+RPATH = $(addprefix -Wl$(comma)-rpath$(comma), $(LIB_DIR))
+
+LINK_LIBS = X11 pthread dl m rt zlog boost_timer boost_system boost_thread tbb metis mpi mpi_cxx
+LINK_LIBS := $(addprefix -l,$(LINK_LIBS))
+
+define generateRules
+$(1): 
+	@echo Building $$@
+	cd $(1) && make -f Makefile.clang all
+endef
+
+#$(firstword $(subst /, ,$(1)))
+
+$(foreach dir, $(SUB_DIRS), $(eval $(call generateRules,$(dir))))
+
+$(BUILD_ROOT):
+	mkdir -p $(BUILD_ROOT)
+
+$(BUILD_ROOT)/Router: $(SUB_DIRS) | $(BUILD_ROOT)
+	clang++ $(LIB_CMD) $(RPATH) $(LIBS) $(LINK_LIBS) -o $@
+
+.PHONY: all clean $(SUB_DIRS)
+
+all: $(BUILD_ROOT)/Router
+
+clean:
+	rm $(BUILD_ROOT)/Router

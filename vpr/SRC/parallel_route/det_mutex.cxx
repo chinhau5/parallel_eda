@@ -2,6 +2,9 @@
 #include "log.h"
 #include <assert.h>
 
+void start_logical_clock();
+void stop_logical_clock();
+
 void det_mutex_init(det_mutex_t &m, exec_state_t *e_state, int num_threads)
 {
 	m.lock = new tbb::spin_mutex();
@@ -11,6 +14,8 @@ void det_mutex_init(det_mutex_t &m, exec_state_t *e_state, int num_threads)
 
 static void det_mutex_wait_for_turn(det_mutex_t &m, int tid)
 {
+	stop_logical_clock();
+
 	int cur = *m.e_state[tid].logical_clock;
 	int cur_inet = *m.e_state[tid].inet;
 	bool other_less;
@@ -46,6 +51,8 @@ void det_mutex_lock(det_mutex_t &m, int tid)
 void det_mutex_unlock(det_mutex_t &m, int tid)
 {
 	m.lock->unlock();
-	++(*m.e_state[tid].logical_clock);
+
+	start_logical_clock();
+	//++(*m.e_state[tid].logical_clock);
 	zlog_level(delta_log, ROUTER_V3, "Thread %d released lock, new clock %d\n", tid, m.e_state[tid].logical_clock->load());
 }
