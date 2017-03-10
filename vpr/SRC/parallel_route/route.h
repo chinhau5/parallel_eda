@@ -151,8 +151,8 @@ typedef struct virtual_net_t {
 	bool dispatched;
 	net_t *net;
 	source_t *source;
-	vector<sink_t *> sinks;
-	vector<sink_t *> current_sinks;
+	std::vector<sink_t *> sinks;
+	std::vector<sink_t *> current_sinks;
 	int nearest_rr_node;
 	box sink_bounding_box;
 	point centroid;
@@ -189,8 +189,8 @@ typedef struct congestion_local_t {
 	//int tid;
 	congestion_t *global;
 	tbb::spin_mutex *locks;
-	vector<local_cost_t> local;
-	set<int> dirty_nodes;
+	std::vector<local_cost_t> local;
+	std::set<int> dirty_nodes;
 } congestion_local_t;
 
 typedef struct congestion_local_2_t {
@@ -225,7 +225,7 @@ typedef struct path_node_send_t {
 
 typedef struct boundary_node_t {
 	RRNode rr_node;
-	vector<path_node_t> path;
+	std::vector<path_node_t> path;
 } boundary_node_t;
 
 typedef	struct node_update_t {
@@ -234,7 +234,7 @@ typedef	struct node_update_t {
 } node_update_t;
 
 typedef struct ongoing_transaction_t {
-	std::shared_ptr<vector<node_update_t>> data;
+	std::shared_ptr<std::vector<node_update_t>> data;
 	MPI_Request req;
 } ongoing_transaction_t;
 
@@ -263,43 +263,43 @@ typedef struct mpi_context_t {
 	int buffer_size;
 	int bit_width;
 
-	vector<vector<int> *> pending_send_data_nbc;
-	vector<int> pending_send_data_ref_count;
+	std::vector<std::vector<int> *> pending_send_data_nbc;
+	std::vector<int> pending_send_data_ref_count;
 
-	vector<MPI_Request> pending_send_req;
-	vector<int> pending_send_req_data_ref;
-	vector<int> pending_send_req_dst;
-	vector<int> completed_indices;
-	vector<MPI_Status> completed_recv_statuses;
+	std::vector<MPI_Request> pending_send_req;
+	std::vector<int> pending_send_req_data_ref;
+	std::vector<int> pending_send_req_dst;
+	std::vector<int> completed_indices;
+	std::vector<MPI_Status> completed_recv_statuses;
 	int num_pending_reqs;
-	vector<int> num_pending_reqs_by_rank;
-	vector<vector<int>> num_pending_reqs_by_time;
+	std::vector<int> num_pending_reqs_by_rank;
+	std::vector<std::vector<int>> num_pending_reqs_by_time;
 
-	vector<bool> received_last_update; 
-	vector<large_t> large_packets;
+	std::vector<bool> received_last_update; 
+	std::vector<large_t> large_packets;
 
-	queue<int> free_send_data_index;
-	queue<int> free_send_req_index;
+	std::queue<int> free_send_data_index;
+	std::queue<int> free_send_req_index;
 
 	int max_send_data_size;
 	unsigned long total_send_data_size;
 	unsigned long total_send_count;
 	int max_req_buffer_size;
 	int max_active_reqs;
-	vector<int> max_pending_send_reqs_by_rank;
+	std::vector<int> max_pending_send_reqs_by_rank;
 
 	// -----------
 
-	vector<MPI_Comm> ibcast_comm;
-	vector<int> max_ibcast_count;
-	vector<request_meta_t> pending_req_meta;
+	std::vector<MPI_Comm> ibcast_comm;
+	std::vector<int> max_ibcast_count;
+	std::vector<request_meta_t> pending_req_meta;
 
-	vector<int> all_data_sizes;
-	vector<int> packet_id;
+	std::vector<int> all_data_sizes;
+	std::vector<int> packet_id;
 
 	int num_broadcasts_required;
 
-	vector<std::shared_ptr<vector<node_update_t>>> pending_send_data;
+	std::vector<std::shared_ptr<std::vector<node_update_t>>> pending_send_data;
 	int send_req_queue_size;
 	int send_req_queue_head;
 	int send_req_queue_tail;
@@ -308,20 +308,20 @@ typedef struct mpi_context_t {
 	broadcast_data_t active_bcast_data;
 	queue_t<broadcast_data_t> pending_bcast_data_q;
 
-	vector<vector<int>> pending_send_req_refs;
+	std::vector<std::vector<int>> pending_send_req_refs;
 
-	vector<pair<vector<int> *, int>> pending_send_data_raw;
-	vector<int> pending_send_req_meta_data_ref;
+	std::vector<std::pair<std::vector<int> *, int>> pending_send_data_raw;
+	std::vector<int> pending_send_req_meta_data_ref;
 
-	vector<int> completed_send_indices;
+	std::vector<int> completed_send_indices;
 
-	vector<vector<std::shared_ptr<vector<node_update_t>>>> pending_recv_data; 
-	vector<vector<MPI_Request>> pending_recv_req; 
+	std::vector<std::vector<std::shared_ptr<std::vector<node_update_t>>>> pending_recv_data; 
+	std::vector<std::vector<MPI_Request>> pending_recv_req; 
 
-	vector<vector<int>> pending_recv_data_flat; 
-	vector<MPI_Request> pending_recv_req_flat; 
+	std::vector<std::vector<int>> pending_recv_data_flat; 
+	std::vector<MPI_Request> pending_recv_req_flat; 
 
-	vector<int> completed_recv_indices;
+	std::vector<int> completed_recv_indices;
 } mpi_context_t;
 
 //typedef struct unrouted_sink_t {
@@ -331,12 +331,12 @@ typedef struct mpi_context_t {
 //
 typedef struct interpartition_sink_t {
 	sink_t *sink;
-	vector<path_node_t> path;
+	std::vector<path_node_t> path;
 } interpartition_sink_t;
 
 typedef struct unrouted_t {
-	vector<sink_t *> unrouted_sinks;
-	vector<boundary_node_t> boundary_nodes;
+	std::vector<sink_t *> unrouted_sinks;
+	std::vector<boundary_node_t> boundary_nodes;
 } unrouted_t;
 
 typedef struct pseudo_source_t {
@@ -347,14 +347,14 @@ typedef struct pseudo_source_t {
 
 typedef struct pseudo_sink_t {
 	sink_t *sink;
-	vector<path_node_t> path;
+	std::vector<path_node_t> path;
 	pseudo_source_t *pseudo_source;
 } pseudo_sink_t;
 
 typedef struct pseudo_net_t {
 	net_t *net;
-	vector<pseudo_source_t> pseudo_sources;
-	vector<pseudo_sink_t> pseudo_sinks;
+	std::vector<pseudo_source_t> pseudo_sources;
+	std::vector<pseudo_sink_t> pseudo_sinks;
 } pseudo_net_t;
 
 bool hybrid_route(t_router_opts *opts);

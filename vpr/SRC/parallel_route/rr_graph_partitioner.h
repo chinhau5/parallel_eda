@@ -42,10 +42,10 @@ struct subgraph_edge_predicate_t {
 template<typename Graph>
 struct partition_vertex_predicate_t {
 	const Graph &g;
-	const vector<int> &pid;
+	const std::vector<int> &pid;
 	int p;
 	
-	partition_vertex_predicate_t(const Graph &g, const vector<int> &pid, int p)
+	partition_vertex_predicate_t(const Graph &g, const std::vector<int> &pid, int p)
 		: g(g), pid(pid), p(p)
 	{
 	}
@@ -66,19 +66,19 @@ class rr_graph_partitioner {
 		RRGraph channel_with_interior_g;
 		RRGraph channel_without_interior_g;
 		int num_levels;
-		vector<int> result_pid;
-        vector<vector<int>> result_pid_by_level;
-		vector<vector<RRNode>> sink_in_nodes;
-		vector<vector<RRNode>> ipin_in_nodes;
+		std::vector<int> result_pid;
+        std::vector<std::vector<int>> result_pid_by_level;
+		std::vector<std::vector<RRNode>> sink_in_nodes;
+		std::vector<std::vector<RRNode>> ipin_in_nodes;
 
 	private:
-		vector<vector<vector<int>>> num_starting_tracks; // [type][x][y]
-		vector<int> real_track_num; // [rr_node]
+		std::vector<std::vector<std::vector<int>>> num_starting_tracks; // [type][x][y]
+		std::vector<int> real_track_num; // [rr_node]
 
 		int num_partitions;
 		//vector<int> initial_partition;
 		//int partition_index_offset;
-		vector<vector<vector<vector<int>>>> num_tracks_in_partition; //[type][part][x][y]
+		std::vector<std::vector<std::vector<std::vector<int>>>> num_tracks_in_partition; //[type][part][x][y]
 
 		int total_num_chans;
 
@@ -360,12 +360,12 @@ class rr_graph_partitioner {
 			}
 
 		template<typename Graph>
-			void grow_initial_partition_2(const Graph &g, vector<int> &initial_partition)
+			void grow_initial_partition_2(const Graph &g, std::vector<int> &initial_partition)
 			{
 				struct visitor_t {
-					set<int> visited_edges;
-					set<int> visited_nodes;
-					set<tuple<int, int, t_rr_type, bool>> visited_channels;
+					std::set<int> visited_edges;
+					std::set<int> visited_nodes;
+					std::set<std::tuple<int, int, t_rr_type, bool>> visited_channels;
 					int num_nodes_discovered;
 
 					visitor_t() :
@@ -408,7 +408,7 @@ class rr_graph_partitioner {
 					{
 						const auto &ver = get_vertex_props(g, v);
 						const auto &start = get_node_start(v);
-						const auto &key = make_tuple(start.first, start.second, ver.type, ver.inc_direction);
+						const auto &key = std::make_tuple(start.first, start.second, ver.type, ver.inc_direction);
 						bool recorded;
 						if (visited_channels.find(key) == visited_channels.end()) {
 							visited_channels.insert(key);
@@ -423,7 +423,7 @@ class rr_graph_partitioner {
 					{
 						bool recorded = record_impl(g, v);
 						if (recorded) {
-							assert(visited_nodes.find(v) == end(visited_nodes));
+							assert(visited_nodes.find(v) == std::end(visited_nodes));
 							visited_nodes.insert(v);
 						}
 						return recorded;
@@ -433,7 +433,7 @@ class rr_graph_partitioner {
 					{	
 						record_impl(g, v);
 
-						assert(visited_nodes.find(v) == end(visited_nodes));
+						assert(visited_nodes.find(v) == std::end(visited_nodes));
 						visited_nodes.insert(v);
 
 						return true;
@@ -442,10 +442,10 @@ class rr_graph_partitioner {
 
 				using clock = std::chrono::high_resolution_clock;
 
-				vector<VertexColor> color(num_vertices(g), VertexColor::WHITE);
+				std::vector<VertexColor> color(num_vertices(g), VertexColor::WHITE);
 				int num_nodes = 0;
-				set<int> all_visited_nodes;
-				vector<vector<int>> visited_nodes;
+				std::set<int> all_visited_nodes;
+				std::vector<std::vector<int>> visited_nodes;
 				for (const auto &v : get_vertices(g)) {
 					if (color[v] == VertexColor::WHITE) {
 						visitor_t visitor;
@@ -457,14 +457,14 @@ class rr_graph_partitioner {
 
 						start = clock::now();
 						assert(visitor.visited_nodes.size() == visitor.visited_edges.size()+1);
-						assert(visitor.visited_nodes.find(v) != end(visitor.visited_nodes));
+						assert(visitor.visited_nodes.find(v) != std::end(visitor.visited_nodes));
 						for (const auto &v : visitor.visited_nodes) {
 							//initial_partition[v] = current_pid;
 							assert(color[v] == VertexColor::BLACK);
 							assert(all_visited_nodes.find(v) == all_visited_nodes.end());
 							all_visited_nodes.insert(v);
 						}
-						visited_nodes.emplace_back(begin(visitor.visited_nodes), end(visitor.visited_nodes));
+						visited_nodes.emplace_back(std::begin(visitor.visited_nodes), std::end(visitor.visited_nodes));
 						//for (const auto &v : get_vertices(g)) {
 							//if (all_visited_nodes.find(v) == end(all_visited_nodes)) {
 								//assert(color[v] == VertexColor::WHITE);
@@ -484,8 +484,8 @@ class rr_graph_partitioner {
 					}
 					++num_nodes;
 				}
-				std::sort(begin(visited_nodes), end(visited_nodes), [] (const vector<int> &a, const vector<int> &b) -> bool { return a.size()>b.size(); });
-				vector<int> num_nodes_in_partition(2, 0);
+				std::sort(std::begin(visited_nodes), std::end(visited_nodes), [] (const std::vector<int> &a, const std::vector<int> &b) -> bool { return a.size()>b.size(); });
+				std::vector<int> num_nodes_in_partition(2, 0);
 				int current_pid = 0;
 				for (const auto &nodes : visited_nodes) {
 					num_nodes_in_partition[current_pid] += nodes.size();
@@ -499,20 +499,20 @@ class rr_graph_partitioner {
 			}
 
 		template<typename Graph>
-			void grow_initial_partition_3(const Graph &g, vector<int> &initial_partition)
+			void grow_initial_partition_3(const Graph &g, std::vector<int> &initial_partition)
 			{
 				struct visitor_t {
-					set<RREdge> visited_edges;
-					set<int> visited_nodes;
-					set<tuple<int, int, t_rr_type, bool>> visited_channels;
+					std::set<RREdge> visited_edges;
+					std::set<int> visited_nodes;
+					std::set<std::tuple<int, int, t_rr_type, bool>> visited_channels;
 					int num_nodes_discovered;
-					const vector<int> &pid;
+					const std::vector<int> &pid;
 					bool reachable_partition[2];
 
-					visitor_t(const vector<int> &pid) :
+					visitor_t(const std::vector<int> &pid) :
 						num_nodes_discovered(0) , pid(pid)
 					{
-						std::fill(begin(reachable_partition), end(reachable_partition), false);
+						std::fill(std::begin(reachable_partition), std::end(reachable_partition), false);
 						assert(!reachable_partition[0]);
 						assert(!reachable_partition[1]);
 					}
@@ -520,10 +520,10 @@ class rr_graph_partitioner {
 					bool tree_edge(const RREdge &e, const Graph &g)
 					{
 						bool expand = false;
-						if (visited_nodes.find(get_source(g, e)) != end(visited_nodes)) {
+						if (visited_nodes.find(get_source(g, e)) != std::end(visited_nodes)) {
 							bool recorded_to = record(g, get_target(g, e));
 							if (recorded_to) {
-								assert(visited_edges.find(e) == end(visited_edges));
+								assert(visited_edges.find(e) == std::end(visited_edges));
 								visited_edges.insert(e);
 								expand = true;
 							}
@@ -559,7 +559,7 @@ class rr_graph_partitioner {
 					{
 						const auto &ver = get_vertex_props(g, v);
 						const auto &start = get_node_start(v);
-						const auto &key = make_tuple(start.first, start.second, ver.type, ver.inc_direction);
+						const auto &key = std::make_tuple(start.first, start.second, ver.type, ver.inc_direction);
 						bool recorded;
 						if (visited_channels.find(key) == visited_channels.end()) {
 							visited_channels.insert(key);
@@ -574,7 +574,7 @@ class rr_graph_partitioner {
 					{
 						bool recorded = record_impl(g, v);
 						if (recorded) {
-							assert(visited_nodes.find(v) == end(visited_nodes));
+							assert(visited_nodes.find(v) == std::end(visited_nodes));
 							visited_nodes.insert(v);
 						}
 						return recorded;
@@ -584,7 +584,7 @@ class rr_graph_partitioner {
 					{	
 						assert(record_impl(g, v));
 
-						assert(visited_nodes.find(v) == end(visited_nodes));
+						assert(visited_nodes.find(v) == std::end(visited_nodes));
 						visited_nodes.insert(v);
 
 						return true;
@@ -593,10 +593,10 @@ class rr_graph_partitioner {
 
 				using clock = std::chrono::high_resolution_clock;
 
-				vector<VertexColor> color(num_vertices(g), VertexColor::WHITE);
+				std::vector<VertexColor> color(num_vertices(g), VertexColor::WHITE);
 				int num_nodes = 0;
-				set<int> all_visited_nodes;
-				vector<int> num_nodes_in_partition(2, 0);
+				std::set<int> all_visited_nodes;
+				std::vector<int> num_nodes_in_partition(2, 0);
 				//vector<int> sorted;
 				//topological_sort(g, sorted);
 				for (const auto &v : get_vertices(g)) {
@@ -609,7 +609,7 @@ class rr_graph_partitioner {
 						auto time = clock::now()-start;
 
 						assert(visitor.visited_nodes.size() == visitor.visited_edges.size()+1);
-						assert(visitor.visited_nodes.find(v) != end(visitor.visited_nodes));
+						assert(visitor.visited_nodes.find(v) != std::end(visitor.visited_nodes));
 						int target_partition;
 						if (num_nodes_in_partition[0] == 0) {
 							target_partition = 0;
@@ -647,20 +647,20 @@ class rr_graph_partitioner {
 			}
 
 		template<typename Graph>
-			void grow_initial_partition(const Graph &g, vector<int> &initial_partition)
+			void grow_initial_partition(const Graph &g, std::vector<int> &initial_partition)
 			{
 				struct visitor_t {
-					set<RREdge> visited_edges;
-					set<int> visited_nodes;
-					set<tuple<int, int, t_rr_type, bool>> visited_channels;
+					std::set<RREdge> visited_edges;
+					std::set<int> visited_nodes;
+					std::set<std::tuple<int, int, t_rr_type, bool>> visited_channels;
 					int num_nodes_discovered;
-					const vector<int> &pid;
+					const std::vector<int> &pid;
 					bool reachable_partition[2];
 
-					visitor_t(const vector<int> &pid) :
+					visitor_t(const std::vector<int> &pid) :
 						num_nodes_discovered(0) , pid(pid)
 					{
-						std::fill(begin(reachable_partition), end(reachable_partition), false);
+						std::fill(std::begin(reachable_partition), std::end(reachable_partition), false);
 						assert(!reachable_partition[0]);
 						assert(!reachable_partition[1]);
 					}
@@ -668,10 +668,10 @@ class rr_graph_partitioner {
 					bool tree_edge(const RREdge &e, const Graph &g)
 					{
 						bool expand = false;
-						if (visited_nodes.find(get_source(g, e)) != end(visited_nodes)) {
+						if (visited_nodes.find(get_source(g, e)) != std::end(visited_nodes)) {
 							bool recorded_to = record(g, get_target(g, e));
 							if (recorded_to) {
-								assert(visited_edges.find(e) == end(visited_edges));
+								assert(visited_edges.find(e) == std::end(visited_edges));
 								visited_edges.insert(e);
 								expand = true;
 							}
@@ -707,7 +707,7 @@ class rr_graph_partitioner {
 					{
 						const auto &ver = get_vertex_props(g, v);
 						const auto &start = get_node_start(v);
-						const auto &key = make_tuple(start.first, start.second, ver.type, ver.inc_direction);
+						const auto &key = std::make_tuple(start.first, start.second, ver.type, ver.inc_direction);
 						bool recorded;
 						if (visited_channels.find(key) == visited_channels.end()) {
 							visited_channels.insert(key);
@@ -722,7 +722,7 @@ class rr_graph_partitioner {
 					{
 						bool recorded = record_impl(g, v);
 						if (recorded) {
-							assert(visited_nodes.find(v) == end(visited_nodes));
+							assert(visited_nodes.find(v) == std::end(visited_nodes));
 							visited_nodes.insert(v);
 						}
 						return recorded;
@@ -732,7 +732,7 @@ class rr_graph_partitioner {
 					{	
 						assert(record_impl(g, v));
 
-						assert(visited_nodes.find(v) == end(visited_nodes));
+						assert(visited_nodes.find(v) == std::end(visited_nodes));
 						visited_nodes.insert(v);
 
 						return true;
@@ -741,10 +741,10 @@ class rr_graph_partitioner {
 
 				using clock = std::chrono::high_resolution_clock;
 
-				vector<VertexColor> color(num_vertices(g), VertexColor::WHITE);
+				std::vector<VertexColor> color(num_vertices(g), VertexColor::WHITE);
 				int num_nodes = 0;
-				set<int> all_visited_nodes;
-				vector<int> num_nodes_in_partition(2, 0);
+				std::set<int> all_visited_nodes;
+				std::vector<int> num_nodes_in_partition(2, 0);
 				//vector<int> sorted;
 				//topological_sort(g, sorted);
 				for (const auto &v : get_vertices(g)) {
@@ -757,7 +757,7 @@ class rr_graph_partitioner {
 						auto time = clock::now()-start;
 
 						assert(visitor.visited_nodes.size() == visitor.visited_edges.size()+1);
-						assert(visitor.visited_nodes.find(v) != end(visitor.visited_nodes));
+						assert(visitor.visited_nodes.find(v) != std::end(visitor.visited_nodes));
 						int target_partition;
 						if (num_nodes_in_partition[0] == 0) {
 							target_partition = 0;
@@ -799,7 +799,7 @@ class rr_graph_partitioner {
 			{
 				init_num_tracks_in_partition();
 
-				vector<int> initial_partition(num_vertices(g), -1);
+				std::vector<int> initial_partition(num_vertices(g), -1);
 
 				/* get initial partition by BFS */
 				grow_initial_partition(g, initial_partition);
@@ -810,7 +810,7 @@ class rr_graph_partitioner {
 				//fm.run();
 
 				//const vector<int> &pid = fm.get_pid();
-				const vector<int> &pid = initial_partition;
+				const std::vector<int> &pid = initial_partition;
 
                 for (const auto &v : get_vertices(g)) {
                     assert(result_pid_by_level[level][v] == -1);
@@ -837,14 +837,14 @@ class rr_graph_partitioner {
 				}
 			}
 
-		void partition_without_ipin(int _num_partitions, vector<RRGraph *> &graphs)
+		void partition_without_ipin(int _num_partitions, std::vector<RRGraph *> &graphs)
 		{
 			assert(std::pow(2, std::log2(_num_partitions)) == _num_partitions);
 
 			num_partitions = _num_partitions;
             num_levels = std::log2(num_partitions)+1;
 
-            result_pid_by_level.resize(num_levels, vector<int>(num_vertices(orig_g), -1));
+            result_pid_by_level.resize(num_levels, std::vector<int>(num_vertices(orig_g), -1));
 
 			for (const auto &v : get_vertices(orig_g)) {
 				const auto &props = get_vertex_props(orig_g, v);
@@ -855,7 +855,7 @@ class rr_graph_partitioner {
 				}
 			}
 
-			std::fill(begin(result_pid), end(result_pid), -1);
+			std::fill(std::begin(result_pid), std::end(result_pid), -1);
 
 			if (num_partitions == 1) {
 				assert(num_levels == 1);
@@ -868,7 +868,7 @@ class rr_graph_partitioner {
 					}
 				}
 			} else {
-				vector<int> pid(num_vertices(orig_g), 0);
+				std::vector<int> pid(num_vertices(orig_g), 0);
 
 				recursive_bipartition(
 						make_subgraph(orig_g.base_graph(), partition_vertex_predicate_t<typename decltype(orig_g)::base>(orig_g.base_graph(), pid, 0)),
@@ -881,7 +881,7 @@ class rr_graph_partitioner {
 					max_pid = std::max(max_pid, result_pid_by_level[level][i]);
 				}
 				assert(max_pid == pow(2, result_pid_by_level.size()-level-1)-1);
-				vector<int> num_nodes(max_pid+1, 0);
+				std::vector<int> num_nodes(max_pid+1, 0);
 				for (const auto &v : get_vertices(orig_g)) {
 					const auto &props = get_vertex_props(orig_g, v);
 					if (props.type == CHANX || props.type == CHANY) {
@@ -962,14 +962,14 @@ class rr_graph_partitioner {
 			//}
 		}
 
-		void partition(int _num_partitions, vector<RRGraph *> &graphs)
+		void partition(int _num_partitions, std::vector<RRGraph *> &graphs)
 		{
 			assert(std::pow(2, std::log2(_num_partitions)) == _num_partitions);
 
 			num_partitions = _num_partitions;
             num_levels = std::log2(num_partitions)+1;
 
-            result_pid_by_level.resize(num_levels, vector<int>(num_vertices(orig_g), -1));
+            result_pid_by_level.resize(num_levels, std::vector<int>(num_vertices(orig_g), -1));
 
 			for (const auto &v : get_vertices(orig_g)) {
 				const auto &props = get_vertex_props(orig_g, v);
@@ -980,7 +980,7 @@ class rr_graph_partitioner {
 				}
 			}
 
-			std::fill(begin(result_pid), end(result_pid), -1);
+			std::fill(std::begin(result_pid), std::end(result_pid), -1);
 
 			if (num_partitions == 1) {
 				assert(num_levels == 1);
@@ -993,7 +993,7 @@ class rr_graph_partitioner {
 					}
 				}
 			} else {
-				vector<int> pid(num_vertices(orig_g), 0);
+				std::vector<int> pid(num_vertices(orig_g), 0);
 
 				recursive_bipartition(
 						make_subgraph(orig_g.base_graph(), partition_vertex_predicate_t<typename decltype(orig_g)::base>(orig_g.base_graph(), pid, 0)),
@@ -1004,7 +1004,7 @@ class rr_graph_partitioner {
 			for (int level = 0; level < result_pid_by_level.size(); ++level) {
 				int cur_num_partitions = pow(2, result_pid_by_level.size()-level-1);
 
-				vector<vector<int>> sink_partition_connect_count(num_vertices(orig_g), vector<int>(cur_num_partitions, 0));
+				std::vector<std::vector<int>> sink_partition_connect_count(num_vertices(orig_g), std::vector<int>(cur_num_partitions, 0));
 
 				for (const auto &v : get_vertices(orig_g)) {
 					const auto &rr_node_p = get_vertex_props(orig_g, v);
@@ -1012,7 +1012,7 @@ class rr_graph_partitioner {
 					if (rr_node_p.type == IPIN) {
 						assert(num_out_edges(orig_g, v) == 1);
 
-						const auto &e = *begin(get_out_edges(orig_g, v));
+						const auto &e = *std::begin(get_out_edges(orig_g, v));
 
 						const auto &sink_rr_node = get_target(orig_g, e);
 
@@ -1021,7 +1021,7 @@ class rr_graph_partitioner {
 						if (!ipin_in_nodes[v].empty()) {
 							int min_partition = -1;
 							int min_count = std::numeric_limits<int>::max();
-							vector<int> num_in_nodes_per_partition(cur_num_partitions, 0);
+							std::vector<int> num_in_nodes_per_partition(cur_num_partitions, 0);
 							for (const auto &in_node : ipin_in_nodes[v]) {
 								const auto &in_node_p = get_vertex_props(orig_g, in_node);
 
@@ -1056,7 +1056,7 @@ class rr_graph_partitioner {
 					max_pid = std::max(max_pid, result_pid_by_level[level][i]);
 				}
 				assert(max_pid == pow(2, result_pid_by_level.size()-level-1)-1);
-				vector<int> num_nodes(max_pid+1, 0);
+				std::vector<int> num_nodes(max_pid+1, 0);
 				for (const auto &v : get_vertices(orig_g)) {
 					const auto &props = get_vertex_props(orig_g, v);
 					if (props.type == CHANX || props.type == CHANY || props.type == IPIN) {

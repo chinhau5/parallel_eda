@@ -5,6 +5,8 @@
 #include "log.h"
 #include "utility.h"
 
+using namespace std;
+
 void route_tree_init(route_tree_t &rt)
 {
 	rt.root_rt_node_id = RouteTree::null_vertex();

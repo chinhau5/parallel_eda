@@ -27,6 +27,8 @@
 #include "fm.h"
 #include "rr_graph_partitioner.h"
 
+using namespace std;
+
 void get_stats(const RRGraph &g)
 {
 	for (const auto &v : get_vertices(g)) {

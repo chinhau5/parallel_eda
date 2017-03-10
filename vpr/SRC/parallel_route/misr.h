@@ -1,7 +1,7 @@
 #ifndef MISR_H
 #define MISR_H
 
-using namespace std;
+//using namespace std;
 
 //#define DEBUG_MISR
 
@@ -12,7 +12,7 @@ using namespace std;
 #endif
 
 template<typename Item, typename ItemToInterval>
-void max_independent_intervals_from_sorted(const vector<Item *> &items, const ItemToInterval &to_interval, vector<Item *> &chosen)
+void max_independent_intervals_from_sorted(const std::vector<Item *> &items, const ItemToInterval &to_interval, std::vector<Item *> &chosen)
 {
 	if (items.size() == 0) {
 		return;
@@ -30,9 +30,9 @@ void max_independent_intervals_from_sorted(const vector<Item *> &items, const It
 }
 
 template<typename Item, typename ItemToBox>
-void split_ver_edges(const vector<pair<int, Item *>> &ver_edges, const ItemToBox &to_box,
+void split_ver_edges(const std::vector<std::pair<int, Item *>> &ver_edges, const ItemToBox &to_box,
 		float x_median,
-		vector<pair<int, Item *>> &left, vector<pair<int, Item *>> &right)
+		std::vector<std::pair<int, Item *>> &left, std::vector<std::pair<int, Item *>> &right)
 {
 	for (const auto &ver_edge : ver_edges) {
 		const auto &box = to_box(*ver_edge.second);
@@ -53,9 +53,9 @@ void split_ver_edges(const vector<pair<int, Item *>> &ver_edges, const ItemToBox
 }
 
 template<typename Item, typename ItemToBox>
-void split_hor(const vector<Item *> &sorted_items, const ItemToBox &to_box,
+void split_hor(const std::vector<Item *> &sorted_items, const ItemToBox &to_box,
 		float x_median,
-		vector<Item *> &left, vector<Item *> &right, vector<Item *> &middle)
+		std::vector<Item *> &left, std::vector<Item *> &right, std::vector<Item *> &middle)
 {
 	for (const auto &item : sorted_items) {
 		const auto &box = to_box(*item);
@@ -75,7 +75,7 @@ void split_hor(const vector<Item *> &sorted_items, const ItemToBox &to_box,
 }
 
 template<typename Item, typename ItemToBox, typename ItemToInterval>
-void max_independent_rectangles_internal(const vector<pair<int, Item *>> &ver_edges, const vector<Item *> &sorted_items, const ItemToBox &to_box, const ItemToInterval &to_interval, vector<Item *> &chosen)
+void max_independent_rectangles_internal(const std::vector<std::pair<int, Item *>> &ver_edges, const std::vector<Item *> &sorted_items, const ItemToBox &to_box, const ItemToInterval &to_interval, std::vector<Item *> &chosen)
 {
 	assert((ver_edges.size() % 2) == 0);
 	assert(sorted_items.size() == ver_edges.size() / 2);
@@ -127,21 +127,21 @@ void max_independent_rectangles_internal(const vector<pair<int, Item *>> &ver_ed
 	}
 //#endif
 
-	vector<pair<int, Item *>> left_ver;
-	vector<pair<int, Item *>> right_ver;
+	std::vector<std::pair<int, Item *>> left_ver;
+	std::vector<std::pair<int, Item *>> right_ver;
 	split_ver_edges(ver_edges, to_box,
 			x_median,
 			left_ver, right_ver);
 
-	vector<Item *> left_sorted;
-	vector<Item *> right_sorted;
-	vector<Item *> middle_sorted;
+	std::vector<Item *> left_sorted;
+	std::vector<Item *> right_sorted;
+	std::vector<Item *> middle_sorted;
 	split_hor(sorted_items, to_box,
 			x_median,
 			left_sorted, right_sorted, middle_sorted);
 
-	vector<Item *> left_right_chosen;
-	vector<Item *> middle_chosen;
+	std::vector<Item *> left_right_chosen;
+	std::vector<Item *> middle_chosen;
 	max_independent_rectangles_internal(left_ver, left_sorted, to_box, to_interval, left_right_chosen);
 	max_independent_rectangles_internal(right_ver, right_sorted, to_box, to_interval, left_right_chosen);
 	max_independent_intervals_from_sorted(middle_sorted, to_interval, middle_chosen);
@@ -156,16 +156,16 @@ void max_independent_rectangles_internal(const vector<pair<int, Item *>> &ver_ed
 }
 
 template<typename Item, typename ItemToBox, typename ItemToInterval>
-void max_independent_rectangles(vector<Item> &items, const ItemToBox &to_box, const ItemToInterval &to_interval, vector<Item *> &chosen)
+void max_independent_rectangles(std::vector<Item> &items, const ItemToBox &to_box, const ItemToInterval &to_interval, std::vector<Item *> &chosen)
 {
-	vector<pair<int, Item *>> ver_edges;
-	vector<Item *> sorted_items;
+	std::vector<std::pair<int, Item *>> ver_edges;
+	std::vector<Item *> sorted_items;
 
 	for (int i = 0; i < items.size(); ++i) {
 		const auto &box = to_box(items[i]);
 
-		ver_edges.push_back(make_pair(bg::get<bg::min_corner, 0>(box), &items[i]));
-		ver_edges.push_back(make_pair(bg::get<bg::max_corner, 0>(box), &items[i]));
+		ver_edges.push_back(std::make_pair(bg::get<bg::min_corner, 0>(box), &items[i]));
+		ver_edges.push_back(std::make_pair(bg::get<bg::max_corner, 0>(box), &items[i]));
 
 		sorted_items.push_back(&items[i]);
 	}
@@ -177,7 +177,7 @@ void max_independent_rectangles(vector<Item> &items, const ItemToBox &to_box, co
 }
 
 template<typename Item, typename ItemToBox>
-void verify_ind(const vector<Item> &chosen, const ItemToBox &to_box)
+void verify_ind(const std::vector<Item> &chosen, const ItemToBox &to_box)
 {
 	for (int i = 0; i < chosen.size(); ++i) {
 		for (int j = i + 1; j < chosen.size(); ++j) {

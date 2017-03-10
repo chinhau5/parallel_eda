@@ -30,10 +30,13 @@ FLAGS = -Wno-write-strings -Wno-unused-variable -Wno-unused-private-field
 
 HIDE =
 
+.DELETE_ON_ERROR:
+
 define generateEmitRules
 $(BUILD_ROOT)/$(1)/%.o: $(SRC_ROOT)/$(1)/%.$(2)
 	@echo Emitting $$@
-	$(HIDE)clang++ -std=c++11 -MMD $$(FLAGS) $$(INCLUDES) -c -o $$@ $$< 
+	@touch $$@
+	$(HIDE)$(CXX) -g -O3 -std=c++11 -MMD -MF $$(@:.o=.d.tmp) $$(INCLUDES) -c -o $$@ $$< && mv $$(@:.o=.d.tmp) $$(@:.o=.d) 
 endef
 
 -include $(DEPS)

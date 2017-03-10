@@ -12,25 +12,40 @@ RPATH = $(addprefix -Wl$(comma)-rpath$(comma), $(LIB_DIR))
 LINK_LIBS = X11 pthread dl m rt zlog boost_timer boost_system boost_thread tbb metis mpi mpi_cxx
 LINK_LIBS := $(addprefix -l,$(LINK_LIBS))
 
-define generateRules
-$(1): 
-	@echo Building $$@
-	cd $(1) && make -f Makefile.clang all
-endef
+CXX = g++
 
 #$(firstword $(subst /, ,$(1)))
 
-$(foreach dir, $(SUB_DIRS), $(eval $(call generateRules,$(dir))))
+.DELETE_ON_ERROR:
+
+define generateRules
+$(1)_$(2): 
+	@echo Building $$@
+	cd $(1) && $$(MAKE) -f Makefile.clang $(2)
+endef
+
+#$(firstword $(subst /, ,$(1)))_all:
+	#@echo Building $$@
+	#cd $(firstword $(subst /, ,$(1))) && $$(MAKE) -f Makefile.clang all
+
+define generateLibRules
+$(1): $(firstword $(subst /, ,$(1)))_all
+	@echo Done
+endef
+
+$(foreach sub_dir, $(SUB_DIRS), $(eval $(call generateRules,$(sub_dir),all)))
+$(foreach sub_dir, $(SUB_DIRS), $(eval $(call generateRules,$(sub_dir),clean)))
+$(foreach lib, $(LIBS), $(eval $(call generateLibRules,$(lib),all)))
 
 $(BUILD_ROOT):
 	mkdir -p $(BUILD_ROOT)
 
-$(BUILD_ROOT)/Router: $(SUB_DIRS) | $(BUILD_ROOT)
-	clang++ $(LIB_CMD) $(RPATH) $(LIBS) $(LINK_LIBS) -o $@
+$(BUILD_ROOT)/Router: $(LIBS) | $(BUILD_ROOT) 
+	$(CXX) $(LIB_CMD) $(RPATH) $(LIBS) $(LINK_LIBS) -o $@
 
-.PHONY: all clean $(SUB_DIRS)
+.PHONY: all clean $(addsuffix _clean,$(SUB_DIRS)) $(addsuffix _all,$(SUB_DIRS))
 
 all: $(BUILD_ROOT)/Router
 
-clean:
-	rm $(BUILD_ROOT)/Router
+clean: $(addsuffix _clean,$(SUB_DIRS))
+	rm -f $(BUILD_ROOT)/Router

@@ -31,6 +31,8 @@
 #include "clock.h"
 #include "queue.h"
 
+using namespace std;
+
 void init_datatypes();
 
 void sync_recalc_occ(congestion_t *congestion, int num_vertices, int procid, int num_procs, MPI_Comm comm);

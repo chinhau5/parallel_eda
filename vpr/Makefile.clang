@@ -1,7 +1,8 @@
 SRC_ROOT = SRC_TO_BUILD
 BUILD_ROOT = build
+CXX = g++
 
-DIRS = / base pack parallel_route place power route timing util
+DIRS = . base pack parallel_route place power route timing util
 
 TARGET = libvpr.a
 
@@ -24,17 +25,18 @@ INCLUDES = $(foreach dir, $(SRC_DIRS), $(addprefix -I, $(dir)))
 
 INCLUDES += -I../libarchfpga/include -I../printhandler/SRC/TIO_InputOutputHandlers
 INCLUDES += -I/home/chinhau5/zlog/include
-INCLUDES += -I/home/chinhau5/Downloads/metis-5.1.0/include/
+INCLUDES += -I/home/chinhau5/Downloads/metis-5.1.0/include
+INCLUDES += -I/home/chinhau5/Downloads/tbb2017_20161128oss/include
+INCLUDES += -I/home/chinhau5/Downloads/boost_1_60_0
 
 HIDE =
 
-test:
-	echo $(SRC_DIRS)
+.DELETE_ON_ERROR:
 
 define generateEmitRules
 $(BUILD_ROOT)/$(1)/%.ll: $(SRC_ROOT)/$(1)/%.$(2)
 	@echo Emitting $$@
-	$(HIDE)clang++ -O3 -emit-llvm -std=c++11 -MMD $$(INCLUDES) -S -o $$@ $$< 
+	$(HIDE)$(CXX) -O3 -emit-llvm -std=c++11 -MMD $$(INCLUDES) -S -o $$@ $$< 
 endef
 
 define generateOptRules
@@ -46,7 +48,14 @@ endef
 define generateAsmRules
 $(BUILD_ROOT)/$(1)/%.o: $(BUILD_ROOT)/$(1)/%_opt.ll
 	@echo Assembling $$@
-	$(HIDE)clang++ -O3 -std=c++11 -c -o $$@ $$< 
+	$(HIDE)$(CXX) -O3 -std=c++11 -c -o $$@ $$< 
+endef
+
+define generateRules
+$(BUILD_ROOT)/$(1)/%.o: $(SRC_ROOT)/$(1)/%.$(2)
+	@echo Building $$@
+	@touch $$@
+	$(HIDE)$(CXX) -g -O3 -std=c++11 -MMD -MF $$(@:.o=.d.tmp) $$(INCLUDES) -c -o $$@ $$< && mv $$(@:.o=.d.tmp) $$(@:.o=.d) 
 endef
 
 .SECONDARY: $(LLS) $(OPT_LLS)
@@ -64,10 +73,12 @@ endef
 -include $(DEPS)
 
 # Generate rules
-$(foreach dir, $(DIRS), $(eval $(call generateEmitRules,$(dir),c)))
-$(foreach dir, $(DIRS), $(eval $(call generateEmitRules,$(dir),cxx)))
-$(foreach dir, $(DIRS), $(eval $(call generateOptRules,$(dir))))
-$(foreach dir, $(DIRS), $(eval $(call generateAsmRules,$(dir))))
+$(foreach dir, $(DIRS), $(eval $(call generateRules,$(dir),c)))
+$(foreach dir, $(DIRS), $(eval $(call generateRules,$(dir),cxx)))
+#$(foreach dir, $(DIRS), $(eval $(call generateEmitRules,$(dir),c)))
+#$(foreach dir, $(DIRS), $(eval $(call generateEmitRules,$(dir),cxx)))
+#$(foreach dir, $(DIRS), $(eval $(call generateOptRules,$(dir))))
+#$(foreach dir, $(DIRS), $(eval $(call generateAsmRules,$(dir))))
 
 $(BUILD_DIRS):
 	@echo "Creating build dirs" 
@@ -78,13 +89,17 @@ $(OBJS): | $(BUILD_DIRS)
 $(BUILD_ROOT)/$(TARGET): $(OBJS)
 	ar rcs $@ $(OBJS)
 
-.PHONY: all clean
+.PHONY: all clean clean_opt_ll clean_objs
 
 all: $(BUILD_ROOT)/$(TARGET)
 
-clean:
-	rm -f $(BUILD_ROOT)/$(TARGET)
+clean_opt_ll:
+	rm -f $(OPT_LLS)
+
+clean_objs:
 	rm -f $(OBJS)
+
+clean: clean_opt_ll clean_objs
+	rm -f $(BUILD_ROOT)/$(TARGET)
 	rm -f $(DEPS)
 	rm -f $(LLS)
-	rm -f $(OPT_LLS)

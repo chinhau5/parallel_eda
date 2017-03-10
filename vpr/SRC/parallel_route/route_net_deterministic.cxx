@@ -11,6 +11,8 @@
 #include "expand.h"
 #include "router.h"
 
+using namespace std;
+
 template<typename ShouldExpandFunc>
 void expand_neighbors_deterministic(const RRGraph &g, int current, const route_state_t *state, const congestion_local_t *congestion, const rr_node_property_t &target, float criticality_fac, float astar_fac, std::priority_queue<route_state_t> &heap, const ShouldExpandFunc &should_expand, perf_t *perf)
 {

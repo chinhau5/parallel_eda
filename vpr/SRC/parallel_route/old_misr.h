@@ -2,14 +2,14 @@
 #define SCHEDULER_H
 
 template<typename Interval, typename Object>
-void max_independent_intervals(vector<pair<Interval, Object>> &intervals, vector<pair<Interval, Object> *> &chosen)
+void max_independent_intervals(std::vector<std::pair<Interval, Object>> &intervals, std::vector<std::pair<Interval, Object> *> &chosen)
 {
 	if (intervals.size() == 0) {
 		return;
 	}
 
 	using namespace boost::numeric;
-	std::sort(intervals.begin(), intervals.end(), [] (const pair<Interval, Object> &a, const pair<Interval, Object> &b) -> bool {
+	std::sort(intervals.begin(), intervals.end(), [] (const std::pair<Interval, Object> &a, const std::pair<Interval, Object> &b) -> bool {
 			return a.first.lower() < b.first.lower();
 			});
 
@@ -24,7 +24,7 @@ void max_independent_intervals(vector<pair<Interval, Object>> &intervals, vector
 }
 
 template<typename Box, typename Object>
-void max_independent_rectangles_simple(vector<pair<const Box *, Object> *> &bounding_boxes, vector<pair<const Box *, Object> *> &chosen)
+void max_independent_rectangles_simple(std::vector<std::pair<const Box *, Object> *> &bounding_boxes, std::vector<std::pair<const Box *, Object> *> &chosen)
 {
 	using namespace boost::numeric;
 
@@ -35,15 +35,15 @@ void max_independent_rectangles_simple(vector<pair<const Box *, Object> *> &boun
 		int upper() const { return box->ymax; }
 	} interval_wrapper_t;
 
-	using IntervalWrapperPair = pair<interval_wrapper_t, pair<const Box *, Object> *>;
+	using IntervalWrapperPair = std::pair<interval_wrapper_t, std::pair<const Box *, Object> *>;
 
-	vector<IntervalWrapperPair> intervals(bounding_boxes.size());
+	std::vector<IntervalWrapperPair> intervals(bounding_boxes.size());
 	for (int i = 0; i < bounding_boxes.size(); ++i) {
 		intervals[i].first.box = bounding_boxes[i]->first;
 		intervals[i].second = bounding_boxes[i];
 	}
 
-	vector<IntervalWrapperPair *> chosen_intervals;
+	std::vector<IntervalWrapperPair *> chosen_intervals;
 	max_independent_intervals(intervals, chosen_intervals);
 
 	for (const auto &c : chosen_intervals) {
@@ -52,7 +52,7 @@ void max_independent_rectangles_simple(vector<pair<const Box *, Object> *> &boun
 }
 
 template<typename Box, typename Object>
-void max_independent_rectangles(vector<pair<const Box *, Object> *> &bounding_boxes, vector<pair<const Box *, Object> *> &chosen)
+void max_independent_rectangles(std::vector<std::pair<const Box *, Object> *> &bounding_boxes, std::vector<std::pair<const Box *, Object> *> &chosen)
 {
 	extern zlog_category_t *independent_log;
 	/* base case */
@@ -86,7 +86,7 @@ void max_independent_rectangles(vector<pair<const Box *, Object> *> &bounding_bo
 		}
 	} vertical_edge_t;
 
-	vector<vertical_edge_t> ver_edges;
+	std::vector<vertical_edge_t> ver_edges;
 
 	for (int i = 0; i < bounding_boxes.size(); ++i) {
 		ver_edges.push_back({ bounding_boxes[i]->first->xmin, i });
@@ -105,9 +105,9 @@ void max_independent_rectangles(vector<pair<const Box *, Object> *> &bounding_bo
 		x_median = (float)(left + right) / 2;
 	}
 
-	vector<pair<const Box *, Object> *> left;
-	vector<pair<const Box *, Object> *> right;
-	vector<pair<const Box *, Object> *> middle;
+	std::vector<std::pair<const Box *, Object> *> left;
+	std::vector<std::pair<const Box *, Object> *> right;
+	std::vector<std::pair<const Box *, Object> *> middle;
 	for (int i = 0; i < bounding_boxes.size(); ++i) {
 		if (bounding_boxes[i]->first->xmin < x_median && bounding_boxes[i]->first->xmax < x_median) {
 			left.push_back(bounding_boxes[i]);
@@ -122,9 +122,9 @@ void max_independent_rectangles(vector<pair<const Box *, Object> *> &bounding_bo
 		}
 	}
 
-	vector<pair<const Box *, Object> *> left_chosen;
-	vector<pair<const Box *, Object> *> right_chosen;
-	vector<pair<const Box *, Object> *> middle_chosen;
+	std::vector<std::pair<const Box *, Object> *> left_chosen;
+	std::vector<std::pair<const Box *, Object> *> right_chosen;
+	std::vector<std::pair<const Box *, Object> *> middle_chosen;
 	max_independent_rectangles(left, left_chosen);
 	max_independent_rectangles(right, right_chosen);
 	max_independent_rectangles_simple(middle, middle_chosen);
@@ -144,7 +144,7 @@ void max_independent_rectangles(vector<pair<const Box *, Object> *> &bounding_bo
 }
 
 template<typename Box, typename Object>
-void max_independent_rectangles_2(vector<pair<const Box *, Object> *> &bounding_boxes, vector<pair<const Box *, Object> *> &chosen)
+void max_independent_rectangles_2(std::vector<std::pair<const Box *, Object> *> &bounding_boxes, std::vector<std::pair<const Box *, Object> *> &chosen)
 {
 	extern zlog_category_t *independent_log;
 	/* base case */
@@ -178,7 +178,7 @@ void max_independent_rectangles_2(vector<pair<const Box *, Object> *> &bounding_
 		}
 	} vertical_edge_t;
 
-	vector<vertical_edge_t> ver_edges;
+	std::vector<vertical_edge_t> ver_edges;
 
 	for (int i = 0; i < bounding_boxes.size(); ++i) {
 		ver_edges.push_back({ bounding_boxes[i]->first->xmin, i });
@@ -197,9 +197,9 @@ void max_independent_rectangles_2(vector<pair<const Box *, Object> *> &bounding_
 		x_median = (float)(left + right) / 2;
 	}
 
-	vector<pair<const Box *, Object> *> left;
-	vector<pair<const Box *, Object> *> right;
-	vector<pair<const Box *, Object> *> middle;
+	std::vector<std::pair<const Box *, Object> *> left;
+	std::vector<std::pair<const Box *, Object> *> right;
+	std::vector<std::pair<const Box *, Object> *> middle;
 	for (int i = 0; i < bounding_boxes.size(); ++i) {
 		if (bounding_boxes[i]->first->xmin < x_median && bounding_boxes[i]->first->xmax < x_median) {
 			left.push_back(bounding_boxes[i]);
@@ -214,9 +214,9 @@ void max_independent_rectangles_2(vector<pair<const Box *, Object> *> &bounding_
 		}
 	}
 
-	vector<pair<const Box *, Object> *> left_chosen;
-	vector<pair<const Box *, Object> *> right_chosen;
-	vector<pair<const Box *, Object> *> middle_chosen;
+	std::vector<std::pair<const Box *, Object> *> left_chosen;
+	std::vector<std::pair<const Box *, Object> *> right_chosen;
+	std::vector<std::pair<const Box *, Object> *> middle_chosen;
 	max_independent_rectangles(left, left_chosen);
 	max_independent_rectangles(right, right_chosen);
 	max_independent_rectangles_simple(middle, middle_chosen);
@@ -235,10 +235,10 @@ void max_independent_rectangles_2(vector<pair<const Box *, Object> *> &bounding_
 	}
 }
 
-void schedule_nets_ind(vector<net_t *> &nets, vector<vector<const net_t *>> &net_scheduled_at_time);
+void schedule_nets_ind(std::vector<net_t *> &nets, std::vector<std::vector<const net_t *>> &net_scheduled_at_time);
 
-void verify_ind(const vector<const net_t *> &nets);
+void verify_ind(const std::vector<const net_t *> &nets);
 
-void schedule_nets_bounding_box(vector<net_t *> &nets, vector<pair<sink_t *, net_t *>> &scheduled_sinks);
+void schedule_nets_bounding_box(std::vector<net_t *> &nets, std::vector<std::pair<sink_t *, net_t *>> &scheduled_sinks);
 
 #endif

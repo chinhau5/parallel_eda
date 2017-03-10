@@ -3,18 +3,18 @@
 
 #include "cache_graph.h"
 
-using namespace std;
+//using namespace std;
 
-using Buckets = vector<vector<int> *>;
+using Buckets = std::vector<std::vector<int> *>;
 
-void bucket_insert(Buckets &buckets, float delta, vector<bool> &in_bucket, int v, float distance);
+void bucket_insert(Buckets &buckets, float delta, std::vector<bool> &in_bucket, int v, float distance);
 
-bool bucket_remove(Buckets &buckets, float delta, vector<bool> &in_bucket, const vector<bool> &vertex_deleted, int v, float *distance);
+bool bucket_remove(Buckets &buckets, float delta, std::vector<bool> &in_bucket, const std::vector<bool> &vertex_deleted, int v, float *distance);
 
 int bucket_get_non_empty(const Buckets &buckets);
 
 template<typename Edge, typename Callbacks>
-void relax(Buckets &buckets, float delta, vector<bool> &in_bucket, const vector<bool> &vertex_deleted,
+void relax(Buckets &buckets, float delta, std::vector<bool> &in_bucket, const std::vector<bool> &vertex_deleted,
 		float *known_distance, float *distance, Edge *prev_edge,
 		int v, float new_known_distance, float new_distance, const Edge &edge,
 		Callbacks &callbacks)
@@ -48,11 +48,11 @@ struct existing_source_t {
 };
 
 template<typename Graph, typename Edge, typename EdgeWeightFunc, typename Callbacks>
-void delta_stepping(const Graph &g, const vector<existing_source_t<Edge>> &sources, int sink, float delta, float *known_distance, float *distance, Edge *prev_edge, const EdgeWeightFunc &edge_weight, Callbacks &callbacks)
+void delta_stepping(const Graph &g, const std::vector<existing_source_t<Edge>> &sources, int sink, float delta, float *known_distance, float *distance, Edge *prev_edge, const EdgeWeightFunc &edge_weight, Callbacks &callbacks)
 {
 	Buckets buckets;
-	vector<bool> in_bucket(num_vertices(g), false);
-	vector<bool> vertex_deleted(num_vertices(g), false);
+	std::vector<bool> in_bucket(num_vertices(g), false);
+	std::vector<bool> vertex_deleted(num_vertices(g), false);
 
 	for (const auto &s : sources) {
 		relax(buckets, delta, in_bucket, vertex_deleted,
@@ -65,7 +65,7 @@ void delta_stepping(const Graph &g, const vector<existing_source_t<Edge>> &sourc
 
 	bool found = false;
 	while ((i = bucket_get_non_empty(buckets)) >= 0 && !found) {
-		vector<int> deleted_vertices;
+		std::vector<int> deleted_vertices;
 
 		auto *bucket = buckets[i];
 

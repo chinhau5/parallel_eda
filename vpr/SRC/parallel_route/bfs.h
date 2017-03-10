@@ -9,7 +9,7 @@ enum class VertexColor {
 
 template<typename Graph, typename Visitor>
 //void bfs(const RRGraph &g, const RRNode &rr_node, bool horizontal, bool inc_direction, vector<bool> &visited, vector<int> &visited_edges) 
-void bfs(const Graph &g, const vector<unsigned long> &rr_nodes, vector<VertexColor> &color, Visitor &visitor)
+void bfs(const Graph &g, const std::vector<unsigned long> &rr_nodes, std::vector<VertexColor> &color, Visitor &visitor)
 {
 	//struct queue_item {
 		//const RRNode *node;

@@ -6,7 +6,7 @@
 #include <boost/iterator/iterator_facade.hpp>
 #include <boost/range/counting_range.hpp>
 
-using namespace std;
+//using namespace std;
 
 template<typename Properties>
 struct cache_edge_t {
@@ -28,8 +28,8 @@ struct cache_edge_t {
 template<typename VertexProperties, typename EdgeProperties>
 struct cache_vertex_t {
 	//int m_id;
-	vector<cache_edge_t<EdgeProperties>> edges;
-	vector<EdgeProperties> edge_props;
+	std::vector<cache_edge_t<EdgeProperties>> edges;
+	std::vector<EdgeProperties> edge_props;
 	VertexProperties properties;
 };
 
@@ -43,7 +43,7 @@ struct cache_vertex_t {
 
 template<typename VertexProperties, typename EdgeProperties>
 struct cache_graph_t {
-	typedef vector<cache_vertex_t<VertexProperties, EdgeProperties>> Vertices;
+	typedef std::vector<cache_vertex_t<VertexProperties, EdgeProperties>> Vertices;
 	//typedef vector<cache_edge_t<EdgeProperties>> Edges;
 	Vertices vertices;
 	//Edges edges;
@@ -345,7 +345,7 @@ struct cache_graph_t {
 	typedef boost::counting_iterator<unsigned long> vertex_iterator;
 
 	//typedef boost::transform_iterator<edge_to_target_t<EdgeProperties>, typename vector<cache_edge_t<EdgeProperties>>::const_iterator> out_edge_iterator;
-	typedef typename vector<cache_edge_t<EdgeProperties>>::const_iterator out_edge_iterator;
+	typedef typename std::vector<cache_edge_t<EdgeProperties>>::const_iterator out_edge_iterator;
 };
 
 template<typename VertexProperties, typename EdgeProperties>

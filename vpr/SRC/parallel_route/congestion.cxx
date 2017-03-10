@@ -6,6 +6,8 @@
 #include "log.h"
 #include "congestion.h"
 
+using namespace std;
+
 static MPI_Datatype occ_dt;
 static MPI_Datatype acc_dt; 
 

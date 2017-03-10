@@ -22,6 +22,8 @@
 #include "blockingconcurrentqueue.h"
 #include "dijkstra.h"
 
+using namespace std;
+
 //#include <mlpack/methods/kmeans/kmeans.hpp>
 //#include <mlpack/methods/kmeans/refined_start.hpp>
 

@@ -8,7 +8,7 @@ bool operator<(const existing_source_t<Edge> &a, const existing_source_t<Edge> &
 }
 
 template<typename Graph, typename Edge, typename EdgeWeightFunc, typename ExpandCheckFunc, typename Callbacks>
-void dijkstra(const Graph &g, const vector<existing_source_t<Edge>> &sources, int sink, float *known_distance, float *distance, Edge *prev_edge, const ExpandCheckFunc &expand_node, const EdgeWeightFunc &edge_weight, Callbacks &callbacks)
+void dijkstra(const Graph &g, const std::vector<existing_source_t<Edge>> &sources, int sink, float *known_distance, float *distance, Edge *prev_edge, const ExpandCheckFunc &expand_node, const EdgeWeightFunc &edge_weight, Callbacks &callbacks)
 {
 	using Item = existing_source_t<Edge>;
 	std::priority_queue<Item> heap;

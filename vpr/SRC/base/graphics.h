@@ -4,7 +4,7 @@
 #include <iostream>
 #include <string>
 #include "easygl_constants.h"
-using namespace std;
+//using namespace std;
 
 // Set X11 by default, if neither NO_GRAPHICS nor WIN32 are defined
 #ifndef NO_GRAPHICS
@@ -129,7 +129,7 @@ void clearscreen (void);
 void setcolor (int cindex);
 
 /* Set the color with a string instead of an enumerated constant */
-void setcolor (string cname);
+void setcolor (std::string cname);
 
 /* Get the current color */
 int getcolor(void);

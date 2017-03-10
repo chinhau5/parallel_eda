@@ -20,6 +20,8 @@
 #include "router.h"
 #include "metis_partitioner.h"
 
+using namespace std;
+
 using std::chrono::duration_cast;
 using std::chrono::nanoseconds;
 

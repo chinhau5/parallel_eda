@@ -31,14 +31,14 @@ class fm_partition {
 
 	int max_possible_gain;
 
-	vector<int> &pid;
+	std::vector<int> &pid;
 	int num_nodes;
 
-	vector<bool> &locked;
+	std::vector<bool> &locked;
 	int num_locked;
 
-	vector<pair<int, int>> node_bucket_lookup;
-	vector<vector<int>> buckets;
+	std::vector<std::pair<int, int>> node_bucket_lookup;
+	std::vector<std::vector<int>> buckets;
 	int highest_gain_bucket;
 	int highest_gain_bucket_item_id;
 
@@ -46,8 +46,8 @@ class fm_partition {
 
 	friend class fm_partition_builder<Graph, Imbalance>;
 
-	fm_partition(int this_pid, const Graph &g, int max_possible_gain, vector<int> &pid, vector<bool> &locked, const Imbalance &imbalance)
-		: this_pid(this_pid), g(g), max_possible_gain(max_possible_gain), pid(pid), num_nodes(0), locked(locked), num_locked(0), node_bucket_lookup(num_vertices(g), make_pair(-1, -1)), buckets(max_possible_gain*2+1), highest_gain_bucket(-1), highest_gain_bucket_item_id(-1), imbalance(imbalance)
+	fm_partition(int this_pid, const Graph &g, int max_possible_gain, std::vector<int> &pid, std::vector<bool> &locked, const Imbalance &imbalance)
+		: this_pid(this_pid), g(g), max_possible_gain(max_possible_gain), pid(pid), num_nodes(0), locked(locked), num_locked(0), node_bucket_lookup(num_vertices(g), std::make_pair(-1, -1)), buckets(max_possible_gain*2+1), highest_gain_bucket(-1), highest_gain_bucket_item_id(-1), imbalance(imbalance)
 	{
 	}
 
@@ -76,7 +76,7 @@ class fm_partition {
 		num_locked = 0;
 	}
 
-	pair<int, int> get_highest_gain_node()
+	std::pair<int, int> get_highest_gain_node()
 	{
 		int b = get_highest_gain_bucket();
 
@@ -109,14 +109,14 @@ class fm_partition {
 			gain = 0;
 		}
 
-		return make_pair(node, gain);
+		return std::make_pair(node, gain);
 	}
 
 	void remove_from_bucket(int v)
 	{
 		int bid, iid;
 		std::tie(bid, iid) = node_bucket_lookup[v];
-		assert(node_bucket_lookup[v] != make_pair(-1, -1));
+		assert(node_bucket_lookup[v] != std::make_pair(-1, -1));
 		assert(find(begin(buckets[bid]), end(buckets[bid]), v) != end(buckets[bid]));
 		buckets[bid].erase(buckets[bid].begin()+iid);
 		for (const auto &item : buckets[bid]) {
@@ -124,7 +124,7 @@ class fm_partition {
 				--node_bucket_lookup[item].second;
 			}
 		}
-		node_bucket_lookup[v] = make_pair(-1, -1);
+		node_bucket_lookup[v] = std::make_pair(-1, -1);
 		/* allows the highest_gain_bucket variable to be updated */
 		get_highest_gain_bucket();
 	}
@@ -145,8 +145,8 @@ class fm_partition {
 		int iid = buckets[bid].size();
 		assert(find(begin(buckets[bid]), end(buckets[bid]), v) == end(buckets[bid]));
 		buckets[bid].push_back(v);
-		assert(node_bucket_lookup[v] == make_pair(-1, -1));
-		node_bucket_lookup[v] = make_pair(bid, iid);
+		assert(node_bucket_lookup[v] == std::make_pair(-1, -1));
+		node_bucket_lookup[v] = std::make_pair(bid, iid);
 		if (bid > highest_gain_bucket) {
 			highest_gain_bucket = bid;
 		}
@@ -226,8 +226,8 @@ class fm_partition_builder {
 		const Imbalance *_imbalance;
 		int _this_pid;
 		int _max_possible_gain;
-		vector<int> *_pid;
-		vector<bool> *_locked;
+		std::vector<int> *_pid;
+		std::vector<bool> *_locked;
 
 	public:
 		fm_partition_builder()
@@ -246,11 +246,11 @@ class fm_partition_builder {
 		{
 			_max_possible_gain = max_possible_gain;
 		}
-		void set_locked(vector<bool> *locked)
+		void set_locked(std::vector<bool> *locked)
 		{
 			_locked = locked;
 		}
-		void set_pid(vector<int> *pid)
+		void set_pid(std::vector<int> *pid)
 		{
 			_pid = pid;
 		}
@@ -269,10 +269,10 @@ template<typename Graph, typename Imbalance>
 class fm {
 	private:
 		const Graph *g;
-		vector<int> initial_pid;
-		vector<int> pid;
-		vector<bool> locked;
-		vector<pair<int, int>> moves;
+		std::vector<int> initial_pid;
+		std::vector<int> pid;
+		std::vector<bool> locked;
+		std::vector<std::pair<int, int>> moves;
 		fm_partition<Graph, Imbalance> *part[2];
 		int max_possible_gain;
 		Imbalance *imbalance;
@@ -289,7 +289,7 @@ class fm {
 			return gain >= -max_possible_gain && gain <= max_possible_gain;
 		}
 
-		const vector<int> &get_pid() const
+		const std::vector<int> &get_pid() const
 		{
 			return pid;
 		}
@@ -309,7 +309,7 @@ class fm {
 			}
 		}
 
-		void init(const Graph &_g, const vector<int> &_initial_pid, Imbalance &_imbalance)
+		void init(const Graph &_g, const std::vector<int> &_initial_pid, Imbalance &_imbalance)
 		{
 			g = &_g;
 			imbalance = &_imbalance;

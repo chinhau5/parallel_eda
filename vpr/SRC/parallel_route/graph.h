@@ -6,7 +6,7 @@
 #include <boost/iterator/counting_iterator.hpp>
 #include <boost/range/counting_range.hpp>
 
-using namespace std;
+//using namespace std;
 
 template<typename Properties>
 struct edge_t {
@@ -19,14 +19,14 @@ struct edge_t {
 template<typename VertexProperties, typename EdgeProperties>
 struct vertex_t {
 	int m_id;
-	vector<int> edges;
+	std::vector<int> edges;
 	VertexProperties properties;	
 };
 
 template<typename VertexProperties, typename EdgeProperties>
 struct graph_t {
-	typedef vector<vertex_t<VertexProperties, EdgeProperties>> Vertices;
-	typedef vector<edge_t<EdgeProperties>> Edges;
+	typedef std::vector<vertex_t<VertexProperties, EdgeProperties>> Vertices;
+	typedef std::vector<edge_t<EdgeProperties>> Edges;
 	Vertices vertices;
 	Edges edges;
 
@@ -189,7 +189,7 @@ struct graph_t {
 	//typedef iterator<int, int> edge_iterator;
 	//typedef iterator<int, int> const_edge_iterator;
 
-	typedef vector<int>::const_iterator out_edges_iterator;
+	typedef std::vector<int>::const_iterator out_edges_iterator;
 
 	//typedef typename Edges::iterator edge_iterator;
 	//typedef typename Edges::const_iterator edge_const_iterator;

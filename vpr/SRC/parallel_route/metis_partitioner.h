@@ -5,13 +5,13 @@
 #include "metis.h"
 
 template<typename Graph>
-void partition_graph(const Graph &g, int num_partitions, float ubvec, vector<int> &_part)
+void partition_graph(const Graph &g, int num_partitions, float ubvec, std::vector<int> &_part)
 {
 	idx_t *adjncy, *xadj;
 	xadj = new idx_t[num_vertices(g)+1];
 	adjncy = new idx_t[2*num_edges(g)];
 
-	vector<vector<int>> redundant_edges(num_vertices(g));
+	std::vector<std::vector<int>> redundant_edges(num_vertices(g));
 	for (const auto &e : get_edges(g)) {
 		int from = get_source(g, e);
 		int to = get_target(g, e);
@@ -69,7 +69,7 @@ void partition_graph(const Graph &g, int num_partitions, float ubvec, vector<int
 }
 
 template<typename Net>
-void partition_nets(vector<pair<box, Net>> &virtual_nets, int num_partitions, float ubvec, vector<vector<int>> &overlaps, vector<vector<int>> &partitions, vector<bool> &has_interpartition_overlap)
+void partition_nets(std::vector<std::pair<box, Net>> &virtual_nets, int num_partitions, float ubvec, std::vector<std::vector<int>> &overlaps, std::vector<std::vector<int>> &partitions, std::vector<bool> &has_interpartition_overlap)
 {
 	overlaps.resize(virtual_nets.size());
 	tbb::atomic<unsigned long> num_edges = 0;
@@ -146,7 +146,7 @@ void partition_nets(vector<pair<box, Net>> &virtual_nets, int num_partitions, fl
 }
 
 template<typename Net>
-void partition_nets_overlap_area_metric(vector<pair<box, Net>> &virtual_nets, int num_partitions, float ubvec, vector<vector<pair<int, int>>> &overlaps, vector<vector<int>> &partitions, vector<bool> &has_interpartition_overlap)
+void partition_nets_overlap_area_metric(std::vector<std::pair<box, Net>> &virtual_nets, int num_partitions, float ubvec, std::vector<std::vector<std::pair<int, int>>> &overlaps, std::vector<std::vector<int>> &partitions, std::vector<bool> &has_interpartition_overlap)
 {
 	overlaps.resize(virtual_nets.size());
 	tbb::atomic<int> num_edges = 0;
@@ -158,7 +158,7 @@ void partition_nets_overlap_area_metric(vector<pair<box, Net>> &virtual_nets, in
 			bg::add_value(intersection.max_corner(), 1);
 			int overlap_area = bg::area(intersection);
 			if (i != j && bg::intersects(virtual_nets[i].first, virtual_nets[j].first)) {
-			overlaps[i].push_back(make_pair(j, overlap_area));
+			overlaps[i].push_back(std::make_pair(j, overlap_area));
 			++num_edges;
 			}
 			}
@@ -214,7 +214,7 @@ void partition_nets_overlap_area_metric(vector<pair<box, Net>> &virtual_nets, in
 
 	tbb::parallel_for(tbb::blocked_range<size_t>(0, virtual_nets.size(), 1024), [&has_interpartition_overlap, &overlaps, &part] (const tbb::blocked_range<size_t> &range) -> void {
 			for (int i = range.begin(); i != range.end(); ++i) {
-				bool has = std::any_of(begin(overlaps[i]), end(overlaps[i]), [&part, &i] (const pair<int, int> &other) -> bool {
+				bool has = std::any_of(begin(overlaps[i]), end(overlaps[i]), [&part, &i] (const std::pair<int, int> &other) -> bool {
 							return part[i] != part[other.first];
 						});
 				has_interpartition_overlap[i] = has;

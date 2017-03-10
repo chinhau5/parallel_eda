@@ -21,6 +21,8 @@
 #include "barrier.h"
 #include "dijkstra.h"
 
+using namespace std;
+
 using timer = std::chrono::high_resolution_clock;
 using std::chrono::duration_cast;
 using std::chrono::nanoseconds;

@@ -18,17 +18,17 @@ struct WorkerArgs {
 	std::mutex &lock;
 	QuadTree<virtual_net_t *> &in_flight_qt;
 	/*vector<virtual_net_t> &virtual_nets;*/
-	vector<vector<virtual_net_t>> *virtual_nets_by_net;
+	std::vector<std::vector<virtual_net_t>> *virtual_nets_by_net;
 	int &num_routed_virtual_nets;
 
-	vector<std::mutex> &net_locks;
+	std::vector<std::mutex> &net_locks;
 
 	RRGraph &g;
 	route_parameters_t &params;
 	route_state_t *state;
-	vector<route_tree_t> &route_trees;
-	vector<trace_t> **prev_traces_ptr;
-	vector<trace_t> **current_traces_ptr;
+	std::vector<route_tree_t> &route_trees;
+	std::vector<trace_t> **prev_traces_ptr;
+	std::vector<trace_t> **current_traces_ptr;
 	t_net_timing *net_timing;
 
 /*#if __linux__*/
@@ -58,14 +58,14 @@ struct WorkerArgs {
 			/*vector<virtual_net_t> &virtual_nets,*/
 			int &num_routed_virtual_nets,
 
-			vector<std::mutex> &net_locks,
+			std::vector<std::mutex> &net_locks,
 
 			RRGraph &g,
 			route_parameters_t &params,
 			route_state_t *state,
-			vector<route_tree_t> &route_trees,
-			vector<trace_t> **prev_traces_ptr,
-			vector<trace_t> **current_traces_ptr,
+			std::vector<route_tree_t> &route_trees,
+			std::vector<trace_t> **prev_traces_ptr,
+			std::vector<trace_t> **current_traces_ptr,
 			t_net_timing *net_timing,
 
 			sem_t *consume_sem,
@@ -108,10 +108,10 @@ struct WorkerArgs {
 
 struct SchedulerArgs {
 	int *iteration;
-	vector<virtual_net_t *> current_virtual_nets;
-	vector<virtual_net_t> *virtual_nets;
-	vector<net_t> *nets;
-	vector<vector<virtual_net_t>> *virtual_nets_by_net;
+	std::vector<virtual_net_t *> current_virtual_nets;
+	std::vector<virtual_net_t> *virtual_nets;
+	std::vector<net_t> *nets;
+	std::vector<std::vector<virtual_net_t>> *virtual_nets_by_net;
 
 	sem_t *produce_sem;	
 	sem_t *consume_sem;	
@@ -120,13 +120,13 @@ struct SchedulerArgs {
 	QuadTree<virtual_net_t *> *in_flight_qt;
 	RRGraph *g;
 	route_parameters_t *params;
-	vector<route_tree_t> *route_trees;
+	std::vector<route_tree_t> *route_trees;
 	int num_nets;
 	t_router_opts *opts;
 
 	sched_perf_t perf;
 
-	vector<std::mutex> *net_locks;
+	std::vector<std::mutex> *net_locks;
 };
 
 #endif

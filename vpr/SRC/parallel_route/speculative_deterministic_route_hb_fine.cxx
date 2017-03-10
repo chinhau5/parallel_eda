@@ -22,9 +22,16 @@
 #include "dijkstra.h"
 #include "det_mutex.h"
 
-using timer = std::chrono::high_resolution_clock;
+using namespace std;
+
+//using timer = std::chrono::high_resolution_clock;
+using timer = myclock;
 using std::chrono::duration_cast;
 using std::chrono::nanoseconds;
+
+#define INC_COUNT 1
+#define SHORT_CRIT
+#define PROFILE_WAIT
 
 //#define PTHREAD_BARRIER
 
@@ -51,6 +58,7 @@ typedef struct global_route_state_t {
 typedef struct worker_sync_t {
 	/*alignas(64)*/ std::atomic<int> stop_routing;
 	/*alignas(64)*/ std::atomic<int> net_index;
+	det_mutex_t lock;
 #ifdef PTHREAD_BARRIER
 	/*alignas(64)*/ pthread_barrier_t barrier;
 #else
@@ -65,6 +73,7 @@ typedef struct worker_sync_t {
 struct runtime_t {
 	timer::duration route_time;
 	timer::duration wait_time;
+	timer::duration get_net_wait_time;
 	timer::duration pure_route_time;
 	timer::duration last_barrier_wait_time;
 	timer::duration last_sync_time;
@@ -98,7 +107,7 @@ struct /*alignas(64)*/ router_t {
 	route_parameters_t params;
 	float pres_fac;
 
-	vector<exec_state_t, tbb::cache_aligned_allocator<exec_state_t>> e_state;
+	exec_state_t *e_state;
 	int num_threads;
 	int window_size;
 
@@ -189,11 +198,11 @@ static bool inside_region(const rr_node_property_t &node, const box &bb)
 	return inside;
 }
 
-void inc_logical_clock(unsigned long count)
+void inc_logical_clock_instrumented(unsigned long count)
 {
 	if (tl_logical_clock_mask > 0) {
 		assert(g_e_state);
-		*g_e_state[tl_tid].logical_clock += (count & tl_logical_clock_mask);
+		inc_logical_clock(&g_e_state[tl_tid], count & tl_logical_clock_mask, -1);
 	}
 }
 
@@ -210,11 +219,9 @@ void stop_logical_clock()
 void reset_logical_clock()
 {
 	if (g_e_state) {
-		*g_e_state[tl_tid].logical_clock = 0;
+		set_logical_clock(&g_e_state[tl_tid], 0);
 	}
 }
-
-static router_t<net_t *> *g_router;
 
 void region_acquire(region_t &o, int tid)
 {
@@ -238,11 +245,17 @@ void region_release(region_t &o, int tid)
 	//region_release(o, tid);
 //}
 
-void region_add_mod(region_t &o, int tid, vector<mod_t> *mods)
+void region_add_mod(region_t &o, int tid, vector<mod_t> *mods, timer::duration &wait_time)
 {
+#ifdef PROFILE_WAIT
+	auto wait_start = timer::now(); 
+#endif
 	region_acquire(o, tid);
+#ifdef PROFILE_WAIT
+	wait_time += timer::now()-wait_start;
+#endif
 
-	zlog_level(delta_log, ROUTER_V3, "[Net %d] Adding mods (size %d) to region %d (old size %d)\n", g_router->e_state[tid].inet->load(), mods->size(), o.gid, o.mods[tid].size());
+	zlog_level(delta_log, ROUTER_V3, "[Net %d] Adding mods (size %d) to region %d (old size %d)\n", get_inet(&g_e_state[tid]), mods->size(), o.gid, o.mods[tid].size());
 
 	o.mods[tid].emplace_back(mods);
 
@@ -271,14 +284,18 @@ void region_add_mod(region_t &o, int tid, vector<mod_t> *mods)
 	//region_release(o, tid);
 //}
 
-#define SHORT_CRIT
-
 template<typename Callback>
-void region_get_mods(region_t &o, int tid, const Callback &f)
+void region_get_mods(region_t &o, int tid, const Callback &f, timer::duration &wait_time)
 {
+#ifdef PROFILE_WAIT
+	auto wait_start = timer::now(); 
+#endif
 	region_acquire(o, tid);
+#ifdef PROFILE_WAIT
+	wait_time += timer::now()-wait_start;
+#endif
 
-	zlog_level(delta_log, ROUTER_V3, "[Net %d] Thread %d Getting mods in region %d\n", g_router->e_state[tid].inet->load(), tl_tid, o.gid);
+	zlog_level(delta_log, ROUTER_V3, "[Net %d] Thread %d Getting mods in region %d\n", get_inet(&g_e_state[tid]), tl_tid, o.gid);
 
 	for (int i = 0; i < o.mods.size(); ++i) {
 		if (i == tid) {
@@ -288,7 +305,7 @@ void region_get_mods(region_t &o, int tid, const Callback &f)
 
 		assert(o.num_committed_mods[tid][i] <= o.mods[i].size());
 
-		zlog_level(delta_log, ROUTER_V3, "[Net %d region %d] Mods from thread %d. Commited: %d Size: %d\n", g_router->e_state[tid].inet->load(), o.gid, i, o.num_committed_mods[tid][i], o.mods[i].size());
+		zlog_level(delta_log, ROUTER_V3, "[Net %d region %d] Mods from thread %d. Commited: %d Size: %d\n", get_inet(&g_e_state[tid]), o.gid, i, o.num_committed_mods[tid][i], o.mods[i].size());
 
 		for (int j = o.num_committed_mods[tid][i]; j < o.mods[i].size(); ++j) {
 			zlog_level(delta_log, ROUTER_V3, "Mods %d size %d\n", j, o.mods[i][j]->size());
@@ -340,11 +357,13 @@ void mods_add(int rr_node, int delta, vector<region_t *> &rr_regions, vector<Mod
 	mods[r->gid]->emplace_back(m);
 }
 
-void mods_commit(vector<Mods> &mods, int tid, vector<region_t *> &fpga_regions)
+void mods_commit(vector<Mods> &mods, int tid, vector<region_t *> &fpga_regions, timer::duration &wait_time)
 {
+	assert(mods.size() == fpga_regions.size());
+
 	for (int i = 0; i < mods.size(); ++i) {
 		if (mods[i]) {
-			region_add_mod(*fpga_regions[i], tid, mods[i]);
+			region_add_mod(*fpga_regions[i], tid, mods[i], wait_time);
 		}
 	}
 }
@@ -441,6 +460,7 @@ class SpeculativeDeterministicRouter {
 		int _instance;
 
 		vector<const vector<mod_t> *> _all_mods;
+		timer::duration _wait_time;
 
 	private:
 		void popped_node(int v)
@@ -450,6 +470,10 @@ class SpeculativeDeterministicRouter {
 			zlog_level(delta_log, ROUTER_V3, "%s\n", buffer);
 			++_stats.num_heap_pops;
 
+#ifndef INSTRUMENT
+			//_e_state->logical_clock->fetch_add(INC_COUNT, std::memory_order_relaxed);
+			inc_logical_clock(_e_state, INC_COUNT, 0);
+#endif
 			//rand_delay();
 		}
 
@@ -518,7 +542,10 @@ class SpeculativeDeterministicRouter {
 
 		bool expand_node(int node)
 		{
-			//++(*_e_state->logical_clock);
+#ifndef INSTRUMENT
+			//_e_state->logical_clock->fetch_add(INC_COUNT, std::memory_order_relaxed);
+			inc_logical_clock(_e_state, INC_COUNT, 1);
+#endif
 			
 			const auto &prop = get_vertex_props(_g, node);
 
@@ -560,11 +587,6 @@ class SpeculativeDeterministicRouter {
 			return true;
 		}
 
-		void push_node(int node)
-		{
-			++_stats.num_heap_pushes;
-		}
-
 		pair<float, float> get_edge_weight(const RREdge &e)
 		{
 			int u = get_source(_g, e);
@@ -592,18 +614,30 @@ class SpeculativeDeterministicRouter {
 				_all_mods.clear();	
 				region_get_mods(*r, _instance, [this] (const vector<mod_t> *mods) -> void {
 						_all_mods.push_back(mods);
-						});
+#ifndef INSTRUMENT
+						//_e_state->logical_clock->fetch_add(INC_COUNT, std::memory_order_relaxed);
+						inc_logical_clock(_e_state, INC_COUNT, 2);
+#endif
+						}, _wait_time);
 				for (const auto &mods : _all_mods) {
 					for (const auto &m : *mods) {
 						const auto &props = get_vertex_props(_g, m.node);
 						update_first_order_congestion(_congestion, m.node, m.delta, props.capacity, _pres_fac);
+#ifndef INSTRUMENT
+						//_e_state->logical_clock->fetch_add(INC_COUNT, std::memory_order_relaxed);
+						inc_logical_clock(_e_state, INC_COUNT, 3);
+#endif
 					}
 				}
-#else
+#else //SHORT_CRIT
 				region_get_mods(*r, _instance, [this] (const mod_t &m) -> void {
 						const auto &props = get_vertex_props(_g, m.node);
 						update_first_order_congestion(_congestion, m.node, m.delta, props.capacity, _pres_fac);
-						});
+#ifndef INSTRUMENT
+						//_e_state->logical_clock->fetch_add(INC_COUNT, std::memory_order_relaxed);
+						inc_logical_clock(_e_state, INC_COUNT, 2);
+#endif
+						}, _wait_time);
 #endif
 				_acquired_regions[r->gid] = true;
 			}
@@ -629,6 +663,16 @@ class SpeculativeDeterministicRouter {
 					//_state[u].upstream_R, sw->Tdel, sw->R, v_p.R, v_p.C);
 
 			return make_pair(known_cost, known_cost + _astar_fac * expected_cost);
+		}
+
+		void push_node(int node)
+		{
+			++_stats.num_heap_pushes;
+
+#ifndef INSTRUMENT
+			//_e_state->logical_clock->fetch_add(INC_COUNT, std::memory_order_relaxed);
+			inc_logical_clock(_e_state, INC_COUNT, 4);
+#endif
 		}
 
 		RREdge get_previous_edge(int rr_node_id, const route_tree_t &rt)
@@ -690,7 +734,10 @@ class SpeculativeDeterministicRouter {
 
 			added_rr_nodes.push_back(sink_node);
 
-			//++(*_e_state->logical_clock);
+#ifndef INSTRUMENT
+			//_e_state->logical_clock->fetch_add(INC_COUNT, std::memory_order_relaxed);
+			inc_logical_clock(_e_state, INC_COUNT, 5);
+#endif
 
 			zlog_level(delta_log, ROUTER_V3, "\n");
 
@@ -743,10 +790,13 @@ class SpeculativeDeterministicRouter {
 				child_rr_node = parent_rr_node;
 				edge = get_previous_edge(parent_rr_node, rt);
 
-				//++(*_e_state->logical_clock);
+#ifndef INSTRUMENT
+				//_e_state->logical_clock->fetch_add(INC_COUNT, std::memory_order_relaxed);
+				inc_logical_clock(_e_state, INC_COUNT, 6);
+#endif
 			}
 
-			mods_commit(mods, _instance, _fpga_regions);
+			mods_commit(mods, _instance, _fpga_regions, _wait_time);
 		}
 
 		//template<typename Graph, typename Edge, typename EdgeWeightFunc, typename Callbacks>
@@ -805,11 +855,18 @@ class SpeculativeDeterministicRouter {
 			_stats.num_heap_pops = 0;
 			_stats.num_heap_pushes = 0;
 			_stats.num_neighbor_visits = 0;
+
+			_wait_time = timer::duration::zero();
 		}
 
 		const dijkstra_stats_t &get_stats() const
 		{
 			return _stats;
+		}
+
+		timer::duration get_wait_time() const
+		{
+			return _wait_time;
 		}
 
 		void route(const source_t *source, const vector<const sink_t *> &sinks, float astar_fac, route_tree_t &rt, vector<RRNode> &added_rr_nodes, t_net_timing &net_timing)
@@ -879,7 +936,10 @@ class SpeculativeDeterministicRouter {
 						zlog_level(delta_log, ROUTER_V3, "Not reexpanding %s\n", buffer);
 					}
 
-					//++(*_e_state->logical_clock);
+#ifndef INSTRUMENT
+					//_e_state->logical_clock->fetch_add(INC_COUNT, std::memory_order_relaxed);
+					inc_logical_clock(_e_state, INC_COUNT, 7);
+#endif
 				}
 
 				//delta_stepping(_g, sources, sink->rr_node, delta, _known_distance, _distance, _prev_edge, [this] (const RREdge &e) -> pair<float, float> { return get_edge_weight(e); }, *this);
@@ -900,7 +960,10 @@ class SpeculativeDeterministicRouter {
 					assert(_modified_node_added[n]);
 					_modified_node_added[n] = false;
 
-					//++(*_e_state->logical_clock);
+#ifndef INSTRUMENT
+					//_e_state->logical_clock->fetch_add(INC_COUNT, std::memory_order_relaxed);
+					inc_logical_clock(_e_state, INC_COUNT, 8);
+#endif
 				}
 
 				_modified_nodes.clear();
@@ -925,10 +988,16 @@ std::atomic<int> SpeculativeDeterministicRouter::_num_instances{ 0 };
 //};
 //
 
-int get_next_net(det_mutex_t &lock, int tid, std::atomic<int> &net_index)
+int get_next_net(det_mutex_t &lock, int tid, std::atomic<int> &net_index, timer::duration &wait_time)
 {
 	int inet;
+#ifdef PROFILE_WAIT
+	auto wait_start = timer::now(); 
+#endif
 	det_mutex_lock(lock, tid);	
+#ifdef PROFILE_WAIT
+	wait_time += timer::now()-wait_start;
+#endif
 	inet = net_index++;
 	det_mutex_unlock(lock, tid);
 	return inet;
@@ -957,26 +1026,29 @@ static void do_work_2(router_t<net_t *> *router, SpeculativeDeterministicRouter 
 			{ std::numeric_limits<int>::max(), std::numeric_limits<int>::max(), std::numeric_limits<int>::max() });
 	vector<int> routed_nets;
 
-	det_mutex_t lock;
-
-	det_mutex_init(lock, router->e_state.data(), router->num_threads);
-
 	auto pure_route_time = timer::duration::zero();
 	auto wait_time = timer::duration::zero();
+	auto get_net_wait_time = timer::duration::zero();
 
 	auto route_start = timer::now();
 
 	int inet;
 
+#ifdef INSTRUMENT
 	stop_logical_clock();
 	reset_logical_clock();
+#else
+	//*router->e_state[tid].logical_clock = 0;
+#endif
 
-	assert(router->e_state[tid].logical_clock->load() == 0);
+	assert(get_logical_clock(&router->e_state[tid]) == 0);
 
+#ifdef INSTRUMENT
 	start_logical_clock();
+#endif
 
-	while ((inet = get_next_net(lock, tid, router->sync.net_index)) < router->nets.size()) {
-		*router->e_state[tid].inet = inet;
+	while ((inet = get_next_net(router->sync.lock, tid, router->sync.net_index, get_net_wait_time)) < router->nets.size()) {
+		set_inet(&router->e_state[tid], inet);
 
 		net_t &net = *router->nets[inet];
 
@@ -1027,10 +1099,13 @@ static void do_work_2(router_t<net_t *> *router, SpeculativeDeterministicRouter 
 				//commit(router->regions[inet], router->g, rr_node, 1, tid);
 				mods_add(rr_node, -1, router->rr_regions, mods);
 				
-				//++(*router->e_state[tid].logical_clock);
+#ifndef INSTRUMENT
+				//router->e_state[tid].logical_clock->fetch_add(INC_COUNT, std::memory_order_relaxed);
+				inc_logical_clock(&router->e_state[tid], INC_COUNT, 9);
+#endif
 			}
 
-			mods_commit(mods, tid, router->fpga_regions);
+			mods_commit(mods, tid, router->fpga_regions, wait_time);
 		}
 
 		vector<const sink_t *> sinks;
@@ -1046,6 +1121,7 @@ static void do_work_2(router_t<net_t *> *router, SpeculativeDeterministicRouter 
 
 		net_route_time[net.local_id] = timer::now()-real_net_route_start;
 		pure_route_time += net_route_time[net.local_id];
+		wait_time += net_router.get_wait_time();
 
 		net_stats[net.local_id] = net_router.get_stats();
 
@@ -1053,14 +1129,19 @@ static void do_work_2(router_t<net_t *> *router, SpeculativeDeterministicRouter 
 	}
 
 	auto last_barrier_wait_start = timer::now();
-#ifdef PTHREAD_BARRIER 
+#ifdef PTHREAD_BARRIER
 	pthread_barrier_wait(&router->sync.barrier);
 #else
-	//router->sync.barrier->wait(
-			//[&router, &tid] () -> void {
-				//++(*router->e_state[tid].logical_clock);
-			//});
+#ifdef INSTRUMENT
 	router->sync.barrier->wait();
+#else
+	router->sync.barrier->wait(
+			[&router, &tid] () -> void {
+				//++(*router->e_state[tid].logical_clock);
+				//router->e_state[tid].logical_clock->fetch_add(INC_COUNT, std::memory_order_relaxed);
+				inc_logical_clock(&router->e_state[tid], INC_COUNT, 500);
+			});
+#endif
 #endif
 	router->time[tid].last_barrier_wait_time = timer::now() - last_barrier_wait_start;
 
@@ -1073,9 +1154,13 @@ static void do_work_2(router_t<net_t *> *router, SpeculativeDeterministicRouter 
 	for (auto &r : router->fpga_regions) {
 #ifdef SHORT_CRIT
 		all_mods.clear();
-		region_get_mods(*r, tid, [&all_mods] (const vector<mod_t> *mods) -> void {
+		region_get_mods(*r, tid, [&router, &tid, &all_mods] (const vector<mod_t> *mods) -> void {
 				all_mods.push_back(mods);
-				});
+#ifndef INSTRUMENT
+				//_e_state->logical_clock->fetch_add(INC_COUNT, std::memory_order_relaxed);
+				//inc_logical_clock(&router->e_state[tid], INC_COUNT);
+#endif
+				}, wait_time);
 		for (const auto &mods : all_mods) {
 			for (const auto &m : *mods) {
 				const auto &props = get_vertex_props(router->g, m.node);
@@ -1086,7 +1171,11 @@ static void do_work_2(router_t<net_t *> *router, SpeculativeDeterministicRouter 
 		region_get_mods(*r, tid, [&router, &tid] (const mod_t &m) -> void {
 				const auto &props = get_vertex_props(router->g, m.node);
 				update_first_order_congestion(router->state.congestion[tid], m.node, m.delta, props.capacity, router->pres_fac);
-				});
+#ifndef INSTRUMENT
+				//_e_state->logical_clock->fetch_add(INC_COUNT, std::memory_order_relaxed);
+				//inc_logical_clock(&router->e_state[tid], INC_COUNT);
+#endif
+				}, wait_time);
 #endif
 	}
 	//sync(router->fpga_regions,
@@ -1097,6 +1186,7 @@ static void do_work_2(router_t<net_t *> *router, SpeculativeDeterministicRouter 
 
 	router->time[tid].route_time = timer::now()-route_start;
 	router->time[tid].wait_time = wait_time;
+	router->time[tid].get_net_wait_time = get_net_wait_time;
 	router->time[tid].pure_route_time = pure_route_time; 
 
 	router->stats[tid].num_heap_pops = 0;
@@ -1113,14 +1203,19 @@ static void do_work_2(router_t<net_t *> *router, SpeculativeDeterministicRouter 
 		router->stats[tid].num_neighbor_visits += net_stats[r].num_neighbor_visits;
 	}
 
-#ifdef PTHREAD_BARRIER 
+#ifdef PTHREAD_BARRIER
 	pthread_barrier_wait(&router->sync.barrier);
 #else
-	//router->sync.barrier->wait(
-			//[&router, &tid] () -> void {
-				//++(*router->e_state[tid].logical_clock);
-			//});
+#ifdef INSTRUMENT
 	router->sync.barrier->wait();
+#else
+	router->sync.barrier->wait(
+			[&router, &tid] () -> void {
+				//++(*router->e_state[tid].logical_clock);
+				//router->e_state[tid].logical_clock->fetch_add(INC_COUNT, std::memory_order_relaxed);
+				inc_logical_clock(&router->e_state[tid], INC_COUNT, 501);
+			});
+#endif
 #endif
 }
 /*
@@ -1244,7 +1339,7 @@ static void do_work(router_t<net_t *> *router, SpeculativeDeterministicRouter &n
 	}
 
 	auto last_barrier_wait_start = timer::now();
-#ifdef PTHREAD_BARRIER 
+#ifdef PTHREAD_BARRIER
 	pthread_barrier_wait(&router->sync.barrier);
 #else
 	router->sync.barrier->wait(
@@ -1288,7 +1383,7 @@ static void do_work(router_t<net_t *> *router, SpeculativeDeterministicRouter &n
 		router->stats[tid].num_neighbor_visits += net_stats[r].num_neighbor_visits;
 	}
 
-#ifdef PTHREAD_BARRIER 
+#ifdef PTHREAD_BARRIER
 	pthread_barrier_wait(&router->sync.barrier);
 #else
 	router->sync.barrier->wait(
@@ -1310,14 +1405,14 @@ static void *worker_thread(void *args)
 	router->sync.barrier->wait();
 #endif
 
-	SpeculativeDeterministicRouter net_router(router->g, router->state.congestion, router->fpga_regions, router->rr_regions, router->e_state.data(), router->pres_fac);
+	SpeculativeDeterministicRouter net_router(router->g, router->state.congestion, router->fpga_regions, router->rr_regions, router->e_state, router->pres_fac);
 
 	assert(tl_tid == 0);
 	assert(tl_logical_clock_mask == 0);
 
 	tl_tid = net_router.get_instance();
 
-	assert(g_e_state[tl_tid].logical_clock->load() == 0);
+	assert(get_logical_clock(&g_e_state[tl_tid]) == 0);
 
 	char buffer[256];
 	sprintf(buffer, "%d", net_router.get_instance());
@@ -1399,6 +1494,35 @@ static void init_rr_node_regions(const RRGraph &g, vector<region_t> &fpga_region
 	}
 }
 
+void write_mutex_stats(const char *filename, const vector<det_mutex_stats_t> &stats)
+{
+	FILE *out = fopen(filename, "w");
+	for (const auto &s : stats) {
+		auto mine = std::min_element(std::begin(s.max_clock_diff), std::end(s.max_clock_diff));
+		auto maxe = std::max_element(std::begin(s.max_clock_diff), std::end(s.max_clock_diff));
+
+		unsigned long min_diff = mine->first;
+		unsigned long max_diff = maxe->first;
+
+		fprintf(out, "%g %lu %d %lu %d\n", duration_cast<nanoseconds>(s.wait_time).count()/1e9, min_diff, mine->second, max_diff, maxe->second);
+		//for (const auto 
+	}
+	fclose(out);
+}
+
+void write_inc_time(const char *filename, const vector<pair<mtimer::time_point, int>> &inc_time)
+{
+	FILE *out = fopen(filename, "w");
+	for (int i = 0; i < inc_time.size(); ++i) {
+		if (i > 0) {
+			fprintf(out, "%g %d %d\n", duration_cast<nanoseconds>(inc_time[i].first-inc_time[i-1].first).count()/1e9, inc_time[i].second, inc_time[i-1].second);
+		} else {
+			fprintf(out, "0 %d -1\n", inc_time[i].second);
+		}
+	}
+	fclose(out);
+}
+
 bool speculative_deterministic_route_hb_fine(t_router_opts *opts)
 {
 	assert(g_e_state == nullptr);
@@ -1446,8 +1570,6 @@ bool speculative_deterministic_route_hb_fine(t_router_opts *opts)
 
 	router_t<net_t *> router;
 
-	g_router = &router;
-
 	//assert(((unsigned long)&router.sync.stop_routing & 63) == 0);
 	//assert(((unsigned long)&router.sync.net_index & 63) == 0);
 #ifdef __linux__
@@ -1471,17 +1593,25 @@ bool speculative_deterministic_route_hb_fine(t_router_opts *opts)
 			return a->sinks.size() > b->sinks.size();
 			});
 
-	router.e_state.resize(opts->num_threads);
-	for (auto &e : router.e_state) {
-		e.logical_clock = new std::atomic<unsigned long>(0);
-		e.inet = new std::atomic<int>(0);
+	//router.e_state.resize(opts->num_threads);
+	//for (auto &e : router.e_state) {
+		//e.logical_clock = new std::atomic<unsigned long>(0);
+		//e.inet = new std::atomic<int>(0);
+	//}
+	//g_e_state = router.e_state.data();
+	router.e_state = new exec_state_t[opts->num_threads];
+	for (int i = 0; i < opts->num_threads; ++i) {
+		//router.e_state[i].logical_clock = new std::atomic<unsigned long>(0);
+		//router.e_state[i].inet = new std::atomic<int>(0);
+		set_logical_clock(&router.e_state[i], 0);
+		router.e_state[i].tid = i;
 	}
-	g_e_state = router.e_state.data();
+	g_e_state = router.e_state;
 
 	router.window_size = router.num_threads * 2;
 
 	vector<region_t> fpga_regions;
-	init_fpga_regions(4, router.e_state.data(), opts->num_threads, fpga_regions);
+	init_fpga_regions(4, router.e_state, opts->num_threads, fpga_regions);
 	for (auto &r : fpga_regions) {
 		router.fpga_regions.push_back(&r);	
 	}
@@ -1621,6 +1751,7 @@ bool speculative_deterministic_route_hb_fine(t_router_opts *opts)
 	router.sync.barrier = new SpinningBarrier(opts->num_threads);
 #endif
 	router.sync.stop_routing = 0;
+	det_mutex_init(router.sync.lock, router.e_state, opts->num_threads);
 
 	//void *aligned_current_num_incoming_edges;
 	//assert(posix_memalign(&aligned_current_num_incoming_edges, 64, sizeof(aligned_atomic<int, 64>)*nets.size()) == 0);
@@ -1660,16 +1791,20 @@ bool speculative_deterministic_route_hb_fine(t_router_opts *opts)
 #endif
 
 	timer::duration total_route_time = timer::duration::zero();
+	timer::duration total_wait_time = timer::duration::zero();
 
 	/* just to make sure that we are allocated on the correct NUMA node */
-	SpeculativeDeterministicRouter *net_router = new SpeculativeDeterministicRouter(router.g, router.state.congestion, router.fpga_regions, router.rr_regions, router.e_state.data(), router.pres_fac);
+	SpeculativeDeterministicRouter *net_router = new SpeculativeDeterministicRouter(router.g, router.state.congestion, router.fpga_regions, router.rr_regions, router.e_state, router.pres_fac);
 
 	assert(tl_tid == 0);
 	assert(tl_logical_clock_mask == 0);
 
 	tl_tid = net_router->get_instance();
 
-	assert(g_e_state[tl_tid].logical_clock->load() == 0);
+	assert(get_logical_clock(&g_e_state[tl_tid]) == 0);
+
+	init_wait_stats(opts->num_threads);
+	init_inc_time(opts->num_threads);
 
 	sprintf(buffer, "%d", net_router->get_instance());
 	zlog_put_mdc("tid", buffer);
@@ -1725,10 +1860,18 @@ bool speculative_deterministic_route_hb_fine(t_router_opts *opts)
 		}
 
 		/* must be initialized here to prevent race condition during get_next_net */
-		for (int i = 0; i < router.e_state.size(); ++i) {
-			//*router.e_state[i].logical_clock = 0;
-			*router.e_state[i].inet = -i-1; /* guarantees that cur_inet != inet */
+		for (int i = 0; i < opts->num_threads; ++i) {
+			set_logical_clock(&router.e_state[i], 0);
+			set_inet(&router.e_state[i], -i-1); /* guarantees that cur_inet != inet */
 		}
+
+		for (int i = 0; i < fpga_regions.size(); ++i) {
+			fpga_regions[i].mutex.released_logical_clock = 0;
+		}
+		router.sync.lock.released_logical_clock = 0;
+
+		clear_wait_stats();
+		clear_inc_time();
 
 		//do_virtual_work(&router, *net_router);
 		do_work_2(&router, *net_router);
@@ -1792,9 +1935,26 @@ bool speculative_deterministic_route_hb_fine(t_router_opts *opts)
 
 		printf("Max route time: %lu %g\n", max_route_time.count(), max_route_time.count() / 1e9);
 
+		printf("Stats wait time: ");
+		for (int i = 0; i < opts->num_threads; ++i) {
+			const auto &stats = get_mutex_stats(i);
+			timer::duration total = timer::duration::zero();
+			for (const auto &s : stats) {
+				total += s.wait_time;
+			}
+			printf("%g (%g) ", duration_cast<nanoseconds>(total).count()/1e9, 100.0*total.count()/router.time[i].route_time.count());
+		}
+		printf("\n");
+
 		printf("Wait time: ");
 		for (int i = 0; i < opts->num_threads; ++i) {
 			printf("%g (%g) ", duration_cast<nanoseconds>(router.time[i].wait_time).count()/1e9, 100.0*router.time[i].wait_time.count()/router.time[i].route_time.count());
+		}
+		printf("\n");
+
+		printf("Get net wait time: ");
+		for (int i = 0; i < opts->num_threads; ++i) {
+			printf("%g (%g) ", duration_cast<nanoseconds>(router.time[i].get_net_wait_time).count()/1e9, 100.0*router.time[i].get_net_wait_time.count()/router.time[i].route_time.count());
 		}
 		printf("\n");
 
@@ -1907,6 +2067,13 @@ bool speculative_deterministic_route_hb_fine(t_router_opts *opts)
 			sprintf(buffer, "%s/congestion_state_%d.txt", dirname, router.iter.load());
 		}
 		write_congestion_state(buffer, router.state.congestion[0], num_vertices(router.g));
+
+		for (int i = 0; i < opts->num_threads; ++i) {
+			sprintf(buffer, "%s/mutex_iter_%d_tid_%d.txt", dirname, router.iter.load(), i);
+			write_mutex_stats(buffer, get_mutex_stats(i));
+			sprintf(buffer, "%s/inc_iter_%d_tid_%d.txt", dirname, router.iter.load(), i);
+			write_inc_time(buffer, get_inc_time(i));
+		}
 
 		//auto analyze_timing_start = timer::now();
 

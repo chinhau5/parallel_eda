@@ -2,6 +2,8 @@
 #include "log.h"
 #include "delta_stepping.h" 
 
+using namespace std;
+
 void bucket_insert(Buckets &buckets, float delta, vector<bool> &in_bucket, int v, float distance)
 {
 	int b_i = floor(distance/delta);

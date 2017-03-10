@@ -44,12 +44,12 @@ typedef struct route_tree_t {
 	typedef std::pair<segment, int> rtree_value;
 
 	RouteTree graph;
-	vector<int> root_rt_nodes;
+	std::vector<int> root_rt_nodes;
 	int root_rt_node_id;
 	int num_nodes;
 	std::map<int, int> rr_node_to_rt_node;
 	//map<int, vector<int>> sink_rr_node_to_path;
-	map<RRNode, std::shared_ptr<vector<path_node_t>>> rr_node_to_path;
+	std::map<RRNode, std::shared_ptr<std::vector<path_node_t>>> rr_node_to_path;
 	//map<int, RouteTreeNode> path_branch_point;
 	//bgi::rtree<rtree_value, bgi::rstar<64>> point_tree;
 	//box scheduler_bounding_box;
@@ -145,11 +145,11 @@ route_tree_get_nodes(const route_tree_t &rt);
 boost::iterator_range<route_tree_t::branch_iterator>
 route_tree_get_branches(const route_tree_t &rt, RouteTreeNode rt_node);
 
-void route_tree_mark_paths_to_be_ripped(route_tree_t &rt, const RRGraph &g, const vector<int> &pid, int this_pid, const vector<RRNode> &rr_nodes);
+void route_tree_mark_paths_to_be_ripped(route_tree_t &rt, const RRGraph &g, const std::vector<int> &pid, int this_pid, const std::vector<RRNode> &rr_nodes);
 
 void route_tree_mark_all_nodes_to_be_ripped(route_tree_t &rt, const RRGraph &g);
 
-void route_tree_mark_paths_to_be_ripped(route_tree_t &rt, const RRGraph &g, const vector<RRNode> &rr_nodes);
+void route_tree_mark_paths_to_be_ripped(route_tree_t &rt, const RRGraph &g, const std::vector<RRNode> &rr_nodes);
 
 void route_tree_rip_up_marked(route_tree_t &rt, const RRGraph &g, congestion_locked_t *congestion, float pres_fac, bool lock, lock_perf_t *lock_perf);
 
@@ -157,16 +157,16 @@ void route_tree_rip_up_marked(route_tree_t &rt, const RRGraph &g, congestion_t *
 
 void route_tree_rip_up_marked(route_tree_t &rt, const RRGraph &g, congestion_local_t *congestion, float pres_fac);
 
-void route_tree_rip_up_marked_mpi_rma(route_tree_t &rt, const RRGraph &g, const vector<int> &pid, int this_pid, congestion_t *congestion, MPI_Win win, float pres_fac);
+void route_tree_rip_up_marked_mpi_rma(route_tree_t &rt, const RRGraph &g, const std::vector<int> &pid, int this_pid, congestion_t *congestion, MPI_Win win, float pres_fac);
 
-void route_tree_rip_up_marked_mpi_send_recv(route_tree_t &rt, const RRGraph &g, congestion_t *congestion, float pres_fac, queue<RRNode> &cost_update_q);
+void route_tree_rip_up_marked_mpi_send_recv(route_tree_t &rt, const RRGraph &g, congestion_t *congestion, float pres_fac, std::queue<RRNode> &cost_update_q);
 
 template<typename Callback>
 void route_tree_rip_up_marked_mpi_collective(route_tree_t &rt, const RRGraph &g, congestion_t *congestion, float pres_fac, const Callback &callback)
 {
 	char buffer[256];
 	ongoing_transaction_t trans;
-	trans.data = make_shared<vector<node_update_t>>();
+	trans.data = std::make_shared<std::vector<node_update_t>>();
 
 	for (const auto &rt_node : route_tree_get_nodes(rt)) {
 		auto &rt_node_p = get_vertex_props(rt.graph, rt_node);
@@ -237,7 +237,7 @@ void route_tree_rip_up_marked_mpi_collective(route_tree_t &rt, const RRGraph &g,
 
 //void route_tree_rip_up_segment_2(route_tree_t &rt, int sink_rr_node, RRGraph &g, float pres_fac);
 
-void route_tree_add_path(route_tree_t &rt, const std::shared_ptr<vector<path_node_t>> &path, const RRGraph &g, const route_state_t *state = nullptr, bool add_branch_point = true);
+void route_tree_add_path(route_tree_t &rt, const std::shared_ptr<std::vector<path_node_t>> &path, const RRGraph &g, const route_state_t *state = nullptr, bool add_branch_point = true);
 
 //void route_tree_add_path(route_tree_t &rt, const RRGraph &g, const route_state_t *state, const vector<int> &rr_nodes, int vpr_net_id);
 

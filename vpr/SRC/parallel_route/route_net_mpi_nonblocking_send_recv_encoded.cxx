@@ -14,6 +14,8 @@
 #include "clock.h"
 #include "path_codec.h"
 
+using namespace std;
+
 float get_timing_driven_expected_cost(const rr_node_property_t &current, const rr_node_property_t &target, float criticality_fac, float R_upstream);
 
 void read_header_sr(unsigned int *packet, NBSRPacketID &packet_id, int &net_id)

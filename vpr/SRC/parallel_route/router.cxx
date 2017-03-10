@@ -13,6 +13,8 @@
 #include "expand.h"
 #include "router.h"
 
+using namespace std;
+
 bool operator<(const sink_t &a, const sink_t &b)
 {
 	return a.criticality_fac > b.criticality_fac;
