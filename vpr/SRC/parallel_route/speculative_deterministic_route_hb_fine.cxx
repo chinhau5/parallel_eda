@@ -2,6 +2,7 @@
 #include <thread>
 #include <condition_variable>
 #include <sys/stat.h>
+#include <papi.h>
 
 #include "vpr_types.h"
 
@@ -24,14 +25,18 @@
 
 using namespace std;
 
-//using timer = std::chrono::high_resolution_clock;
-using timer = myclock;
+using timer = std::chrono::high_resolution_clock;
+//using timer = myclock;
 using std::chrono::duration_cast;
 using std::chrono::nanoseconds;
 
 #define INC_COUNT 1
 #define SHORT_CRIT
-#define PROFILE_WAIT
+#define OVERFLOW_THRESHOLD 5000
+//#define TEST
+
+#define OVER_FMT    "handler(%d ) Overflow at %p! bit=%#llx \n"
+#define ERROR_RETURN(retval) { fprintf(stderr, "Error %d %s:line %d: \n", retval,__FILE__,__LINE__);  assert(false); }
 
 //#define PTHREAD_BARRIER
 
@@ -106,17 +111,20 @@ struct /*alignas(64)*/ router_t {
 	global_route_state_t state;
 	route_parameters_t params;
 	float pres_fac;
+	int pmc_overflow;
 
 	exec_state_t *e_state;
 	int num_threads;
-	int window_size;
 
 	/* per thread */
 	vector<runtime_t> time;
 	vector<dijkstra_stats_t> stats;
+	vector<unsigned long> last_clock;
 
 	/* per nets */
 	vector<timer::duration> net_route_time;
+	vector<timer::duration> acc_net_route_time;
+	vector<unsigned long> acc_num_clock_ticks;
 	vector<dijkstra_stats_t> net_stats;
 	vector<int> net_router;
 };
@@ -223,6 +231,42 @@ void reset_logical_clock()
 	}
 }
 
+void start_logical_clock(int es)
+{
+	//printf("starting clock %d\n", es);
+	g_e_state[es].previous_logical_clock.store(get_logical_clock(&g_e_state[es]));
+
+	zlog_level(delta_log, ROUTER_V3, "starting clock, previous=%lu\n", g_e_state[es].previous_logical_clock.load());
+
+	int retval;
+  	if((retval = PAPI_start(es))!=PAPI_OK)
+    	ERROR_RETURN(retval);
+}
+
+void stop_logical_clock(int es)
+{
+	//printf("stopping clock %d\n", es);
+	assert(g_e_state[es].logical_clock >= g_e_state[es].previous_logical_clock);
+
+	unsigned long clock_diff = g_e_state[es].logical_clock - g_e_state[es].previous_logical_clock;
+
+	int retval;
+	long long value;
+	if ((retval = PAPI_stop(es, &value))!=PAPI_OK)
+		ERROR_RETURN(retval);
+
+	g_e_state[es].total_counter += value;
+
+	//auto actual = value / OVERFLOW_THRESHOLD;
+	auto actual = g_e_state[es].total_counter / OVERFLOW_THRESHOLD;
+
+	zlog_level(delta_log, ROUTER_V3, "clock stopped, raw counter %lld total counter %lld normalized %lld prev %lu cur %lu diff %lu\n", value, g_e_state[es].total_counter, actual, g_e_state[es].previous_logical_clock.load(), g_e_state[es].logical_clock.load(), clock_diff);
+
+	//if (actual != clock_diff) {
+		//assert(false);
+	//}
+}
+
 void region_acquire(region_t &o, int tid)
 {
 	det_mutex_lock(o.mutex, tid);
@@ -247,11 +291,11 @@ void region_release(region_t &o, int tid)
 
 void region_add_mod(region_t &o, int tid, vector<mod_t> *mods, timer::duration &wait_time)
 {
-#ifdef PROFILE_WAIT
+#if PROFILE_WAIT_LEVEL >= 1 && defined(SEPARATE)
 	auto wait_start = timer::now(); 
 #endif
 	region_acquire(o, tid);
-#ifdef PROFILE_WAIT
+#if PROFILE_WAIT_LEVEL >= 1 && defined(SEPARATE)
 	wait_time += timer::now()-wait_start;
 #endif
 
@@ -285,16 +329,8 @@ void region_add_mod(region_t &o, int tid, vector<mod_t> *mods, timer::duration &
 //}
 
 template<typename Callback>
-void region_get_mods(region_t &o, int tid, const Callback &f, timer::duration &wait_time)
+void region_get_mods_unlocked(region_t &o, int tid, const Callback &f)
 {
-#ifdef PROFILE_WAIT
-	auto wait_start = timer::now(); 
-#endif
-	region_acquire(o, tid);
-#ifdef PROFILE_WAIT
-	wait_time += timer::now()-wait_start;
-#endif
-
 	zlog_level(delta_log, ROUTER_V3, "[Net %d] Thread %d Getting mods in region %d\n", get_inet(&g_e_state[tid]), tl_tid, o.gid);
 
 	for (int i = 0; i < o.mods.size(); ++i) {
@@ -320,6 +356,20 @@ void region_get_mods(region_t &o, int tid, const Callback &f, timer::duration &w
 
 		o.num_committed_mods[tid][i] = o.mods[i].size();
 	}
+}
+
+template<typename Callback>
+void region_get_mods(region_t &o, int tid, const Callback &f, timer::duration &wait_time)
+{
+#if PROFILE_WAIT_LEVEL >= 1 && defined(SEPARATE)
+	auto wait_start = timer::now(); 
+#endif
+	region_acquire(o, tid);
+#if PROFILE_WAIT_LEVEL >= 1 && defined(SEPARATE)
+	wait_time += timer::now()-wait_start;
+#endif
+
+	region_get_mods_unlocked(o, tid, f);
 
 	region_release(o, tid);
 }
@@ -363,6 +413,7 @@ void mods_commit(vector<Mods> &mods, int tid, vector<region_t *> &fpga_regions, 
 
 	for (int i = 0; i < mods.size(); ++i) {
 		if (mods[i]) {
+			zlog_level(delta_log, ROUTER_V3, "Committing mods in region %d, size %lu\n", i, mods[i]->size());
 			region_add_mod(*fpga_regions[i], tid, mods[i], wait_time);
 		}
 	}
@@ -470,9 +521,9 @@ class SpeculativeDeterministicRouter {
 			zlog_level(delta_log, ROUTER_V3, "%s\n", buffer);
 			++_stats.num_heap_pops;
 
-#ifndef INSTRUMENT
+#if !defined(INSTRUMENT) && !defined(PMC)
 			//_e_state->logical_clock->fetch_add(INC_COUNT, std::memory_order_relaxed);
-			inc_logical_clock(_e_state, INC_COUNT, 0);
+			//inc_logical_clock(_e_state, INC_COUNT, 0);
 #endif
 			//rand_delay();
 		}
@@ -542,9 +593,9 @@ class SpeculativeDeterministicRouter {
 
 		bool expand_node(int node)
 		{
-#ifndef INSTRUMENT
+#if !defined(INSTRUMENT) && !defined(PMC)
 			//_e_state->logical_clock->fetch_add(INC_COUNT, std::memory_order_relaxed);
-			inc_logical_clock(_e_state, INC_COUNT, 1);
+			//inc_logical_clock(_e_state, INC_COUNT, 1);
 #endif
 			
 			const auto &prop = get_vertex_props(_g, node);
@@ -614,7 +665,7 @@ class SpeculativeDeterministicRouter {
 				_all_mods.clear();	
 				region_get_mods(*r, _instance, [this] (const vector<mod_t> *mods) -> void {
 						_all_mods.push_back(mods);
-#ifndef INSTRUMENT
+#if !defined(INSTRUMENT) && !defined(PMC)
 						//_e_state->logical_clock->fetch_add(INC_COUNT, std::memory_order_relaxed);
 						inc_logical_clock(_e_state, INC_COUNT, 2);
 #endif
@@ -623,7 +674,7 @@ class SpeculativeDeterministicRouter {
 					for (const auto &m : *mods) {
 						const auto &props = get_vertex_props(_g, m.node);
 						update_first_order_congestion(_congestion, m.node, m.delta, props.capacity, _pres_fac);
-#ifndef INSTRUMENT
+#if !defined(INSTRUMENT) && !defined(PMC)
 						//_e_state->logical_clock->fetch_add(INC_COUNT, std::memory_order_relaxed);
 						inc_logical_clock(_e_state, INC_COUNT, 3);
 #endif
@@ -633,7 +684,7 @@ class SpeculativeDeterministicRouter {
 				region_get_mods(*r, _instance, [this] (const mod_t &m) -> void {
 						const auto &props = get_vertex_props(_g, m.node);
 						update_first_order_congestion(_congestion, m.node, m.delta, props.capacity, _pres_fac);
-#ifndef INSTRUMENT
+#if !defined(INSTRUMENT) && !defined(PMC)
 						//_e_state->logical_clock->fetch_add(INC_COUNT, std::memory_order_relaxed);
 						inc_logical_clock(_e_state, INC_COUNT, 2);
 #endif
@@ -669,7 +720,7 @@ class SpeculativeDeterministicRouter {
 		{
 			++_stats.num_heap_pushes;
 
-#ifndef INSTRUMENT
+#if !defined(INSTRUMENT) && !defined(PMC)
 			//_e_state->logical_clock->fetch_add(INC_COUNT, std::memory_order_relaxed);
 			inc_logical_clock(_e_state, INC_COUNT, 4);
 #endif
@@ -734,7 +785,7 @@ class SpeculativeDeterministicRouter {
 
 			added_rr_nodes.push_back(sink_node);
 
-#ifndef INSTRUMENT
+#if !defined(INSTRUMENT) && !defined(PMC)
 			//_e_state->logical_clock->fetch_add(INC_COUNT, std::memory_order_relaxed);
 			inc_logical_clock(_e_state, INC_COUNT, 5);
 #endif
@@ -790,7 +841,7 @@ class SpeculativeDeterministicRouter {
 				child_rr_node = parent_rr_node;
 				edge = get_previous_edge(parent_rr_node, rt);
 
-#ifndef INSTRUMENT
+#if !defined(INSTRUMENT) && !defined(PMC)
 				//_e_state->logical_clock->fetch_add(INC_COUNT, std::memory_order_relaxed);
 				inc_logical_clock(_e_state, INC_COUNT, 6);
 #endif
@@ -812,7 +863,7 @@ class SpeculativeDeterministicRouter {
 					//Callbacks &callbacks);
 
 	public:
-		SpeculativeDeterministicRouter(RRGraph &g, congestion_t **congestion, vector<region_t *> &fpga_regions, vector<region_t *> &rr_regions, exec_state_t *e_state, const float &pres_fac)
+		SpeculativeDeterministicRouter(int index, RRGraph &g, congestion_t **congestion, vector<region_t *> &fpga_regions, vector<region_t *> &rr_regions, exec_state_t *e_state, const float &pres_fac)
 			: _g(g), _fpga_regions(fpga_regions), _rr_regions(rr_regions), _pres_fac(pres_fac), _modified_node_added(num_vertices(g), false) 
 		{
 			_known_distance = new float[num_vertices(g)];
@@ -828,7 +879,12 @@ class SpeculativeDeterministicRouter {
 				_state[i].upstream_R = std::numeric_limits<float>::max();
 			}
 			
+#if defined(PMC)
+			_instance = index;
+			++_num_instances;
+#else
 			_instance = _num_instances++;
+#endif
 
 			_congestion = congestion[_instance];
 			_e_state = &e_state[_instance];
@@ -936,7 +992,7 @@ class SpeculativeDeterministicRouter {
 						zlog_level(delta_log, ROUTER_V3, "Not reexpanding %s\n", buffer);
 					}
 
-#ifndef INSTRUMENT
+#if !defined(INSTRUMENT) && !defined(PMC)
 					//_e_state->logical_clock->fetch_add(INC_COUNT, std::memory_order_relaxed);
 					inc_logical_clock(_e_state, INC_COUNT, 7);
 #endif
@@ -960,9 +1016,9 @@ class SpeculativeDeterministicRouter {
 					assert(_modified_node_added[n]);
 					_modified_node_added[n] = false;
 
-#ifndef INSTRUMENT
+#if !defined(INSTRUMENT) && !defined(PMC)
 					//_e_state->logical_clock->fetch_add(INC_COUNT, std::memory_order_relaxed);
-					inc_logical_clock(_e_state, INC_COUNT, 8);
+					//inc_logical_clock(_e_state, INC_COUNT, 8);
 #endif
 				}
 
@@ -991,11 +1047,11 @@ std::atomic<int> SpeculativeDeterministicRouter::_num_instances{ 0 };
 int get_next_net(det_mutex_t &lock, int tid, std::atomic<int> &net_index, timer::duration &wait_time)
 {
 	int inet;
-#ifdef PROFILE_WAIT
+#if PROFILE_WAIT_LEVEL >= 1 && defined(SEPARATE)
 	auto wait_start = timer::now(); 
 #endif
 	det_mutex_lock(lock, tid);	
-#ifdef PROFILE_WAIT
+#if PROFILE_WAIT_LEVEL >= 1 && defined(SEPARATE)
 	wait_time += timer::now()-wait_start;
 #endif
 	inet = net_index++;
@@ -1022,9 +1078,11 @@ static void do_work_2(router_t<net_t *> *router, SpeculativeDeterministicRouter 
 	zlog_put_mdc("iter", buffer);
 
 	vector<timer::duration> net_route_time(router->nets.size(), timer::duration::max());
+	vector<timer::duration> acc_net_route_time(router->nets.size(), timer::duration::max());
+	vector<unsigned long> acc_num_clock_ticks(router->nets.size(), std::numeric_limits<unsigned long>::max());
 	vector<dijkstra_stats_t> net_stats(router->nets.size(),
 			{ std::numeric_limits<int>::max(), std::numeric_limits<int>::max(), std::numeric_limits<int>::max() });
-	vector<int> routed_nets;
+	vector<int> routed_inets;
 
 	auto pure_route_time = timer::duration::zero();
 	auto wait_time = timer::duration::zero();
@@ -1034,17 +1092,16 @@ static void do_work_2(router_t<net_t *> *router, SpeculativeDeterministicRouter 
 
 	int inet;
 
-#ifdef INSTRUMENT
-	stop_logical_clock();
+#if defined(INSTRUMENT)
 	reset_logical_clock();
-#else
-	//*router->e_state[tid].logical_clock = 0;
 #endif
 
 	assert(get_logical_clock(&router->e_state[tid]) == 0);
 
-#ifdef INSTRUMENT
+#if defined(INSTRUMENT)
 	start_logical_clock();
+#elif defined(PMC)
+	start_logical_clock(tid);
 #endif
 
 	while ((inet = get_next_net(router->sync.lock, tid, router->sync.net_index, get_net_wait_time)) < router->nets.size()) {
@@ -1099,7 +1156,7 @@ static void do_work_2(router_t<net_t *> *router, SpeculativeDeterministicRouter 
 				//commit(router->regions[inet], router->g, rr_node, 1, tid);
 				mods_add(rr_node, -1, router->rr_regions, mods);
 				
-#ifndef INSTRUMENT
+#if !defined(INSTRUMENT) && !defined(PMC)
 				//router->e_state[tid].logical_clock->fetch_add(INC_COUNT, std::memory_order_relaxed);
 				inc_logical_clock(&router->e_state[tid], INC_COUNT, 9);
 #endif
@@ -1119,20 +1176,31 @@ static void do_work_2(router_t<net_t *> *router, SpeculativeDeterministicRouter 
 
 		net_router.route(source, sinks, router->params.astar_fac, router->state.route_trees[net.local_id], router->state.added_rr_nodes[net.local_id], router->state.net_timing[net.vpr_id]); 
 
-		net_route_time[net.local_id] = timer::now()-real_net_route_start;
+		auto real_net_route_end = timer::now();
+
+		net_route_time[net.local_id] = real_net_route_end-real_net_route_start;
+		acc_net_route_time[net.local_id] = real_net_route_end-route_start;
+		acc_num_clock_ticks[net.local_id] = get_logical_clock(&router->e_state[tid]);
 		pure_route_time += net_route_time[net.local_id];
 		wait_time += net_router.get_wait_time();
 
 		net_stats[net.local_id] = net_router.get_stats();
 
-		routed_nets.push_back(net.local_id);
+		routed_inets.push_back(inet);
 	}
+
+#if defined(INSTRUMENT)
+	stop_logical_clock();
+#elif defined(PMC)
+	stop_logical_clock(tid);
+#endif
+	router->last_clock[tid] = get_logical_clock(&router->e_state[tid]);
 
 	auto last_barrier_wait_start = timer::now();
 #ifdef PTHREAD_BARRIER
 	pthread_barrier_wait(&router->sync.barrier);
 #else
-#ifdef INSTRUMENT
+#if defined(INSTRUMENT) /*|| defined(PMC)*/
 	router->sync.barrier->wait();
 #else
 	router->sync.barrier->wait(
@@ -1154,28 +1222,28 @@ static void do_work_2(router_t<net_t *> *router, SpeculativeDeterministicRouter 
 	for (auto &r : router->fpga_regions) {
 #ifdef SHORT_CRIT
 		all_mods.clear();
-		region_get_mods(*r, tid, [&router, &tid, &all_mods] (const vector<mod_t> *mods) -> void {
+		region_get_mods_unlocked(*r, tid, [&router, &tid, &all_mods] (const vector<mod_t> *mods) -> void {
 				all_mods.push_back(mods);
-#ifndef INSTRUMENT
+//#if !defined(INSTRUMENT) && !defined(PMC)
 				//_e_state->logical_clock->fetch_add(INC_COUNT, std::memory_order_relaxed);
 				//inc_logical_clock(&router->e_state[tid], INC_COUNT);
-#endif
-				}, wait_time);
+//#endif
+				});
 		for (const auto &mods : all_mods) {
 			for (const auto &m : *mods) {
 				const auto &props = get_vertex_props(router->g, m.node);
 				update_first_order_congestion(router->state.congestion[tid], m.node, m.delta, props.capacity, router->pres_fac);
 			}
 		}
-#else
-		region_get_mods(*r, tid, [&router, &tid] (const mod_t &m) -> void {
+#else // SHORT_CRIT
+		region_get_mods_unlocked(*r, tid, [&router, &tid] (const mod_t &m) -> void {
 				const auto &props = get_vertex_props(router->g, m.node);
 				update_first_order_congestion(router->state.congestion[tid], m.node, m.delta, props.capacity, router->pres_fac);
-#ifndef INSTRUMENT
+#if !defined(INSTRUMENT) && !defined(PMC)
 				//_e_state->logical_clock->fetch_add(INC_COUNT, std::memory_order_relaxed);
 				//inc_logical_clock(&router->e_state[tid], INC_COUNT);
 #endif
-				}, wait_time);
+				});
 #endif
 	}
 	//sync(router->fpga_regions,
@@ -1193,29 +1261,52 @@ static void do_work_2(router_t<net_t *> *router, SpeculativeDeterministicRouter 
 	router->stats[tid].num_heap_pushes = 0;
 	router->stats[tid].num_neighbor_visits = 0;
 
-	for (const auto &r : routed_nets) {
-		router->net_route_time[r] = net_route_time[r];
-		router->net_stats[r] = net_stats[r];
-		router->net_router[r] = tid;
+	for (const auto &i : routed_inets) {
+		int id = router->nets[i]->local_id;
 
-		router->stats[tid].num_heap_pops += net_stats[r].num_heap_pops;
-		router->stats[tid].num_heap_pushes += net_stats[r].num_heap_pushes;
-		router->stats[tid].num_neighbor_visits += net_stats[r].num_neighbor_visits;
+		router->net_route_time[id] = net_route_time[id];
+		router->net_stats[id] = net_stats[id];
+		router->net_router[id] = tid;
+
+		router->stats[tid].num_heap_pops += net_stats[id].num_heap_pops;
+		router->stats[tid].num_heap_pushes += net_stats[id].num_heap_pushes;
+		router->stats[tid].num_neighbor_visits += net_stats[id].num_neighbor_visits;
 	}
+
+	sprintf(buffer, "%s/clock_rate_iter_%d_tid_%d.txt", dirname, router->iter.load(), tid);
+	FILE *file = fopen(buffer, "w");
+
+	for (int i = 0; i < routed_inets.size(); ++i) {
+		int inet = routed_inets[i];
+		int id = router->nets[inet]->local_id;
+
+		if (i > 0) {
+			int prev_inet = routed_inets[i-1];
+			int prev_id = router->nets[prev_inet]->local_id;
+			fprintf(file, "%d %d %lu %g %lu %g %lu\n", i, inet, router->nets[inet]->sinks.size(),
+					duration_cast<nanoseconds>(acc_net_route_time[id]).count()/1e9, acc_num_clock_ticks[id],
+					duration_cast<nanoseconds>(acc_net_route_time[id]-acc_net_route_time[prev_id]).count()/1e9, acc_num_clock_ticks[id]-acc_num_clock_ticks[prev_id]);
+		} else {
+			fprintf(file, "%d %d %lu %g %lu %g %lu\n", i, inet, router->nets[inet]->sinks.size(),
+					duration_cast<nanoseconds>(acc_net_route_time[id]).count()/1e9, acc_num_clock_ticks[id],
+					duration_cast<nanoseconds>(acc_net_route_time[id]).count()/1e9, acc_num_clock_ticks[id]);
+		}
+	}
+	fclose(file);
 
 #ifdef PTHREAD_BARRIER
 	pthread_barrier_wait(&router->sync.barrier);
 #else
-#ifdef INSTRUMENT
+//#if defined(INSTRUMENT) [>|| defined(PMC)<]
 	router->sync.barrier->wait();
-#else
-	router->sync.barrier->wait(
-			[&router, &tid] () -> void {
-				//++(*router->e_state[tid].logical_clock);
-				//router->e_state[tid].logical_clock->fetch_add(INC_COUNT, std::memory_order_relaxed);
-				inc_logical_clock(&router->e_state[tid], INC_COUNT, 501);
-			});
-#endif
+//#else
+	//router->sync.barrier->wait(
+			//[&router, &tid] () -> void {
+				////++(*router->e_state[tid].logical_clock);
+				////router->e_state[tid].logical_clock->fetch_add(INC_COUNT, std::memory_order_relaxed);
+				//inc_logical_clock(&router->e_state[tid], INC_COUNT, 501);
+			//});
+//#endif
 #endif
 }
 /*
@@ -1395,6 +1486,41 @@ static void do_work(router_t<net_t *> *router, SpeculativeDeterministicRouter &n
 }
 */
 
+/* overflow handler */
+void overflow_handler(int EventSet, void *address, long long overflow_vector, void *context)
+{
+   //fprintf(stderr, OVER_FMT, EventSet, address, overflow_vector);
+   assert(tl_tid >= 0 && tl_tid < 4);
+   assert(EventSet == tl_tid);
+   g_e_state[EventSet].logical_clock.fetch_add(1, std::memory_order_seq_cst);
+}
+
+#define EVENT PAPI_TOT_INS
+
+int init_papi_overflow(int threshold)
+{
+	int retval;
+	int es = PAPI_NULL;
+
+ 	/* query whether the event exists */
+	if ((retval=PAPI_query_event(EVENT)) != PAPI_OK) 
+    	ERROR_RETURN(retval);
+
+	/* create the event set */
+	if ( (retval = PAPI_create_eventset(&es))!=PAPI_OK)
+    	ERROR_RETURN(retval);
+
+	/* add events to the event set */
+	if ( (retval = PAPI_add_event(es, EVENT))!= PAPI_OK)
+    	ERROR_RETURN(retval);
+
+	retval = PAPI_overflow(es, EVENT, threshold, 0, overflow_handler);
+	if(retval !=PAPI_OK)
+    	ERROR_RETURN(retval);
+
+	return es;
+}
+
 static void *worker_thread(void *args)
 {
 	router_t<net_t *> *router = static_cast<router_t<net_t *> *>(args);
@@ -1405,14 +1531,21 @@ static void *worker_thread(void *args)
 	router->sync.barrier->wait();
 #endif
 
-	SpeculativeDeterministicRouter net_router(router->g, router->state.congestion, router->fpga_regions, router->rr_regions, router->e_state, router->pres_fac);
+#if defined(PMC)
+	int ev = init_papi_overflow(router->pmc_overflow);
+	assert(ev >= 0 && ev < router->num_threads);
+	
+	SpeculativeDeterministicRouter net_router(ev, router->g, router->state.congestion, router->fpga_regions, router->rr_regions, router->e_state, router->pres_fac);
+#else
+	SpeculativeDeterministicRouter net_router(0, router->g, router->state.congestion, router->fpga_regions, router->rr_regions, router->e_state, router->pres_fac);
+#endif
 
 	assert(tl_tid == 0);
 	assert(tl_logical_clock_mask == 0);
 
 	tl_tid = net_router.get_instance();
 
-	assert(get_logical_clock(&g_e_state[tl_tid]) == 0);
+	//assert(get_logical_clock(&g_e_state[tl_tid]) == 0);
 
 	char buffer[256];
 	sprintf(buffer, "%d", net_router.get_instance());
@@ -1498,24 +1631,29 @@ void write_mutex_stats(const char *filename, const vector<det_mutex_stats_t> &st
 {
 	FILE *out = fopen(filename, "w");
 	for (const auto &s : stats) {
-		auto mine = std::min_element(std::begin(s.max_clock_diff), std::end(s.max_clock_diff));
-		auto maxe = std::max_element(std::begin(s.max_clock_diff), std::end(s.max_clock_diff));
+		//auto mine = std::min_element(std::begin(s.max_clock_diff), std::end(s.max_clock_diff));
+		//auto maxe = std::max_element(std::begin(s.max_clock_diff), std::end(s.max_clock_diff));
 
-		unsigned long min_diff = mine->first;
-		unsigned long max_diff = maxe->first;
+		//unsigned long min_diff = mine->first;
+		//unsigned long max_diff = maxe->first;
 
-		fprintf(out, "%g %lu %d %lu %d\n", duration_cast<nanoseconds>(s.wait_time).count()/1e9, min_diff, mine->second, max_diff, maxe->second);
+		//fprintf(out, "%g %lu %d %lu %d\n", duration_cast<nanoseconds>(s.wait_time).count()/1e9, min_diff, mine->second, max_diff, maxe->second);
 		//for (const auto 
+		fprintf(out, "%d %g %lu %d %lu %d %d %d %d %lu %d %d\n", s.index, duration_cast<nanoseconds>(s.wait_time).count()/1e9, s.max, s.num_rounds, s.logical_clock, s.inet, s.previous_context, s.max_thread, s.max_lock_count, s.max_logical_clock, s.max_inet, s.max_context);
 	}
 	fclose(out);
 }
 
-void write_inc_time(const char *filename, const vector<pair<mtimer::time_point, int>> &inc_time)
+void write_inc_time(const char *filename, const vector<pair<inc_time_t, int>> &inc_time)
 {
 	FILE *out = fopen(filename, "w");
 	for (int i = 0; i < inc_time.size(); ++i) {
 		if (i > 0) {
+#if defined(TSC)
+			fprintf(out, "%llu %d %d\n", inc_time[i].first-inc_time[i-1].first, inc_time[i].second, inc_time[i-1].second);
+#else
 			fprintf(out, "%g %d %d\n", duration_cast<nanoseconds>(inc_time[i].first-inc_time[i-1].first).count()/1e9, inc_time[i].second, inc_time[i-1].second);
+#endif
 		} else {
 			fprintf(out, "0 %d -1\n", inc_time[i].second);
 		}
@@ -1561,6 +1699,20 @@ bool speculative_deterministic_route_hb_fine(t_router_opts *opts)
 		}
 	}
 
+//#if defined (PMC)
+	int retval;
+	/* papi library initialization */
+	//if ((retval=PAPI_library_init(PAPI_VER_CURRENT)) != PAPI_VER_CURRENT) {
+		//printf("Library initialization error! \n");
+		//exit(1);
+	//}
+
+	/* thread initialization */
+    //retval=PAPI_thread_init((unsigned long(*)(void))(pthread_self));
+    //if (retval != PAPI_OK)
+        //ERROR_RETURN(retval);
+//#endif
+
 	init_logging(opts->num_threads);
     zlog_set_record("custom_output", concurrent_log_impl_2);
 	sprintf(buffer, "%d", 0);
@@ -1586,12 +1738,31 @@ bool speculative_deterministic_route_hb_fine(t_router_opts *opts)
 	vector<net_t> global_nets;
 	init_nets(nets, global_nets, opts->bb_factor, opts->large_bb);
 
+#if defined(TEST)
+	net_t *largest_net = &nets[0];
+	for (auto &net : nets) {
+		if (net.sinks.size() > largest_net->sinks.size()) {
+			largest_net = &net;
+		}
+	}
+
+	vector<net_t> test_nets;
+	for (int i = 0; i < opts->num_threads; ++i) {
+		test_nets.push_back(*largest_net);
+		test_nets.back().local_id = i;
+	}
+
+	for (auto &net : test_nets) {
+		router.nets.push_back(&net);
+	}
+#else
 	for (int i = 0; i < nets.size(); ++i) {
 		router.nets.push_back(&nets[i]);
 	}
 	std::sort(begin(router.nets), end(router.nets), [] (const net_t *a, const net_t *b) -> bool {
 			return a->sinks.size() > b->sinks.size();
 			});
+#endif
 
 	//router.e_state.resize(opts->num_threads);
 	//for (auto &e : router.e_state) {
@@ -1603,12 +1774,9 @@ bool speculative_deterministic_route_hb_fine(t_router_opts *opts)
 	for (int i = 0; i < opts->num_threads; ++i) {
 		//router.e_state[i].logical_clock = new std::atomic<unsigned long>(0);
 		//router.e_state[i].inet = new std::atomic<int>(0);
-		set_logical_clock(&router.e_state[i], 0);
 		router.e_state[i].tid = i;
 	}
 	g_e_state = router.e_state;
-
-	router.window_size = router.num_threads * 2;
 
 	vector<region_t> fpga_regions;
 	init_fpga_regions(4, router.e_state, opts->num_threads, fpga_regions);
@@ -1744,6 +1912,8 @@ bool speculative_deterministic_route_hb_fine(t_router_opts *opts)
 
 	router.pres_fac = opts->first_iter_pres_fac;
 
+	router.pmc_overflow = opts->pmc_overflow;
+
 #ifdef PTHREAD_BARRIER
 	assert(pthread_barrier_init(&router.sync.barrier, nullptr, opts->num_threads) == 0);
 #else
@@ -1761,6 +1931,7 @@ bool speculative_deterministic_route_hb_fine(t_router_opts *opts)
 
 	router.stats.resize(opts->num_threads);
 	router.time.resize(opts->num_threads);
+	router.last_clock.resize(opts->num_threads);
 
 	router.net_route_time.resize(nets.size());
 	router.net_router.resize(nets.size());
@@ -1793,15 +1964,22 @@ bool speculative_deterministic_route_hb_fine(t_router_opts *opts)
 	timer::duration total_route_time = timer::duration::zero();
 	timer::duration total_wait_time = timer::duration::zero();
 
+#if defined(PMC)
+	int ev = init_papi_overflow(opts->pmc_overflow);
+	assert(ev >= 0 && ev < router.num_threads);
+
+	SpeculativeDeterministicRouter *net_router = new SpeculativeDeterministicRouter(ev, router.g, router.state.congestion, router.fpga_regions, router.rr_regions, router.e_state, router.pres_fac);
+#else
 	/* just to make sure that we are allocated on the correct NUMA node */
-	SpeculativeDeterministicRouter *net_router = new SpeculativeDeterministicRouter(router.g, router.state.congestion, router.fpga_regions, router.rr_regions, router.e_state, router.pres_fac);
+	SpeculativeDeterministicRouter *net_router = new SpeculativeDeterministicRouter(0, router.g, router.state.congestion, router.fpga_regions, router.rr_regions, router.e_state, router.pres_fac);
+#endif
 
 	assert(tl_tid == 0);
 	assert(tl_logical_clock_mask == 0);
 
 	tl_tid = net_router->get_instance();
 
-	assert(get_logical_clock(&g_e_state[tl_tid]) == 0);
+	//assert(get_logical_clock(&g_e_state[tl_tid]) == 0);
 
 	init_wait_stats(opts->num_threads);
 	init_inc_time(opts->num_threads);
@@ -1863,6 +2041,9 @@ bool speculative_deterministic_route_hb_fine(t_router_opts *opts)
 		for (int i = 0; i < opts->num_threads; ++i) {
 			set_logical_clock(&router.e_state[i], 0);
 			set_inet(&router.e_state[i], -i-1); /* guarantees that cur_inet != inet */
+			router.e_state[i].total_counter = 0;
+			router.e_state[i].context = -1;
+			router.e_state[i].lock_count = 0;
 		}
 
 		for (int i = 0; i < fpga_regions.size(); ++i) {
@@ -1885,7 +2066,7 @@ bool speculative_deterministic_route_hb_fine(t_router_opts *opts)
 					}
 
 					if (router.fpga_regions[i]->num_committed_mods[k][l] != router.fpga_regions[i]->mods[l].size()) {
-						printf("%d %d %d %d %d %d\n", i, k, l, router.fpga_regions[i]->gid, router.fpga_regions[i]->num_committed_mods[k][l],
+						printf("%d %d %d %d %d %lu\n", i, k, l, router.fpga_regions[i]->gid, router.fpga_regions[i]->num_committed_mods[k][l],
 								router.fpga_regions[i]->mods[l].size());
 						assert(false);
 					}
@@ -1898,10 +2079,17 @@ bool speculative_deterministic_route_hb_fine(t_router_opts *opts)
 				router.state.congestion[i][j].recalc_occ = 0; 
 			}
 
+#if defined(TEST)
+			for (const auto &net : router.nets) {
+				check_route_tree(router.state.route_trees[net->local_id], *net, router.g);
+				recalculate_occ(router.state.route_trees[net->local_id], router.g, router.state.congestion[i]);
+			}
+#else
 			for (const auto &net : nets) {
 				check_route_tree(router.state.route_trees[net.local_id], net, router.g);
 				recalculate_occ(router.state.route_trees[net.local_id], router.g, router.state.congestion[i]);
 			}
+#endif
 
 			bool valid = true;
 			for (int j = 0; j < num_vertices(router.g); ++j) {
@@ -1919,6 +2107,12 @@ bool speculative_deterministic_route_hb_fine(t_router_opts *opts)
 		printf("Route time: ");
 		for (int i = 0; i < opts->num_threads; ++i) {
 			printf("%g ", duration_cast<nanoseconds>(router.time[i].route_time).count()/1e9);
+		}
+		printf("\n");
+
+		printf("Last clock: ");
+		for (int i = 0; i < opts->num_threads; ++i) {
+			printf("%lu ", router.last_clock[i]);
 		}
 		printf("\n");
 
@@ -2081,7 +2275,7 @@ bool speculative_deterministic_route_hb_fine(t_router_opts *opts)
 
 		//analyze_timing_time = timer::now()-analyze_timing_start;
 		
-		printf("Overused: %lu/%lu (%g) Crit path delay: %g\n", num_overused_nodes, num_vertices(router.g), 100.0*num_overused_nodes/num_vertices(router.g), crit_path_delay);
+		printf("Overused: %lu/%d (%g) Crit path delay: %g\n", num_overused_nodes, num_vertices(router.g), 100.0*num_overused_nodes/num_vertices(router.g), crit_path_delay);
 		printf("\n");
 
 		//for (int i = 0; i < nets.size(); ++i) {

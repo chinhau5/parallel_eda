@@ -271,6 +271,7 @@ static void ShowRouterOpts(INP struct s_router_opts RouterOpts) {
 		}
 
 		vpr_printf(TIO_MESSAGE_INFO, "RouterOpts.new_load_balance: %s\n", RouterOpts.new_load_balance ? "on" : "off");
+		vpr_printf(TIO_MESSAGE_INFO, "RouterOpts.pmc_overflow: %d\n", RouterOpts.pmc_overflow);
 
 		vpr_printf(TIO_MESSAGE_INFO, "RouterOpts.scheduler: ");
 		switch (RouterOpts.scheduler) {

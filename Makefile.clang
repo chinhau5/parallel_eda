@@ -3,16 +3,18 @@ BUILD_ROOT = newbuild
 LIBS = vpr/build/libvpr.a libarchfpga/build/libarchfpga.a printhandler/build/libprinthandler.a pcre/build/libpcre.a  
 SUB_DIRS = vpr libarchfpga printhandler pcre
 
-LIB_DIR = /usr/lib/openmpi /home/chinhau5/zlog/lib /home/chinhau5/Downloads/metis-5.1.0/build/Linux-x86_64/libmetis /home/chinhau5/Downloads/tbb2017_20161128oss/lib/intel64/gcc4.7
+LIB_DIR = /usr/local/lib /usr/lib/openmpi /home/chinhau5/zlog/lib /home/chinhau5/Downloads/metis-5.1.0/build/Linux-x86_64/libmetis /home/chinhau5/Downloads/tbb2017_20161128oss/lib/intel64/gcc4.7
 LIB_CMD = $(addprefix -L,$(LIB_DIR))
 
 comma = ,
 RPATH = $(addprefix -Wl$(comma)-rpath$(comma), $(LIB_DIR))
 
-LINK_LIBS = X11 pthread dl m rt zlog boost_timer boost_system boost_thread tbb metis mpi mpi_cxx
+LINK_LIBS = X11 pthread dl m rt zlog boost_timer boost_system boost_thread tbb metis mpi mpi_cxx papi
 LINK_LIBS := $(addprefix -l,$(LINK_LIBS))
 
 CXX = g++
+
+OPT = -O2
 
 #$(firstword $(subst /, ,$(1)))
 
@@ -41,7 +43,7 @@ $(BUILD_ROOT):
 	mkdir -p $(BUILD_ROOT)
 
 $(BUILD_ROOT)/Router: $(LIBS) | $(BUILD_ROOT) 
-	$(CXX) $(LIB_CMD) $(RPATH) $(LIBS) $(LINK_LIBS) -o $@
+	$(CXX) $(OPT) $(LIB_CMD) $(RPATH) $(LIBS) $(LINK_LIBS) -o $@
 
 .PHONY: all clean $(addsuffix _clean,$(SUB_DIRS)) $(addsuffix _all,$(SUB_DIRS))
 

@@ -96,6 +96,7 @@ enum e_OptionBaseToken {
 	OT_MPI_BUFFER_SIZE,
 	OT_PART_SORT,
 	OT_NEW_LOAD_BALANCE,
+	OT_PMC_OVERFLOW,
 	OT_BASE_UNKNOWN /* Must be last since used for counting enum items */
 };
 

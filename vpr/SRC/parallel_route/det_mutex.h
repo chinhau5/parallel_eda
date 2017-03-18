@@ -6,40 +6,86 @@
 #include <chrono>
 #include <vector>
 #include <tbb/spin_mutex.h>
+#include <x86intrin.h>
+#include "log.h"
 #include "clock.h"
+
+#define PROFILE_WAIT_LEVEL 2
+//#define PMC
+#define TSC
 
 //using mtimer = std::chrono::high_resolution_clock;
 using mtimer = myclock;
 
-struct exec_state_t {
+struct alignas(64) exec_state_t {
 	//std::atomic<unsigned long> *logical_clock;
 	//std::atomic<int> *inet;
 	int tid;
-	alignas(64) std::atomic<unsigned long> logical_clock;
-	alignas(64) std::atomic<int> inet;
-	alignas(64) int context;
+	std::atomic<unsigned long> logical_clock;
+	std::atomic<unsigned long> previous_logical_clock;
+	long long total_counter;
+	std::atomic<int> inet;
+	int context;
+	int lock_count;
 };
 
 struct det_mutex_stats_t {
-	std::vector<std::pair<unsigned long, int>> max_clock_diff;
+	int index;
+	unsigned long logical_clock;
 	mtimer::duration wait_time;
+	int num_rounds;
+	int previous_context;
+	int inet;
+	std::vector<std::pair<unsigned long, int>> max_clock_diff;
+	unsigned long max;
+	unsigned long max_logical_clock;
+	int max_thread;
+	int max_inet;
+	int max_context;
+	int max_lock_count;
 };
 
 const std::vector<det_mutex_stats_t> &get_mutex_stats(int tid);
 void init_wait_stats(int num_threads);
 void clear_wait_stats();
 
-const std::vector<std::pair<mtimer::time_point, int>> &get_inc_time(int tid);
-void add_inc_time(const mtimer::time_point &time, int tid, int context);
+#if defined(TSC)
+using inc_time_t = unsigned long long;
+#else
+using inc_time_t = mtimer::time_point;
+#endif
+
+const std::vector<std::pair<inc_time_t, int>> &get_inc_time(int tid);
+void add_inc_time(const inc_time_t &time, int tid, int context);
 void init_inc_time(int num_threads);
 void clear_inc_time();
 
-void inline inc_logical_clock(exec_state_t *state, int count, int context)
+void inline inc_logical_clock_no_profile(exec_state_t *state, int count, int context)
 {
 	//state->logical_clock->fetch_add(count, std::memory_order_relaxed);
 	state->logical_clock.fetch_add(count, std::memory_order_relaxed);
+
+	zlog_level(delta_log, ROUTER_V3, "Increasing logical clock to %d from %d\n", state->logical_clock.load(), context);
+}
+
+void inline inc_logical_clock(exec_state_t *state, int count, int context)
+{
+	inc_logical_clock_no_profile(state, count, context);
+
+#if PROFILE_WAIT_LEVEL >= 3
+#if defined(TSC)
+	//unsigned int aux = 0;
+	//unsigned long long tsc = __rdtscp(&aux);
+	//add_inc_time(tsc, state->tid, context);
+	add_inc_time(0, state->tid, context);
+#else
 	add_inc_time(mtimer::now(), state->tid, context);
+#endif
+#endif
+
+#if PROFILE_WAIT_LEVEL >= 1
 	state->context = context;
+#endif
 }
 
 void inline set_logical_clock(exec_state_t *state, int count)

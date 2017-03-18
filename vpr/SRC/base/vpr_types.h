@@ -759,6 +759,7 @@ struct s_router_opts {
 	int mpi_buffer_size;
 	PartSortMetric part_sort_metric;
 	boolean new_load_balance;
+	int pmc_overflow;
 };
 
 /* All the parameters controlling the router's operation are in this        *

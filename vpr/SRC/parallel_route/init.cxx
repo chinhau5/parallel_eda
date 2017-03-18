@@ -152,11 +152,17 @@ void init_net_timing(const vector<net_t> &nets, const vector<net_t> &global_nets
 	for (const auto &net : nets) {
 	   	net_timing[net.vpr_id].delay = new float[net.sinks.size() + 1];
 	   	net_timing[net.vpr_id].timing_criticality = new float[net.sinks.size() + 1];
+#ifdef PATH_COUNTING
+	   	net_timing[net.vpr_id].path_criticality = new float[net.sinks.size() + 1];
+#endif
 	   	net_timing[net.vpr_id].slack = new float[net.sinks.size() + 1];
 	}
 	for (const auto &net : global_nets) {
 	   	net_timing[net.vpr_id].delay = new float[net.sinks.size() + 1];
 	   	net_timing[net.vpr_id].timing_criticality = new float[net.sinks.size() + 1];
+#ifdef PATH_COUNTING
+	   	net_timing[net.vpr_id].path_criticality = new float[net.sinks.size() + 1];
+#endif
 	   	net_timing[net.vpr_id].slack = new float[net.sinks.size() + 1];
 	}
 
@@ -164,6 +170,7 @@ void init_net_timing(const vector<net_t> &nets, const vector<net_t> &global_nets
 
 	for (const auto &net : nets) {
 		for (int ipin = 1; ipin <= net.sinks.size(); ipin++) {
+			net_timing[net.vpr_id].delay[ipin] = std::numeric_limits<float>::max();
 			net_timing[net.vpr_id].timing_criticality[ipin] = init_timing_criticality_val;
 #ifdef PATH_COUNTING
 			net_timing[net.vpr_id].path_criticality[ipin] = init_timing_criticality_val;

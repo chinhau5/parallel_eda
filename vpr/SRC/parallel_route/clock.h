@@ -13,7 +13,7 @@ struct myclock {
 	static time_point now() {
 		timespec time;
 #ifdef __linux__
-		assert(!clock_gettime(CLOCK_MONOTONIC_RAW, &time));
+		assert(!clock_gettime(CLOCK_MONOTONIC, &time));
 #else
 		assert(false);
 #endif

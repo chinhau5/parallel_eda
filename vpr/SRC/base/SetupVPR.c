@@ -566,6 +566,11 @@ static void SetupRouterOpts(INP t_options Options, INP boolean TimingEnabled,
 	if (Options.Count[OT_NEW_LOAD_BALANCE]) {
 		RouterOpts->new_load_balance = Options.new_load_balance;
 	}
+
+	RouterOpts->pmc_overflow = 1000;
+	if (Options.Count[OT_PMC_OVERFLOW]) {
+		RouterOpts->pmc_overflow = Options.pmc_overflow;
+	}
 }
 
 static void SetupAnnealSched(INP t_options Options,

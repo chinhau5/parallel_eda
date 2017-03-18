@@ -100,6 +100,7 @@ struct s_options {
     int mpi_buffer_size;
     PartSortMetric part_sort_metric;
     boolean new_load_balance;
+    int pmc_overflow;
 
 	/* Timing-driven router options only */
 	float astar_fac;

@@ -501,6 +501,8 @@ ProcessOption(INP char **Args, INOUTP t_options * Options) {
 		return ReadPartSort(Args, &Options->part_sort_metric);
 	case OT_NEW_LOAD_BALANCE:
 		return ReadOnOff(Args, &Options->new_load_balance);
+	case OT_PMC_OVERFLOW:
+		return ReadInt(Args, &Options->pmc_overflow);
 			
 		/* Routing options valid only for timing-driven routing */
 	case OT_ASTAR_FAC:

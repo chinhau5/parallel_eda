@@ -1,6 +1,7 @@
 SRC_ROOT = SRC_TO_BUILD
 BUILD_ROOT = build
 CXX = g++
+OPT = -O2
 
 DIRS = . base pack parallel_route place power route timing util
 
@@ -23,6 +24,7 @@ DEPS = $(OBJS:.o=.d)
 
 INCLUDES = $(foreach dir, $(SRC_DIRS), $(addprefix -I, $(dir)))
 
+INCLUDES += -I/usr/local/include
 INCLUDES += -I../libarchfpga/include -I../printhandler/SRC/TIO_InputOutputHandlers
 INCLUDES += -I/home/chinhau5/zlog/include
 INCLUDES += -I/home/chinhau5/Downloads/metis-5.1.0/include
@@ -33,29 +35,29 @@ HIDE =
 
 .DELETE_ON_ERROR:
 
-define generateEmitRules
-$(BUILD_ROOT)/$(1)/%.ll: $(SRC_ROOT)/$(1)/%.$(2)
-	@echo Emitting $$@
-	$(HIDE)$(CXX) -O3 -emit-llvm -std=c++11 -MMD $$(INCLUDES) -S -o $$@ $$< 
-endef
+#define generateEmitRules
+#$(BUILD_ROOT)/$(1)/%.ll: $(SRC_ROOT)/$(1)/%.$(2)
+	#@echo Emitting $$@
+	#$(HIDE)$(CXX) $(OPT) -emit-llvm -std=c++11 -MMD $$(INCLUDES) -S -o $$@ $$< 
+#endef
 
-define generateOptRules
-$(BUILD_ROOT)/$(1)/%_opt.ll: $(BUILD_ROOT)/$(1)/%.ll /home/chinhau5/scratchpad/llvm_pass/build/libSkeletonPass.so 
-	@echo Instrumenting $$@
-	$(HIDE)opt -load /home/chinhau5/scratchpad/llvm_pass/build/libSkeletonPass.so -hello -S -o $$@ $$< 
-endef
+#define generateOptRules
+#$(BUILD_ROOT)/$(1)/%_opt.ll: $(BUILD_ROOT)/$(1)/%.ll /home/chinhau5/scratchpad/llvm_pass/build/libSkeletonPass.so 
+	#@echo Instrumenting $$@
+	#$(HIDE)opt -load /home/chinhau5/scratchpad/llvm_pass/build/libSkeletonPass.so -hello -S -o $$@ $$< 
+#endef
 
-define generateAsmRules
-$(BUILD_ROOT)/$(1)/%.o: $(BUILD_ROOT)/$(1)/%_opt.ll
-	@echo Assembling $$@
-	$(HIDE)$(CXX) -O3 -std=c++11 -c -o $$@ $$< 
-endef
+#define generateAsmRules
+#$(BUILD_ROOT)/$(1)/%.o: $(BUILD_ROOT)/$(1)/%_opt.ll
+	#@echo Assembling $$@
+	#$(HIDE)$(CXX) $(OPT) -std=c++11 -c -o $$@ $$< 
+#endef
 
 define generateRules
 $(BUILD_ROOT)/$(1)/%.o: $(SRC_ROOT)/$(1)/%.$(2)
 	@echo Building $$@
 	@touch $$@
-	$(HIDE)$(CXX) -g -O3 -std=c++11 -MMD -MF $$(@:.o=.d.tmp) $$(INCLUDES) -c -o $$@ $$< && mv $$(@:.o=.d.tmp) $$(@:.o=.d) 
+	$(HIDE)$(CXX) -g $(OPT) -std=c++11 -Wall -Wno-sign-compare -MMD -MF $$(@:.o=.d.tmp) $$(INCLUDES) -c -o $$@ $$< && mv $$(@:.o=.d.tmp) $$(@:.o=.d) 
 endef
 
 .SECONDARY: $(LLS) $(OPT_LLS)

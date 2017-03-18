@@ -64,7 +64,7 @@ struct s_TokenPair OptionBaseTokenList[] = {
 	{ "rip_up_always", OT_RIP_UP_ALWAYS }, { "work_conserving", OT_WORK_CONSERVING }, { "large_bb", OT_LARGE_BB }, { "load_balanced", OT_LOAD_BALANCED },
 	{ "sync_only_once", OT_SYNC_ONLY_ONCE }, { "progress_freq", OT_PROGRESS_FREQ }, { "log_dir", OT_LOG_DIR }, { "bb_area_threshold_scale", OT_BB_AREA_THRESHOLD_SCALE },
 	{ "delayed_sync", OT_DELAYED_SYNC }, { "pure_rr", OT_PURE_RR }, { "mpi_buffer_size", OT_MPI_BUFFER_SIZE }, { "part_sort", OT_PART_SORT },
-	{ "new_load_balance", OT_NEW_LOAD_BALANCE },
+	{ "new_load_balance", OT_NEW_LOAD_BALANCE }, { "pmc_overflow", OT_PMC_OVERFLOW },
 		{ NULL, OT_BASE_UNKNOWN } /* End of list marker */
 };
 
