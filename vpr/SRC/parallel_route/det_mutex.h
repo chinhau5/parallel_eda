@@ -27,6 +27,7 @@ struct alignas(64) exec_state_t {
 	std::atomic<int> inet;
 	int context;
 	int lock_count;
+	int region;
 };
 
 struct det_mutex_stats_t {
@@ -56,35 +57,42 @@ using inc_time_t = mtimer::time_point;
 #endif
 
 const std::vector<std::pair<inc_time_t, int>> &get_inc_time(int tid);
-void add_inc_time(const inc_time_t &time, int tid, int context);
+void add_inc_time(int tid, const inc_time_t &time, int context);
 void init_inc_time(int num_threads);
 void clear_inc_time();
 
-void inline inc_logical_clock_no_profile(exec_state_t *state, int count, int context)
+void inline set_context(exec_state_t *state, int context)
+{
+	state->context = context;
+}
+
+int inline get_context(exec_state_t *state)
+{
+	return state->context;
+}
+
+void inline inc_logical_clock_no_profile(exec_state_t *state, int count)
 {
 	//state->logical_clock->fetch_add(count, std::memory_order_relaxed);
 	state->logical_clock.fetch_add(count, std::memory_order_relaxed);
 
-	zlog_level(delta_log, ROUTER_V3, "Increasing logical clock to %d from %d\n", state->logical_clock.load(), context);
+	zlog_level(delta_log, ROUTER_V3, "Increasing logical clock to %lu from %d\n", state->logical_clock.load(), get_context(state));
 }
 
-void inline inc_logical_clock(exec_state_t *state, int count, int context)
+void inline inc_logical_clock(exec_state_t *state, int count)
 {
-	inc_logical_clock_no_profile(state, count, context);
+	inc_logical_clock_no_profile(state, count);
 
 #if PROFILE_WAIT_LEVEL >= 3
+	int context = get_context(state);
 #if defined(TSC)
 	//unsigned int aux = 0;
 	//unsigned long long tsc = __rdtscp(&aux);
 	//add_inc_time(tsc, state->tid, context);
-	add_inc_time(0, state->tid, context);
+	add_inc_time(state->tid, 0, context);
 #else
-	add_inc_time(mtimer::now(), state->tid, context);
+	add_inc_time(state->tid, mtimer::now(), context);
 #endif
-#endif
-
-#if PROFILE_WAIT_LEVEL >= 1
-	state->context = context;
 #endif
 }
 
@@ -124,7 +132,9 @@ void det_mutex_init(det_mutex_t &m, exec_state_t *e_state, int num_threads);
 void det_mutex_destroy(det_mutex_t &m);
 
 void det_mutex_lock(det_mutex_t &m, int tid);
+void det_mutex_lock_no_wait(det_mutex_t &m, int tid);
 
 void det_mutex_unlock(det_mutex_t &m, int tid);
+void det_mutex_unlock_no_wait(det_mutex_t &m, int tid);
 
 #endif

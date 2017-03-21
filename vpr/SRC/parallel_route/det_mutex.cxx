@@ -38,7 +38,7 @@ const std::vector<std::pair<inc_time_t, int>> &get_inc_time(int tid)
 	return inc_time[tid];
 }
 
-void add_inc_time(const inc_time_t &time, int tid, int context)
+void add_inc_time(int tid, const inc_time_t &time, int context)
 {
 	inc_time[tid].emplace_back(std::make_pair(time, context));
 }
@@ -109,18 +109,18 @@ void det_mutex_lock(det_mutex_t &m, int tid)
 	auto &stat = stats[tid].back();
 	stat.index = m.e_state[tid].lock_count;
 	++(m.e_state[tid].lock_count);
-	stat.previous_context = m.e_state[tid].context;
 	stat.inet = m.e_state[tid].inet;
+	stat.previous_context = m.e_state[tid].context;
 #endif
 
 #if PROFILE_WAIT_LEVEL >= 2
 	unsigned long cur = get_logical_clock(&m.e_state[tid]);
 
 	unsigned long min_clock = cur;
-	int min_context = m.e_state[tid].context;
-	int min_lock_count = m.e_state[tid].lock_count;
 	int min_thread = tid;
 	int min_inet = m.e_state[tid].inet;
+	int min_context = m.e_state[tid].context;
+	int min_lock_count = m.e_state[tid].lock_count;
 
 	for (int i = 0; i < m.num_threads; ++i) {
 		if (i == tid) {
@@ -130,10 +130,10 @@ void det_mutex_lock(det_mutex_t &m, int tid)
 		if (other < cur) {
 			if (other < min_clock) {
 				min_clock = other;
-				min_context = m.e_state[i].context;
-				min_lock_count = m.e_state[i].lock_count;
 				min_thread = i;
 				min_inet = m.e_state[i].inet;
+				min_context = m.e_state[i].context;
+				min_lock_count = m.e_state[i].lock_count;
 			}
 		}
 	}
@@ -150,9 +150,9 @@ void det_mutex_lock(det_mutex_t &m, int tid)
 	stat.max = cur-min_clock;
 	stat.max_logical_clock = min_clock;
 	stat.max_thread = min_thread;
+	stat.max_inet = min_inet;
 	stat.max_context = min_context;
 	stat.max_lock_count = min_lock_count;
-	stat.max_inet = min_inet;
 #endif
 
 #if PROFILE_WAIT_LEVEL >= 1
@@ -165,15 +165,18 @@ void det_mutex_lock(det_mutex_t &m, int tid)
 	stop_logical_clock(tid);
 #endif
 
-	zlog_level(delta_log, ROUTER_V3, "Thread %d acquiring lock, cur clock %d [e_state %lX]\n", tid, get_logical_clock(&m.e_state[tid]), m.e_state);
+	zlog_level(delta_log, ROUTER_V3, "[%d] Thread %d acquiring lock, region %d released %lu cur clock %lu [e_state %lX]\n", stat.index, tid, m.e_state[tid].region, m.released_logical_clock, get_logical_clock(&m.e_state[tid]), m.e_state);
 
 #if PROFILE_WAIT_LEVEL >= 2
-	zlog_level(delta_log, ROUTER_V3, "\tIndex %d Max diff %lu Thread %d Current lock index %d Context %d\n", stat.index, stat.max, stat.max_thread, stat.max_lock_count, stat.max_context);
+	zlog_level(delta_log, ROUTER_V3, "\tMax diff %lu Thread %d Current lock index %d Context %d\n", stat.max, stat.max_thread, stat.max_lock_count, stat.max_context);
 
 #endif
 
 #if PROFILE_WAIT_LEVEL >= 1
 	stat.num_rounds = 0;
+#endif
+#if PROFILE_WAIT_LEVEL >= 1
+	set_context(&m.e_state[tid], 50);
 #endif
 	while (true) {
 		det_mutex_wait_for_turn(m, tid);
@@ -182,16 +185,116 @@ void det_mutex_lock(det_mutex_t &m, int tid)
 #endif
 		if (m.lock->try_lock()) {
 			if (m.released_logical_clock >= get_logical_clock(&m.e_state[tid])) {
+				zlog_level(delta_log, ROUTER_V3, "\treleased >= cur, %lu >= %lu\n", m.released_logical_clock, get_logical_clock(&m.e_state[tid]));
 				m.lock->unlock();
 			} else {
 				break;
 			}
 		}
-		inc_logical_clock(&m.e_state[tid], 1, 50);
+		inc_logical_clock(&m.e_state[tid], 1);
 		//m.e_state[tid].logical_clock->fetch_add(1, std::memory_order_relaxed);
 	}
 
-	inc_logical_clock(&m.e_state[tid], 1, 51);
+#if PROFILE_WAIT_LEVEL >= 1
+	set_context(&m.e_state[tid], 51);
+#endif
+	inc_logical_clock(&m.e_state[tid], 1);
+	//m.e_state[tid].logical_clock->fetch_add(1, std::memory_order_relaxed);
+#if defined(INSTRUMENT)
+	start_logical_clock();
+#elif defined(PMC)
+	start_logical_clock(tid);
+#endif
+
+#if PROFILE_WAIT_LEVEL >= 1
+	stat.wait_time = mtimer::now()-wait_start;
+#endif
+}
+
+void det_mutex_lock_no_wait(det_mutex_t &m, int tid)
+{
+#if PROFILE_WAIT_LEVEL >= 1
+	stats[tid].emplace_back();
+	auto &stat = stats[tid].back();
+	stat.index = m.e_state[tid].lock_count;
+	++(m.e_state[tid].lock_count);
+	stat.inet = m.e_state[tid].inet;
+	stat.previous_context = m.e_state[tid].context;
+#endif
+
+#if PROFILE_WAIT_LEVEL >= 2
+	unsigned long cur = get_logical_clock(&m.e_state[tid]);
+
+	unsigned long min_clock = cur;
+	int min_thread = tid;
+	int min_inet = m.e_state[tid].inet;
+	int min_context = m.e_state[tid].context;
+	int min_lock_count = m.e_state[tid].lock_count;
+
+	for (int i = 0; i < m.num_threads; ++i) {
+		if (i == tid) {
+			continue;
+		}
+		unsigned long other = get_logical_clock(&m.e_state[i]);
+		if (other < cur) {
+			if (other < min_clock) {
+				min_clock = other;
+				min_thread = i;
+				min_inet = m.e_state[i].inet;
+				min_context = m.e_state[i].context;
+				min_lock_count = m.e_state[i].lock_count;
+			}
+		}
+	}
+
+	//if (cur < min_clock) {
+		//printf("%lu %lu\n", cur, min_clock);
+		//assert(false);
+	//}
+	assert(cur >= min_clock);
+	//assert(min_thread != tid);
+
+	//stat.max_clock_diff.push_back(std::make_pair(cur-min_clock, min_context));
+	stat.logical_clock = cur;
+	stat.max = cur-min_clock;
+	stat.max_logical_clock = min_clock;
+	stat.max_thread = min_thread;
+	stat.max_inet = min_inet;
+	stat.max_context = min_context;
+	stat.max_lock_count = min_lock_count;
+#endif
+
+#if PROFILE_WAIT_LEVEL >= 1
+	auto wait_start = mtimer::now();
+#endif
+
+#if defined(INSTRUMENT)
+	stop_logical_clock();
+#elif defined(PMC)
+	stop_logical_clock(tid);
+#endif
+
+	zlog_level(delta_log, ROUTER_V3, "[%d] Thread %d acquiring lock, region %d released %lu cur clock %lu no wait [e_state %lX]\n", stat.index, tid, m.e_state[tid].region, m.released_logical_clock, get_logical_clock(&m.e_state[tid]), m.e_state);
+
+#if PROFILE_WAIT_LEVEL >= 2
+	zlog_level(delta_log, ROUTER_V3, "\tMax diff %lu Thread %d Current lock index %d Context %d\n", stat.max, stat.max_thread, stat.max_lock_count, stat.max_context);
+
+#endif
+
+#if PROFILE_WAIT_LEVEL >= 1
+	stat.num_rounds = 0;
+#endif
+#if PROFILE_WAIT_LEVEL >= 1
+	set_context(&m.e_state[tid], 52);
+#endif
+#if PROFILE_WAIT_LEVEL >= 1
+	++stat.num_rounds;
+#endif
+	m.lock->lock();
+	inc_logical_clock(&m.e_state[tid], 1);
+	//set_logical_clock(&m.e_state[tid], m.released_logical_clock+1);
+	//m.e_state[tid].logical_clock->fetch_add(1, std::memory_order_relaxed);
+
 	//m.e_state[tid].logical_clock->fetch_add(1, std::memory_order_relaxed);
 #if defined(INSTRUMENT)
 	start_logical_clock();
@@ -212,11 +315,21 @@ void det_mutex_unlock(det_mutex_t &m, int tid)
 	stop_logical_clock(tid);
 #endif
 
-	m.released_logical_clock = get_logical_clock(&m.e_state[tid]);
+	unsigned long cur = get_logical_clock(&m.e_state[tid]);
+
+	if (cur <= m.released_logical_clock) {
+		zlog_error(delta_log, "%lu <= %lu\n", cur, m.released_logical_clock);
+		assert(false);
+	}
+
+	m.released_logical_clock = cur;
 
 	m.lock->unlock();
 
-	inc_logical_clock(&m.e_state[tid], 1, 52);
+#if PROFILE_WAIT_LEVEL >= 1
+	set_context(&m.e_state[tid], 53);
+#endif
+	inc_logical_clock(&m.e_state[tid], 1);
 	//m.e_state[tid].logical_clock->fetch_add(1, std::memory_order_relaxed);
 #if defined(INSTRUMENT)
 	start_logical_clock();
@@ -224,5 +337,30 @@ void det_mutex_unlock(det_mutex_t &m, int tid)
 	start_logical_clock(tid);
 #endif
 
-	zlog_level(delta_log, ROUTER_V3, "Thread %d released lock, new clock %d [e_state %lX]\n", tid, get_logical_clock(&m.e_state[tid]), m.e_state);
+	zlog_level(delta_log, ROUTER_V3, "Thread %d released lock, region %d new clock %lu [e_state %lX]\n", tid, m.e_state[tid].region, get_logical_clock(&m.e_state[tid]), m.e_state);
+}
+
+void det_mutex_unlock_no_wait(det_mutex_t &m, int tid)
+{
+#if defined(INSTRUMENT)
+	stop_logical_clock();
+#elif defined(PMC)
+	stop_logical_clock(tid);
+#endif
+
+	m.lock->unlock();
+
+#if PROFILE_WAIT_LEVEL >= 1
+	set_context(&m.e_state[tid], 54);
+#endif
+	inc_logical_clock(&m.e_state[tid], 1);
+	//m.e_state[tid].logical_clock->fetch_add(1, std::memory_order_relaxed);
+	
+#if defined(INSTRUMENT)
+	start_logical_clock();
+#elif defined(PMC)
+	start_logical_clock(tid);
+#endif
+
+	zlog_level(delta_log, ROUTER_V3, "Thread %d released lock, region %d new clock %lu no wait [e_state %lX]\n", tid, m.e_state[tid].region, get_logical_clock(&m.e_state[tid]), m.e_state);
 }
