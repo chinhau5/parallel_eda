@@ -24,6 +24,7 @@ void dijkstra(const Graph &g, const std::vector<existing_source_t<Edge>> &source
 
 		zlog_level(delta_log, ROUTER_V3, "Current: %d [kd=%g okd=%g] [d=%g od=%g] prev=%d\n",
 					item.node, item.known_distance, known_distance[item.node], item.distance, distance[item.node], get_source(g, item.prev_edge));
+
 		callbacks.popped_node(item.node);
 
 		//if (!callbacks.expand_node(item.node)) {
@@ -38,6 +39,7 @@ void dijkstra(const Graph &g, const std::vector<existing_source_t<Edge>> &source
 			prev_edge[item.node] = item.prev_edge;
 
 			zlog_level(delta_log, ROUTER_V3, "Relaxing %d\n", item.node);
+
 			callbacks.relax_node(item.node, item.prev_edge);
 
 			if (item.node != sink) {
@@ -46,25 +48,23 @@ void dijkstra(const Graph &g, const std::vector<existing_source_t<Edge>> &source
 
 					zlog_level(delta_log, ROUTER_V3, "\tNeighbor: %d\n", v);
 
-					if (!expand_node(v)) {
-						continue;
-					}
+					if (expand_node(v)) {
+						const auto &weight = edge_weight(e);
+						float kd = known_distance[item.node] + weight.first;
+						float d = known_distance[item.node] + weight.second;
 
-					const auto &weight = edge_weight(e);
-					float kd = known_distance[item.node] + weight.first;
-					float d = known_distance[item.node] + weight.second;
+						//zlog_level(delta_log, ROUTER_V3, "\t[w1 %X w2 %X] [kd=%X okd=%X] [d=%X od=%X] [kd=%g okd=%g] [d=%g od=%g]\n",
+						//*(unsigned int *)&weight.first, *(unsigned int *)&weight.second, *(unsigned int *)&kd, *(unsigned int *)&known_distance[v], *(unsigned int *)&d, *(unsigned int *)&distance[v], kd, known_distance[v], d, distance[v]);
 
-					//zlog_level(delta_log, ROUTER_V3, "\t[w1 %X w2 %X] [kd=%X okd=%X] [d=%X od=%X] [kd=%g okd=%g] [d=%g od=%g]\n",
-							//*(unsigned int *)&weight.first, *(unsigned int *)&weight.second, *(unsigned int *)&kd, *(unsigned int *)&known_distance[v], *(unsigned int *)&d, *(unsigned int *)&distance[v], kd, known_distance[v], d, distance[v]);
+						if (d < distance[v]) {
+							assert(kd <= known_distance[v]);
 
-					if (d < distance[v]) {
-						assert(kd <= known_distance[v]);
+							zlog_level(delta_log, ROUTER_V3, "\tPushing neighbor %d to heap\n", v);
 
-						zlog_level(delta_log, ROUTER_V3, "\tPushing neighbor %d to heap\n", v);
+							callbacks.push_node(v);
 
-						callbacks.push_node(v);
-
-						heap.push({ v, kd, d, e });
+							heap.push({ v, kd, d, e });
+						}
 					}
 				}
 			} else {

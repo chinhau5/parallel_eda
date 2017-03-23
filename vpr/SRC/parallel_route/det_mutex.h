@@ -122,6 +122,7 @@ struct det_mutex_t {
 	exec_state_t *e_state;
 	int num_threads;
 	unsigned long released_logical_clock;
+	int no_wait;
 	//tbb::spin_mutex lock;
 	//int last_tid;
 	//vec_clock_t last_released;

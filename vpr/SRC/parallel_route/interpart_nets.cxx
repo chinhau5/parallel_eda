@@ -88,15 +88,15 @@ int get_num_interpartition_nets(const vector<net_t> &nets, int num_partitions)
 	int num_interpartition_nets = 0;
 	for (const auto &net : nets) {
 		int num_intersection = 0;
-		box net_bb;
+		//box net_bb;
 
-		bg::set<bg::min_corner, 0>(net_bb, net.bounding_box.xmin);
-		bg::set<bg::max_corner, 0>(net_bb, net.bounding_box.xmax);
-		bg::set<bg::min_corner, 1>(net_bb, net.bounding_box.ymin);
-		bg::set<bg::max_corner, 1>(net_bb, net.bounding_box.ymax);
+		//bg::set<bg::min_corner, 0>(net_bb, net.bounding_box.xmin);
+		//bg::set<bg::max_corner, 0>(net_bb, net.bounding_box.xmax);
+		//bg::set<bg::min_corner, 1>(net_bb, net.bounding_box.ymin);
+		//bg::set<bg::max_corner, 1>(net_bb, net.bounding_box.ymax);
 
 		for (const auto &box : all_boxes) {
-			if (bg::intersects(net_bb, box)) {
+			if (bg::intersects(net.bounding_box, box)) {
 				++num_intersection;
 			}
 		}

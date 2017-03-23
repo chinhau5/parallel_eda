@@ -64,6 +64,7 @@ void det_mutex_init(det_mutex_t &m, exec_state_t *e_state, int num_threads)
 	m.e_state = e_state;
 	m.num_threads = num_threads;
 	m.released_logical_clock = 0;
+	m.no_wait = -1;
 }
 
 void det_mutex_destroy(det_mutex_t &m)
@@ -178,21 +179,60 @@ void det_mutex_lock(det_mutex_t &m, int tid)
 #if PROFILE_WAIT_LEVEL >= 1
 	set_context(&m.e_state[tid], 50);
 #endif
-	while (true) {
+	bool locked = false;
+	bool contested = false;
+	//bool managed_to_lock = false;
+	while (!locked) {
 		det_mutex_wait_for_turn(m, tid);
 #if PROFILE_WAIT_LEVEL >= 1
 		++stat.num_rounds;
 #endif
 		if (m.lock->try_lock()) {
-			if (m.released_logical_clock >= get_logical_clock(&m.e_state[tid])) {
-				zlog_level(delta_log, ROUTER_V3, "\treleased >= cur, %lu >= %lu\n", m.released_logical_clock, get_logical_clock(&m.e_state[tid]));
-				m.lock->unlock();
+			assert(m.no_wait == -1);
+
+			unsigned long cur = get_logical_clock(&m.e_state[tid]);
+
+			if (cur > m.released_logical_clock) {
+				zlog_level(delta_log, ROUTER_V3, "\tManaged to lock\n");
+
+				if (contested) {
+					assert(cur == m.released_logical_clock + 1);
+				} 
+				
+				locked = true;
+
+				m.no_wait = 0;
 			} else {
-				break;
+				zlog_level(delta_log, ROUTER_V3, "\tLocked in logical time, %lu <= %lu\n", cur, m.released_logical_clock);
+
+				//managed_to_lock = true;
+
+				m.lock->unlock();
+
+				inc_logical_clock(&m.e_state[tid], 1);
 			}
+		} else {
+			zlog_level(delta_log, ROUTER_V3, "\tLocked in physical time\n");
+
+			/* the assertion below fails because we only assign no_wait
+			 * when lock is successful in both logical and physical time (see above) */
+			//assert(m.no_wait == 0 || m.no_wait == 1);
+
+			/* only increase the clock when waiting for a normal lock to prevent 
+			 * race condition */
+			if (m.no_wait == 0) {
+				inc_logical_clock(&m.e_state[tid], 1);
+				if (!contested) {
+					contested = true;
+				}
+			}
+
+			/* there is a possibility that we might lose our turn after unlocking while it's locked in
+			 * logical time, so the assert below fails */
+			//assert(!managed_to_lock);
+			
+			//m.e_state[tid].logical_clock->fetch_add(1, std::memory_order_relaxed);
 		}
-		inc_logical_clock(&m.e_state[tid], 1);
-		//m.e_state[tid].logical_clock->fetch_add(1, std::memory_order_relaxed);
 	}
 
 #if PROFILE_WAIT_LEVEL >= 1
@@ -291,6 +331,9 @@ void det_mutex_lock_no_wait(det_mutex_t &m, int tid)
 	++stat.num_rounds;
 #endif
 	m.lock->lock();
+
+	m.no_wait = 1;
+
 	inc_logical_clock(&m.e_state[tid], 1);
 	//set_logical_clock(&m.e_state[tid], m.released_logical_clock+1);
 	//m.e_state[tid].logical_clock->fetch_add(1, std::memory_order_relaxed);
@@ -323,6 +366,7 @@ void det_mutex_unlock(det_mutex_t &m, int tid)
 	}
 
 	m.released_logical_clock = cur;
+	m.no_wait = -1;
 
 	m.lock->unlock();
 
@@ -347,6 +391,8 @@ void det_mutex_unlock_no_wait(det_mutex_t &m, int tid)
 #elif defined(PMC)
 	stop_logical_clock(tid);
 #endif
+
+	m.no_wait = -1;
 
 	m.lock->unlock();
 

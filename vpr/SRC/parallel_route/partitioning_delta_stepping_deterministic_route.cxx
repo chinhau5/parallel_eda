@@ -59,7 +59,7 @@ using rtree_value = pair<box, net_t *>;
 struct net_to_rtree_item {
 	rtree_value operator()(net_t *net) const
 	{
-		return make_pair(box(point(net->bounding_box.xmin, net->bounding_box.ymin), point(net->bounding_box.xmax, net->bounding_box.ymax)), net);
+		return make_pair(net->bounding_box, net);
 	}
 };
 
@@ -2594,7 +2594,7 @@ void test_rtree(vector<net_t> &nets, vector<vector<net_t *>> &phase_nets)
 
 	printf("rtree build time %g\n", duration_cast<nanoseconds>(rtree_time).count() / 1e9);
 
-	auto to_box = [] (const net_t &net) -> box { return box(point(net.bounding_box.xmin, net.bounding_box.ymin), point(net.bounding_box.xmax, net.bounding_box.ymax)); };
+	auto to_box = [] (const net_t &net) -> box { return net.bounding_box; };
 
 	//auto lol = tree.qbegin(bgi::satisfies([] (const rtree_value &val) -> bool { return true; }));
 	vector<bool> net_scheduled(sorted_nets.size(), false);
@@ -2677,7 +2677,7 @@ void test_misr(const vector<net_t> &nets)
 {
 	set<int> all_nets;
 
-	auto to_box = [] (const net_t &net) -> box { return box(point(net.bounding_box.xmin, net.bounding_box.ymin), point(net.bounding_box.xmax, net.bounding_box.ymax)); };
+	auto to_box = [] (const net_t &net) -> box { return net.bounding_box; };
 
 	int subiter = 0;
 	int max_con = 0;
@@ -2687,7 +2687,7 @@ void test_misr(const vector<net_t> &nets)
 	while (!nets_copy.empty()) {
 		vector<net_t *> chosen;
 
-		max_independent_rectangles(nets_copy, to_box, [] (const net_t &net) -> pair<int, int> { return make_pair(net.bounding_box.ymin, net.bounding_box.ymax); }, chosen);
+		max_independent_rectangles(nets_copy, to_box, [] (const net_t &net) -> pair<int, int> { return make_pair(bg::get<bg::min_corner, 1>(net.bounding_box), bg::get<bg::max_corner, 1>(net.bounding_box)); }, chosen);
 
 		verify_ind(chosen, [&to_box] (const net_t *net) -> box { return to_box(*net); });
 
@@ -2709,7 +2709,10 @@ void test_misr(const vector<net_t> &nets)
 			total_area += bg::area(to_box(*c));
 
 			if (subiter < 10) {
-				fprintf(file, "%d %d %d %d 0\n", c->bounding_box.xmin, c->bounding_box.ymin, c->bounding_box.xmax-c->bounding_box.xmin, c->bounding_box.ymax-c->bounding_box.ymin);
+				fprintf(file, "%d %d %d %d 0\n",
+						bg::get<bg::min_corner, 0>(c->bounding_box), bg::get<bg::min_corner, 1>(c->bounding_box),
+						bg::get<bg::max_corner, 0>(c->bounding_box)-bg::get<bg::min_corner, 0>(c->bounding_box),
+						bg::get<bg::max_corner, 1>(c->bounding_box)-bg::get<bg::min_corner, 1>(c->bounding_box));
 			}
 		}
 
@@ -2723,7 +2726,10 @@ void test_misr(const vector<net_t> &nets)
 					});
 			if (dis) {
 				if (subiter < 10) {
-					fprintf(file, "%d %d %d %d 1\n", net.bounding_box.xmin, net.bounding_box.ymin, net.bounding_box.xmax-net.bounding_box.xmin, net.bounding_box.ymax-net.bounding_box.ymin);
+					fprintf(file, "%d %d %d %d 1\n",
+							bg::get<bg::min_corner, 0>(net.bounding_box), bg::get<bg::min_corner, 1>(net.bounding_box),
+							bg::get<bg::max_corner, 0>(net.bounding_box)-bg::get<bg::min_corner, 0>(net.bounding_box),
+							bg::get<bg::max_corner, 1>(net.bounding_box)-bg::get<bg::min_corner, 1>(net.bounding_box));
 				}
 				new_chosen.push_back(&net);
 			}
@@ -4744,7 +4750,7 @@ bool partitioning_delta_stepping_deterministic_route_virtual(t_router_opts *opts
 	//write_net_stats(all_virtual_nets_ptr, buffer, [] (const new_virtual_net_t *vnet) -> box { return vnet->bounding_box; }, [] (const new_virtual_net_t *vnet) -> int { return vnet->net->sinks.size(); });
 
 	sprintf(buffer, "%s/nets_bb.txt", dirname);
-	write_net_stats(nets, buffer, [] (const net_t &net) -> box { return box(point(net.bounding_box.xmin, net.bounding_box.ymin), point(net.bounding_box.xmax, net.bounding_box.ymax)); }, [] (const net_t &net) -> int { return net.sinks.size(); });
+	write_net_stats(nets, buffer, [] (const net_t &net) -> box { return net.bounding_box; }, [] (const net_t &net) -> int { return net.sinks.size(); });
 
 	congestion_t *congestion_aligned;
 //#ifdef __linux__

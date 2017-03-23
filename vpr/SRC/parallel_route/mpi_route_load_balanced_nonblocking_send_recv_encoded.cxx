@@ -1172,7 +1172,7 @@ bool mpi_route_load_balanced_nonblocking_send_recv_encoded(t_router_opts *opts, 
 		for (const auto &net : partition_nets[mpi.rank]) {
 			float one_net_route_time = duration_cast<nanoseconds>(net_route_time[iter][net->local_id]).count() / 1e9;
 			float mpi_time = duration_cast<nanoseconds>(net_mpi_time[iter][net->local_id]).count() / 1e9;
-			fprintf(net_route_time_f, "%d %lu %g %g %ld %g %ld %g\n", net->local_id, net->sinks.size(), bg::area(box(point(net->bounding_box.xmin, net->bounding_box.ymin), point(net->bounding_box.xmax, net->bounding_box.ymax))), one_net_route_time, net_route_time[iter][net->local_id].count(), mpi_time, net_mpi_time[iter][net->local_id].count(), mpi_time/one_net_route_time*100);
+			fprintf(net_route_time_f, "%d %lu %g %g %ld %g %ld %g\n", net->local_id, net->sinks.size(), bg::area(net->bounding_box), one_net_route_time, net_route_time[iter][net->local_id].count(), mpi_time, net_mpi_time[iter][net->local_id].count(), mpi_time/one_net_route_time*100);
 		}
 		fclose(net_route_time_f);
 

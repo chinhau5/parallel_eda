@@ -299,7 +299,7 @@ void init_nets(vector<net_t> &nets, vector<net_t> &global_nets, int bb_factor, c
 		assert(bb.xmax == route_bb[i].xmax);
 		assert(bb.ymax == route_bb[i].ymax);
 
-		net.bounding_box = bb;
+		bg::assign_values(net.bounding_box, bb.xmin, bb.ymin, bb.xmax, bb.ymax);
 
 		//for (auto &sink : net.sinks) {
 			//sink.current_bounding_box = bb;
@@ -453,7 +453,7 @@ void init_nets(vector<net_t> &nets, vector<net_t> &global_nets, int bb_factor, b
 		assert(bb.xmax == route_bb[i].xmax);
 		assert(bb.ymax == route_bb[i].ymax);
 
-		net.bounding_box = bb;
+		bg::assign_values(net.bounding_box, bb.xmin, bb.ymin, bb.xmax, bb.ymax);
 
 		if (large_bb) {
 			for (auto &sink : net.sinks) {

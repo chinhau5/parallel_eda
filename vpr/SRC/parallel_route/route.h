@@ -112,7 +112,7 @@ typedef struct net_t {
 	//source_t previous_source;
 	/*bool previous_source_valid;*/
 	std::vector<sink_t> sinks;
-	bounding_box_t bounding_box;
+	box bounding_box;
 
 	//vector<struct virtual_net_t *> virtual_nets;
 

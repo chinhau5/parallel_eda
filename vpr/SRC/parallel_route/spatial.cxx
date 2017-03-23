@@ -2586,10 +2586,12 @@ void init_datatypes()
 	MPI_Get_address(&tmp_net.source.rr_node, &net_disp_2[1]);
 	MPI_Get_address(&tmp_net.source.x, &net_disp_2[2]);
 	MPI_Get_address(&tmp_net.source.y, &net_disp_2[3]);
-	MPI_Get_address(&tmp_net.bounding_box.xmin, &net_disp_2[4]);
-	MPI_Get_address(&tmp_net.bounding_box.xmax, &net_disp_2[5]);
-	MPI_Get_address(&tmp_net.bounding_box.ymin, &net_disp_2[6]);
-	MPI_Get_address(&tmp_net.bounding_box.ymax, &net_disp_2[7]);
+	//MPI_Get_address(&tmp_net.bounding_box.xmin, &net_disp_2[4]);
+	//MPI_Get_address(&tmp_net.bounding_box.xmax, &net_disp_2[5]);
+	//MPI_Get_address(&tmp_net.bounding_box.ymin, &net_disp_2[6]);
+	//MPI_Get_address(&tmp_net.bounding_box.ymax, &net_disp_2[7]);
+	/* TODO: fix the bounding box offsets */
+	assert(false);
 	for (int i = 0; i < 8; ++i) {
 		net_disp_2[i] -= base;
 		assert(net_disp_2[i] == net_disp[i]);
