@@ -3280,7 +3280,7 @@ static void free_blocks()
 void recv_sinks(vector<net_t> &nets, MPI_Comm comm)
 {
 	for (int i = 0; i < nets.size(); ++i) {
-		zlog_level(delta_log, ROUTER_V3, "Recving net vpr id %d source rr %d x %d y %d bb %d %d %d %d\n", nets[i].vpr_id, nets[i].source.rr_node, nets[i].source.x, nets[i].source.y, nets[i].bounding_box.xmin, nets[i].bounding_box.xmax, nets[i].bounding_box.ymin, nets[i].bounding_box.ymax);
+		zlog_level(delta_log, ROUTER_V3, "Recving net vpr id %d source rr %d x %d y %d bb %d %d %d %d\n", nets[i].vpr_id, nets[i].source.rr_node, nets[i].source.x, nets[i].source.y, bg::get<bg::min_corner, 0>(nets[i].bounding_box), bg::get<bg::max_corner, 0>(nets[i].bounding_box), bg::get<bg::min_corner, 1>(nets[i].bounding_box), bg::get<bg::max_corner, 1>(nets[i].bounding_box));
 
 		int num_sinks;
 		MPI_Bcast(&num_sinks, 1, MPI_INT, 0, comm);
@@ -3306,7 +3306,7 @@ void send_sinks(vector<net_t> &nets, MPI_Comm comm)
 
 		assert(num_sinks > 0);
 
-		zlog_level(delta_log, ROUTER_V3, "Sending net vpr id %d source rr %d x %d y %d bb %d %d %d %d\n", nets[i].vpr_id, nets[i].source.rr_node, nets[i].source.x, nets[i].source.y, nets[i].bounding_box.xmin, nets[i].bounding_box.xmax, nets[i].bounding_box.ymin, nets[i].bounding_box.ymax);
+		zlog_level(delta_log, ROUTER_V3, "Sending net vpr id %d source rr %d x %d y %d bb %d %d %d %d\n", nets[i].vpr_id, nets[i].source.rr_node, nets[i].source.x, nets[i].source.y, bg::get<bg::min_corner, 0>(nets[i].bounding_box), bg::get<bg::max_corner, 0>(nets[i].bounding_box), bg::get<bg::min_corner, 1>(nets[i].bounding_box), bg::get<bg::max_corner, 1>(nets[i].bounding_box));
 
 		MPI_Bcast(&num_sinks, 1, MPI_INT, 0, comm);
 		MPI_Bcast(nets[i].sinks.data(), num_sinks, net_sink_dt, 0, comm);

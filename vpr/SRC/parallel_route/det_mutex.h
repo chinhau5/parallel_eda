@@ -22,32 +22,42 @@ struct alignas(64) exec_state_t {
 	//std::atomic<int> *inet;
 	int tid;
 	std::atomic<unsigned long> logical_clock;
+	std::atomic<int> inet;
+	int lock_count;
+	int context;
+	int region;
+	int level;
 	std::atomic<unsigned long> previous_logical_clock;
 	long long total_counter;
-	std::atomic<int> inet;
-	int context;
-	int lock_count;
-	int region;
 };
 
 struct det_mutex_stats_t {
 	int index;
-	unsigned long logical_clock;
+
+	unsigned long released_logical_clock;
+
 	mtimer::duration wait_time;
 	int num_rounds;
-	int previous_context;
+
+	unsigned long logical_clock;
+	int context;
 	int inet;
-	std::vector<std::pair<unsigned long, int>> max_clock_diff;
+	int level;
+
+	//std::vector<std::pair<unsigned long, int>> max_clock_diff;
+	
 	unsigned long max;
-	unsigned long max_logical_clock;
 	int max_thread;
-	int max_inet;
-	int max_context;
 	int max_lock_count;
+
+	unsigned long max_logical_clock;
+	int max_context;
+	int max_inet;
+	int max_level;
 };
 
-const std::vector<det_mutex_stats_t> &get_mutex_stats(int tid);
-void init_wait_stats(int num_threads);
+const std::vector<det_mutex_stats_t> &get_wait_stats(int level, int tid);
+void init_wait_stats(int num_levels, int num_threads);
 void clear_wait_stats();
 
 #if defined(TSC)
@@ -128,11 +138,13 @@ struct det_mutex_t {
 	//vec_clock_t last_released;
 };
 
+void det_mutex_reset(det_mutex_t &m);
+
 void det_mutex_init(det_mutex_t &m, exec_state_t *e_state, int num_threads);
 
 void det_mutex_destroy(det_mutex_t &m);
 
-void det_mutex_lock(det_mutex_t &m, int tid);
+void det_mutex_lock(det_mutex_t &m, int tid, int num_nodes);
 void det_mutex_lock_no_wait(det_mutex_t &m, int tid);
 
 void det_mutex_unlock(det_mutex_t &m, int tid);

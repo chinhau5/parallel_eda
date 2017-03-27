@@ -9,27 +9,37 @@ void stop_logical_clock();
 void start_logical_clock(int es);
 void stop_logical_clock(int es);
 
-static std::vector<std::vector<det_mutex_stats_t>, tbb::cache_aligned_allocator<std::vector<det_mutex_stats_t>>> stats;
+static std::vector<std::vector<std::vector<det_mutex_stats_t>>> stats;
 
 static std::vector<std::vector<std::pair<inc_time_t, int>>, tbb::cache_aligned_allocator<std::vector<std::pair<inc_time_t, int>>>> inc_time;
 
-const std::vector<det_mutex_stats_t> &get_mutex_stats(int tid)
+const std::vector<det_mutex_stats_t> &get_wait_stats(int level, int tid)
 {
-	return stats[tid];
+	assert(level < stats.size());
+	assert(tid < stats[level].size());
+
+	return stats[level][tid];
 }
 
-void init_wait_stats(int num_threads)
+void init_wait_stats(int num_levels, int num_threads)
 {
-	stats.resize(num_threads);
-	for (auto &s : stats) {
-		s.reserve(65536);
+	stats.resize(num_levels);
+
+	for (int level = 0; level < num_levels; ++level) {
+		stats[level].resize(num_threads);
+
+		for (int thread = 0; thread < num_threads; ++thread) {
+			stats[level][thread].reserve(65536);
+		}
 	}
 }
 
 void clear_wait_stats()
 {
-	for (auto &s : stats) {
-		s.clear();
+	for (int level = 0; level < stats.size(); ++level) {
+		for (int thread = 0; thread < stats[level].size(); ++thread) {
+			stats[level][thread].clear();
+		}
 	}
 }
 
@@ -58,6 +68,11 @@ void clear_inc_time()
 	}
 }
 
+void det_mutex_reset(det_mutex_t &m)
+{
+	m.released_logical_clock = 0;
+}
+
 void det_mutex_init(det_mutex_t &m, exec_state_t *e_state, int num_threads)
 {
 	m.lock = new tbb::spin_mutex();
@@ -77,7 +92,7 @@ static void det_mutex_wait_for_turn_fixed(det_mutex_t &m, int tid, det_mutex_sta
 
 }
 
-static void det_mutex_wait_for_turn(det_mutex_t &m, int tid)
+static void det_mutex_wait_for_turn(det_mutex_t &m, int tid, int num_nodes)
 {
 	unsigned long cur = get_logical_clock(&m.e_state[tid]);
 	int cur_inet = get_inet(&m.e_state[tid]);
@@ -85,7 +100,11 @@ static void det_mutex_wait_for_turn(det_mutex_t &m, int tid)
 
 	do {
 		other_less = false;
-		for (int i = 0; i < m.num_threads && !other_less; ++i) {
+
+		int threads_per_node = m.num_threads/num_nodes;
+		int base = tid - (tid % threads_per_node);
+
+		for (int i = base; i < base+threads_per_node && !other_less; ++i) {
 			if (i == tid) {
 				continue;
 			}
@@ -103,38 +122,47 @@ static void det_mutex_wait_for_turn(det_mutex_t &m, int tid)
 	} while (other_less);
 }
 
-void det_mutex_lock(det_mutex_t &m, int tid)
+void det_mutex_lock(det_mutex_t &m, int tid, int num_nodes)
 {
 #if PROFILE_WAIT_LEVEL >= 1
-	stats[tid].emplace_back();
-	auto &stat = stats[tid].back();
+	int level = m.e_state[tid].level;
+
+	stats[level][tid].emplace_back();
+	auto &stat = stats[level][tid].back();
+
 	stat.index = m.e_state[tid].lock_count;
 	++(m.e_state[tid].lock_count);
-	stat.inet = m.e_state[tid].inet;
-	stat.previous_context = m.e_state[tid].context;
+	stat.inet = get_inet(&m.e_state[tid]);
+	stat.context = m.e_state[tid].context;
+	stat.logical_clock = get_logical_clock(&m.e_state[tid]);
+	stat.level = level;
+	stat.released_logical_clock = m.released_logical_clock;
 #endif
 
 #if PROFILE_WAIT_LEVEL >= 2
-	unsigned long cur = get_logical_clock(&m.e_state[tid]);
-
-	unsigned long min_clock = cur;
+	unsigned long min_clock = stat.logical_clock;
+	int min_inet = stat.inet;
+	int min_context = stat.context;
 	int min_thread = tid;
-	int min_inet = m.e_state[tid].inet;
-	int min_context = m.e_state[tid].context;
-	int min_lock_count = m.e_state[tid].lock_count;
+	int min_lock_count = stat.index;
+	int min_level = stat.level;
 
-	for (int i = 0; i < m.num_threads; ++i) {
+	int threads_per_node = m.num_threads/num_nodes;
+	int base = tid - (tid % threads_per_node);
+
+	for (int i = base; i < base+threads_per_node; ++i) {
 		if (i == tid) {
 			continue;
 		}
 		unsigned long other = get_logical_clock(&m.e_state[i]);
-		if (other < cur) {
+		if (other < stat.logical_clock) {
 			if (other < min_clock) {
 				min_clock = other;
 				min_thread = i;
-				min_inet = m.e_state[i].inet;
+				min_inet = get_inet(&m.e_state[i]);
 				min_context = m.e_state[i].context;
 				min_lock_count = m.e_state[i].lock_count;
+				min_level = m.e_state[i].level;
 			}
 		}
 	}
@@ -143,17 +171,17 @@ void det_mutex_lock(det_mutex_t &m, int tid)
 		//printf("%lu %lu\n", cur, min_clock);
 		//assert(false);
 	//}
-	assert(cur >= min_clock);
+	assert(stat.logical_clock >= min_clock);
 	//assert(min_thread != tid);
 
 	//stat.max_clock_diff.push_back(std::make_pair(cur-min_clock, min_context));
-	stat.logical_clock = cur;
-	stat.max = cur-min_clock;
+	stat.max = stat.logical_clock-min_clock;
 	stat.max_logical_clock = min_clock;
 	stat.max_thread = min_thread;
 	stat.max_inet = min_inet;
 	stat.max_context = min_context;
 	stat.max_lock_count = min_lock_count;
+	stat.max_level = min_level;
 #endif
 
 #if PROFILE_WAIT_LEVEL >= 1
@@ -183,7 +211,7 @@ void det_mutex_lock(det_mutex_t &m, int tid)
 	bool contested = false;
 	//bool managed_to_lock = false;
 	while (!locked) {
-		det_mutex_wait_for_turn(m, tid);
+		det_mutex_wait_for_turn(m, tid, num_nodes);
 #if PROFILE_WAIT_LEVEL >= 1
 		++stat.num_rounds;
 #endif
@@ -254,54 +282,26 @@ void det_mutex_lock(det_mutex_t &m, int tid)
 void det_mutex_lock_no_wait(det_mutex_t &m, int tid)
 {
 #if PROFILE_WAIT_LEVEL >= 1
-	stats[tid].emplace_back();
-	auto &stat = stats[tid].back();
+	int level = m.e_state[tid].level;
+
+	stats[level][tid].emplace_back();
+	auto &stat = stats[level][tid].back();
+
 	stat.index = m.e_state[tid].lock_count;
 	++(m.e_state[tid].lock_count);
-	stat.inet = m.e_state[tid].inet;
-	stat.previous_context = m.e_state[tid].context;
-#endif
+	stat.inet = get_inet(&m.e_state[tid]);
+	stat.context = m.e_state[tid].context;
+	stat.logical_clock = 0;
+	stat.level = level;
+	stat.released_logical_clock = 0;
 
-#if PROFILE_WAIT_LEVEL >= 2
-	unsigned long cur = get_logical_clock(&m.e_state[tid]);
-
-	unsigned long min_clock = cur;
-	int min_thread = tid;
-	int min_inet = m.e_state[tid].inet;
-	int min_context = m.e_state[tid].context;
-	int min_lock_count = m.e_state[tid].lock_count;
-
-	for (int i = 0; i < m.num_threads; ++i) {
-		if (i == tid) {
-			continue;
-		}
-		unsigned long other = get_logical_clock(&m.e_state[i]);
-		if (other < cur) {
-			if (other < min_clock) {
-				min_clock = other;
-				min_thread = i;
-				min_inet = m.e_state[i].inet;
-				min_context = m.e_state[i].context;
-				min_lock_count = m.e_state[i].lock_count;
-			}
-		}
-	}
-
-	//if (cur < min_clock) {
-		//printf("%lu %lu\n", cur, min_clock);
-		//assert(false);
-	//}
-	assert(cur >= min_clock);
-	//assert(min_thread != tid);
-
-	//stat.max_clock_diff.push_back(std::make_pair(cur-min_clock, min_context));
-	stat.logical_clock = cur;
-	stat.max = cur-min_clock;
-	stat.max_logical_clock = min_clock;
-	stat.max_thread = min_thread;
-	stat.max_inet = min_inet;
-	stat.max_context = min_context;
-	stat.max_lock_count = min_lock_count;
+	stat.max = 0;
+	stat.max_logical_clock = 0;
+	stat.max_thread = -1;
+	stat.max_inet = -1;
+	stat.max_context = -2;
+	stat.max_lock_count = -1;
+	stat.max_level = -1;
 #endif
 
 #if PROFILE_WAIT_LEVEL >= 1
@@ -315,11 +315,6 @@ void det_mutex_lock_no_wait(det_mutex_t &m, int tid)
 #endif
 
 	zlog_level(delta_log, ROUTER_V3, "[%d] Thread %d acquiring lock, region %d released %lu cur clock %lu no wait [e_state %lX]\n", stat.index, tid, m.e_state[tid].region, m.released_logical_clock, get_logical_clock(&m.e_state[tid]), m.e_state);
-
-#if PROFILE_WAIT_LEVEL >= 2
-	zlog_level(delta_log, ROUTER_V3, "\tMax diff %lu Thread %d Current lock index %d Context %d\n", stat.max, stat.max_thread, stat.max_lock_count, stat.max_context);
-
-#endif
 
 #if PROFILE_WAIT_LEVEL >= 1
 	stat.num_rounds = 0;
