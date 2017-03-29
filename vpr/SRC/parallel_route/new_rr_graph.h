@@ -14,10 +14,11 @@ typedef struct rr_node_property_t {
 	int ylow;
 	int xhigh;
 	int yhigh;
-	//int real_xlow;
-	//int real_ylow;
-	//int real_xhigh;
-	//int real_yhigh;
+	//int pin_height;
+	int real_xlow;
+	int real_ylow;
+	int real_xhigh;
+	int real_yhigh;
 	float R;
 	float C;
 	int cost_index;

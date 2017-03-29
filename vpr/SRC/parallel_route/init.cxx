@@ -100,7 +100,7 @@ void init_graph(RRGraph &g)
 		v.yhigh = rr_node[i].yhigh;
 
 		extern struct s_grid_tile **grid;
-		auto type = &grid[v.xlow][v.ylow];
+		auto tile = &grid[v.xlow][v.ylow];
 
 		//v.real_xlow = rr_node[i].xlow;
 		//v.real_ylow = rr_node[i].ylow;
@@ -111,9 +111,48 @@ void init_graph(RRGraph &g)
 		v.cost_index = rr_node[i].cost_index;
 		v.capacity = rr_node[i].capacity;
 
-		//char buffer[256];
-		//sprintf_rr_node(i, buffer);
-		//zlog_debug(rr_log, "%s: real_xlow: %d real_xhigh: %d real_ylow: %d real_yhigh: %d\n", buffer, v.real_xlow, v.real_xhigh, v.real_ylow, v.real_yhigh);
+		switch (rr_node[i].type) {
+			case CHANX:
+			case CHANY:
+				if (rr_node[i].direction == INC_DIRECTION) {
+					v.real_xlow = rr_node[i].xlow;
+					v.real_ylow = rr_node[i].ylow;
+				} else {
+					v.real_xlow = rr_node[i].xhigh;
+					v.real_ylow = rr_node[i].yhigh;
+				}
+				v.real_xhigh = v.real_xlow;
+				v.real_yhigh = v.real_ylow;
+				break;
+
+			case IPIN:
+			case OPIN:
+				v.real_xlow = rr_node[i].xlow;
+				v.real_ylow = rr_node[i].ylow + tile->type->pin_height[rr_node[i].ptc_num];
+				v.real_xhigh = rr_node[i].xhigh;
+				v.real_yhigh = v.real_ylow;
+
+				assert(v.real_xlow == v.real_xhigh);
+
+				break;
+
+			case SOURCE:
+			case SINK:
+				v.real_xlow = rr_node[i].xlow;
+				v.real_ylow = rr_node[i].ylow;
+				v.real_xhigh = rr_node[i].xhigh;
+				v.real_yhigh = rr_node[i].yhigh;
+
+				break;
+
+			default:
+				assert(false);
+				break;
+		}
+
+		char buffer[256];
+		sprintf_rr_node(i, buffer);
+		zlog_debug(rr_log, "%s cap %d\n", buffer, v.capacity);
 
 		for (int j = 0; j < rr_node[i].num_edges; ++j) {
 			auto &e = add_edge(g, i, rr_node[i].edges[j]);
@@ -127,6 +166,8 @@ void init_graph(RRGraph &g)
 			//e_p.buffered = switch_inf[si].buffered; 
 			//e_p.switch_delay = switch_inf[si].Tdel; 
 			//e_p.R = switch_inf[si].R; 
+			sprintf_rr_node(rr_node[i].edges[j], buffer);
+			zlog_debug(rr_log, "\t%s cap %d\n", buffer, rr_node[rr_node[i].edges[j]].capacity);
 		}
 	}
 	zlog_info(delta_log, "RR graph num vertices: %d\n", num_vertices(g));
@@ -251,7 +292,9 @@ void init_nets(vector<net_t> &nets, vector<net_t> &global_nets, int bb_factor, c
 			sink.current_bounding_box = get_bounding_box(net.source, sink, bb_factor); 
 
 			sprintf_rr_node(sink.rr_node, buffer);
-			zlog_debug(net_log, "Net %d sink %d (%s) bounding box %d-%d %d-%d\n", net.vpr_id, sink.id, buffer, sink.current_bounding_box.xmin, sink.current_bounding_box.xmax, sink.current_bounding_box.ymin, sink.current_bounding_box.ymax);
+			zlog_debug(net_log, "Net %d sink %d (%s) pin height %d, bounding box %d-%d %d-%d\n",
+					net.vpr_id, sink.id, buffer, block[b].type->pin_height[p],
+					sink.current_bounding_box.xmin, sink.current_bounding_box.xmax, sink.current_bounding_box.ymin, sink.current_bounding_box.ymax);
 			//sink.congested_iterations = 0;
 
 			net.sinks.push_back(sink);
@@ -372,7 +415,7 @@ void init_nets(vector<net_t> &nets, vector<net_t> &global_nets, int bb_factor, b
 		char buffer[256];
 		buffer[0] = 0;
 		sprintf_rr_node(net.source.rr_node, buffer);
-		zlog_debug(net_log, "Net %d source %s\n", net.vpr_id, buffer);
+		zlog_debug(net_log, "Net %d source %s pin height %d\n", net.vpr_id, buffer, block[b].type->pin_height[p]);
 
 		//net.current_source = net.source;
 		/*net.previous_source.rr_node = -1;*/
@@ -405,7 +448,9 @@ void init_nets(vector<net_t> &nets, vector<net_t> &global_nets, int bb_factor, b
 					sink.current_bounding_box.xmax, sink.current_bounding_box.ymax);
 
 			sprintf_rr_node(sink.rr_node, buffer);
-			zlog_debug(net_log, "Net %d sink %d (%s) bounding box %d-%d %d-%d\n", net.vpr_id, sink.id, buffer, sink.current_bounding_box.xmin, sink.current_bounding_box.xmax, sink.current_bounding_box.ymin, sink.current_bounding_box.ymax);
+			zlog_debug(net_log, "\tNet %d sink %d (%s) pin height %d, bounding box %d-%d %d-%d\n",
+					net.vpr_id, sink.id, buffer, block[b].type->pin_height[p],
+					sink.current_bounding_box.xmin, sink.current_bounding_box.xmax, sink.current_bounding_box.ymin, sink.current_bounding_box.ymax);
 			//sink.congested_iterations = 0;
 
 			net.sinks.push_back(sink);
@@ -438,14 +483,14 @@ void init_nets(vector<net_t> &nets, vector<net_t> &global_nets, int bb_factor, b
 
 		/*net.previous_bounding_box_valid = false;*/
 
-		zlog_debug(net_log, "Net %d sorted\n", net.vpr_id);
-		sprintf_rr_node(net.source.rr_node, buffer);
-		zlog_debug(net_log, "%s x: %d y: %d\n", buffer, net.source.x, net.source.y);
-		zlog_debug(net_log, "Sorted sinks:\n");
-		for (const auto &s : net.sinks) {
-			sprintf_rr_node(s.rr_node, buffer);
-			zlog_debug(net_log, "%s x: %d y: %d\n", buffer, s.x, s.y);
-		}
+		//zlog_debug(net_log, "Net %d sorted\n", net.vpr_id);
+		//sprintf_rr_node(net.source.rr_node, buffer);
+		//zlog_debug(net_log, "%s x: %d y: %d\n", buffer, net.source.x, net.source.y);
+		//zlog_debug(net_log, "Sorted sinks:\n");
+		//for (const auto &s : net.sinks) {
+			//sprintf_rr_node(s.rr_node, buffer);
+			//zlog_debug(net_log, "%s x: %d y: %d\n", buffer, s.x, s.y);
+		//}
 
 		bounding_box_t bb = get_bounding_box(bl, tr,  bb_factor);
 		assert(bb.xmin == route_bb[i].xmin);

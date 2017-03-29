@@ -35,7 +35,7 @@ using std::chrono::nanoseconds;
 #define OVERFLOW_THRESHOLD 5000
 //#define TEST
 #define WRITE_NO_WAIT
-#define PROFILE_CLOCK
+//#define PROFILE_CLOCK
 
 #define OVER_FMT    "handler(%d ) Overflow at %p! bit=%#llx \n"
 #define ERROR_RETURN(retval) { fprintf(stderr, "Error %d %s:line %d: \n", retval,__FILE__,__LINE__);  assert(false); }
@@ -180,6 +180,8 @@ void rand_delay();
 static thread_local int tl_tid;
 static thread_local unsigned long tl_logical_clock_mask;
 static exec_state_t *g_e_state;
+//static congestion_t **g_congestion;
+//static tbb::spin_mutex g_lock;
 
 #if defined(PROFILE_CLOCK)
 static vector<vector<add_to_heap_clock_stat>, tbb::cache_aligned_allocator<vector<add_to_heap_clock_stat>>> g_add_to_heap;
@@ -191,39 +193,54 @@ static char dirname[256];
 
 static bool inside_bb(const rr_node_property_t &node, const box &bb)
 {
-	bool inside = false;
+	//int xlow, xhigh, ylow, yhigh;
 
-	if (node.type == CHANX || node.type == CHANY) {
-		int x, y;
-		if (node.inc_direction) {
-			x = node.xlow;
-			y = node.ylow;
-		} else {
-			x = node.xhigh;
-			y = node.yhigh;
-		}
+	//switch (node.type) {
+		//case CHANX:
+		//case CHANY:
+			//if (node.inc_direction) {
+				//xlow = node.xlow;
+				//ylow = node.ylow;
+			//} else {
+				//xlow = node.xhigh;
+				//ylow = node.yhigh;
+			//}
+			//xhigh = xlow;
+			//yhigh = ylow;
+			//break;
 
-		if (x >= bg::get<bg::min_corner, 0>(bb)
-				&& x <= bg::get<bg::max_corner, 0>(bb)
-				&& y >= bg::get<bg::min_corner, 1>(bb)
-				&& y <= bg::get<bg::max_corner, 1>(bb)) {
-			inside = true;
-		}
+		//case IPIN:
+		//case OPIN:
+			//xlow = node.xlow;
+			//ylow = node.ylow;
+			//xhigh = node.xhigh;
+			//yhigh = node.ylow + node.pin_height;
+			//assert(xlow == xhigh);
+			//assert(ylow <= yhigh);
+			//break;
+
+		//case SOURCE:
+		//case SINK:
+			//xlow = node.xlow;
+			//ylow = node.ylow;
+			//xhigh = node.xhigh;
+			//yhigh = node.yhigh;
+			//break;
+
+		//default:
+			//assert(false);
+			//break;
+	//}
+
+	bool inside;
+
+	if (node.real_xhigh < bg::get<bg::min_corner, 0>(bb)
+			|| node.real_xlow > bg::get<bg::max_corner, 0>(bb)
+			|| node.real_yhigh < bg::get<bg::min_corner, 1>(bb)
+			|| node.real_ylow > bg::get<bg::max_corner, 1>(bb)) {
+		inside = false;
 	} else {
-		/* partially inside the bounding box */
-		if (node.xhigh >= bg::get<bg::min_corner, 0>(bb)
-				&& node.xlow <= bg::get<bg::max_corner, 0>(bb)
-				&& node.yhigh >= bg::get<bg::min_corner, 1>(bb)
-				&& node.ylow <= bg::get<bg::max_corner, 1>(bb)) {
-			inside = true;
-		}
-		/* fully inside */
-		//if (node.xlow >= bg::get<bg::min_corner, 0>(bb)
-				//&& node.xhigh <= bg::get<bg::max_corner, 0>(bb)
-				//&& node.ylow >= bg::get<bg::min_corner, 1>(bb)
-				//&& node.yhigh <= bg::get<bg::max_corner, 1>(bb)) {
-			//inside = true;
-		//}
+		inside = true;
 	}
 
 	return inside;
@@ -718,14 +735,14 @@ class SpeculativeDeterministicRouter {
 
 				float delay;
 				if (sw->buffered) {
-					delay = sw->Tdel + v_p.C * (sw->R + 0.5f * v_p.R);
+					delay = sw->Tdel + v_p.C * (sw->R + 0.5 * v_p.R);
 				} else {
-					delay = sw->Tdel + v_p.C * (u_upstream_R + sw->R + 0.5f * v_p.R);
+					delay = sw->Tdel + v_p.C * (u_upstream_R + sw->R + 0.5 * v_p.R);
 				}
 				_state[v].delay = u_delay + delay;
 			} else {
 				_state[v].upstream_R = v_p.R;
-				_state[v].delay = v_p.C * 0.5f * v_p.R;
+				_state[v].delay = v_p.C * 0.5 * v_p.R;
 			}
 
 			if (!_modified_node_added[v]) {
@@ -766,7 +783,10 @@ class SpeculativeDeterministicRouter {
 				if (target != _current_sink->rr_node) {
 					zlog_level(delta_log, ROUTER_V3, "not target IPIN\n");
 					return false;
-				}
+				} /*else {
+					//zlog_level(delta_log, ROUTER_V3, "found target IPIN\n");
+					//return true;
+				}*/
 			}
 
 			if (prop.type == OPIN && _existing_opin != RRGraph::null_vertex() && node != _existing_opin) {
@@ -802,15 +822,17 @@ class SpeculativeDeterministicRouter {
 			assert(_state[u].upstream_R != std::numeric_limits<float>::max());
 			float delay;
 			if (sw->buffered) {
-				delay = sw->Tdel + v_p.C * (sw->R + 0.5f * v_p.R);
+				delay = sw->Tdel + v_p.C * (sw->R + 0.5 * v_p.R);
 			} else {
-				delay = sw->Tdel + v_p.C * (_state[u].upstream_R + sw->R + 0.5f * v_p.R);
+				delay = sw->Tdel + v_p.C * (_state[u].upstream_R + sw->R + 0.5 * v_p.R);
 			}
 			extern t_rr_indexed_data *rr_indexed_data;
 
 			region_t *r = _rr_regions[v];
 
-			if (!_acquired_regions[r->gid]) {
+			if (!r) {
+				assert(v_p.type == SOURCE || v_p.type == SINK);
+			} else if (!_acquired_regions[r->gid]) {
 #ifdef SHORT_CRIT
 				_all_mods.clear();	
 				region_get_mods(*r, _instance, _num_nodes, [this] (const vector<mod_t> *mods) -> void {
@@ -859,14 +881,18 @@ class SpeculativeDeterministicRouter {
 			if (!sw->buffered) {
 				upstream_R += _state[u].upstream_R;
 			}
-			float expected_cost = get_timing_driven_expected_cost(v_p, get_vertex_props(_g, _current_sink->rr_node), _current_sink->criticality_fac, upstream_R);
+			float expected_cost = _astar_fac * get_timing_driven_expected_cost(v_p, get_vertex_props(_g, _current_sink->rr_node), _current_sink->criticality_fac, upstream_R);
 
-			zlog_level(delta_log, ROUTER_V3, "\t%d -> %d delay %g congestion %g crit_fac %g expected %g expected_hex %X known %g predicted %g\n", 
-					u, v, delay, congestion_cost, _current_sink->criticality_fac, expected_cost, *(unsigned int *)&expected_cost, known_cost, known_cost + _astar_fac * expected_cost);
+			unsigned int xe, xk;
+			//memcpy(&xe, &expected_cost, sizeof (xe));
+			//memcpy(&xk, &known_cost, sizeof (xk));
+
+			zlog_level(delta_log, ROUTER_V3, "\t%d -> %d delay %g congestion %g crit_fac %g expected %g %a %X known %g %a %X predicted %g %a\n", 
+					u, v, delay, congestion_cost, _current_sink->criticality_fac, expected_cost, expected_cost, xe, /**(unsigned int *)&expected_cost,*/ known_cost, known_cost, xk, known_cost + expected_cost, known_cost + expected_cost);
 			//zlog_level(delta_log, ROUTER_V3, "\t[u: upstream %g] [edge: d %g R %g] [v: R %g C %g]\n",
 					//_state[u].upstream_R, sw->Tdel, sw->R, v_p.R, v_p.C);
 
-			return make_pair(known_cost, known_cost + _astar_fac * expected_cost);
+			return make_pair(known_cost, known_cost + expected_cost);
 		}
 
 		void push_node(int node)
@@ -940,11 +966,18 @@ class SpeculativeDeterministicRouter {
 			assert(inside_bb(sink_node_p, _current_sink->bounding_box));
 
 			vector<Mods *> mods(_fpga_regions.size(), nullptr);
-			update_first_order_congestion(_congestion, sink_node, 1, sink_node_p.capacity, _pres_fac);
+			//g_lock.lock();
+			//update_first_order_congestion(_congestion, sink_node, 1, sink_node_p.capacity, _pres_fac);
 			//commit(*_current_regions, _g, sink_node, 1, _instance);
-			mods_add(sink_node, 1, _rr_regions, mods);
+			//mods_add(sink_node, 1, _rr_regions, mods);
+			//for (int i = 0; i < _num_instances; ++i) {
+				//if (i != _instance) {
+					//update_first_order_congestion(g_congestion[i], sink_node, 1, sink_node_p.capacity, _pres_fac);
+				//}
+			//}
+			//g_lock.unlock();
 
-			added_rr_nodes.push_back(sink_node);
+			//added_rr_nodes.push_back(sink_node);
 
 #if !defined(INSTRUMENT) && !defined(PMC)
 			//_e_state->logical_clock->fetch_add(INC_COUNT, std::memory_order_relaxed);
@@ -990,13 +1023,23 @@ class SpeculativeDeterministicRouter {
 					_existing_opin = parent_rr_node;
 				}
 
-				if ((parent_rt_node != RouteTree::null_vertex()) || (get_vertex_props(_g, parent_rr_node).type == SOURCE)) {
+				if ((parent_rt_node != RouteTree::null_vertex()) && (get_vertex_props(_g, parent_rr_node).type != SOURCE)) {
 					const auto &rr_node_p = get_vertex_props(_g, parent_rr_node);
 					assert(inside_bb(rr_node_p, _current_sink->bounding_box));
 
-					update_first_order_congestion(_congestion, parent_rr_node, 1, rr_node_p.capacity, _pres_fac);
 					//commit(*_current_regions, _g, parent_rr_node, 1, _instance);
+					//if (get_vertex_props(_g, parent_rr_node).type != SOURCE) {
+					update_first_order_congestion(_congestion, parent_rr_node, 1, rr_node_p.capacity, _pres_fac);
 					mods_add(parent_rr_node, 1, _rr_regions, mods);
+					//} else {
+						//g_lock.lock();
+						//for (int i = 0; i < _num_instances; ++i) {
+							////if (i != _instance) {
+								//update_first_order_congestion(g_congestion[i], parent_rr_node, 1, rr_node_p.capacity, _pres_fac);
+							////}
+						//}
+						//g_lock.unlock();
+					//} 
 
 					added_rr_nodes.push_back(parent_rr_node);
 				}
@@ -1109,7 +1152,7 @@ class SpeculativeDeterministicRouter {
 			if (source) {
 				const auto &source_p = get_vertex_props(_g, source->rr_node);
 				RouteTreeNode root_rt_node = route_tree_add_rr_node(rt, source->rr_node, _g);
-				route_tree_set_node_properties(rt, root_rt_node, true, source_p.R, 0.5f * source_p.R * source_p.C);
+				route_tree_set_node_properties(rt, root_rt_node, true, source_p.R, 0.5 * source_p.R * source_p.C);
 				route_tree_add_root(rt, source->rr_node);
 			} else {
 				assert(rt.root_rt_nodes.size() == 1);
@@ -1313,9 +1356,8 @@ static void do_work_3(router_t<net_t *> *router, SpeculativeDeterministicRouter 
 
 	auto total_start = timer::now();
 
-	int level = 0;
 	fpga_tree_node_t *node = &router->root;
-	while (level < router->num_levels) {
+	for (int level = 0; level < router->num_levels; ++level) {
 		router->e_state[tid].level = level;
 
 		int regions_per_thread = router->fpga_regions.size()/router->num_threads;
@@ -1539,8 +1581,6 @@ static void do_work_3(router_t<net_t *> *router, SpeculativeDeterministicRouter 
 				node = node->right;
 			}
 		}
-
-		++level;
 	}
 
 	router->total_time[tid] = timer::now()-total_start;
@@ -2145,116 +2185,179 @@ void write_routes(const char *fname, const route_tree_t *route_trees, int num_ne
 void write_net_dijkstra_stats(const char *fname, const vector<dijkstra_stats_t> &net_stats);
 void write_congestion_state(const char *fname, const congestion_t *congestion, int num_rr_nodes);
 
-//template<typename Item, typename ItemToInterval>
-//void max_independent_intervals_from_sorted(const std::vector<Item *> &items, const ItemToInterval &to_interval, std::vector<Item *> &chosen)
-//{
-	//if (items.size() == 0) {
-		//return;
-	//}
+void split_edges(const std::vector<std::pair<int, net_t *>> &edges,
+		float median, bool horizontal,
+		std::vector<std::pair<int, net_t *>> &left, std::vector<std::pair<int, net_t *>> &right,
+		std::vector<net_t *> *middle)
+{
+	for (const auto &edge : edges) {
+		const auto &box = edge.second->bounding_box;
 
-	//int current_finishing = to_interval(*items[0]).second;
-	//chosen.push_back(items[0]);
-	//for (int i = 1; i < items.size(); ++i) {
-		//const auto &interval = to_interval(*items[i]);
-		//if (interval.first > current_finishing) {
-			//chosen.push_back(items[i]);
-			//current_finishing = interval.second;
+		int low;
+		int high;
+
+		if (horizontal) {
+			low = bg::get<bg::min_corner, 1>(box);
+			high = bg::get<bg::max_corner, 1>(box);
+		} else {
+			low = bg::get<bg::min_corner, 0>(box);
+			high = bg::get<bg::max_corner, 0>(box);
+		}
+
+		assert((edge.first == low && edge.first != high) || (edge.first != low && edge.first == high));
+
+		if (high < median) {
+			left.push_back(edge);
+		} else if (low > median) {
+			right.push_back(edge);
+		} else {
+			assert((low < median && high >= median) || (low <= median && high > median));
+			if (middle) {
+				middle->push_back(edge.second);
+			}
+		}
+	}
+}
+
+void max_independent_rectangles_internal(const std::vector<std::pair<int, net_t *>> &ver_edges, const std::vector<std::pair<int, net_t *>> &hor_edges, const box &bb, int level, bool horizontal, fpga_tree_node_t *node)
+{
+	if (level > 0) {
+		assert((ver_edges.size() % 2) == 0);
+		assert(ver_edges.size() == hor_edges.size());
+
+		//for (const auto &ver_e : ver_edges) {
+			//PRINT("ver edge %d box %X\n", ver_e.first, ver_e.second);
 		//}
-	//}
-//}
 
-//template<typename Item, typename ItemToBox>
-//void split_edges(const std::vector<std::pair<int, Item *>> &edges, const ItemToBox &to_box,
-		//float median, bool horizontal,
-		//std::vector<std::pair<int, Item *>> &left, std::vector<std::pair<int, Item *>> &right)
-//{
-	//for (const auto &ver_edge : ver_edges) {
-		//const auto &box = to_box(*ver_edge.second);
+		float median;
 
-		//int l = bg::get<bg::min_corner, 0>(box);
-		//int r = bg::get<bg::max_corner, 0>(box);
+		if (horizontal) {
+			median = (float)(hor_edges[hor_edges.size()/2 - 1].first + hor_edges[hor_edges.size()/2].first) / 2;
+		} else {
+			median = (float)(ver_edges[ver_edges.size()/2 - 1].first + ver_edges[ver_edges.size()/2].first) / 2;
+		}
 
-		//assert((ver_edge.first == l && ver_edge.first != r) || (ver_edge.first != l && ver_edge.first == r));
+		int imedian = median;
+		box left_box, right_box;
+		if (horizontal) {
+			assert((imedian > bg::get<bg::min_corner, 1>(bb) && imedian < bg::get<bg::max_corner, 1>(bb)));
 
-		//if (r < x_median) {
-			//left.push_back(ver_edge);
-		//} else if (l > x_median) {
-			//right.push_back(ver_edge);
-		//} else {
-			//assert((l < x_median && r >= x_median) || (l <= x_median && r > x_median));
-		//}
-	//}
-//}
+			bg::set<bg::min_corner, 0>(left_box, bg::get<bg::min_corner, 0>(bb));
+			bg::set<bg::max_corner, 0>(left_box, bg::get<bg::max_corner, 0>(bb));
+			bg::set<bg::min_corner, 1>(left_box, bg::get<bg::min_corner, 1>(bb));
+			bg::set<bg::max_corner, 1>(left_box, imedian);
 
-//template<typename Item, typename ItemToBox, typename ItemToInterval>
-//void max_independent_rectangles_internal(const std::vector<std::pair<int, Item *>> &ver_edges, const std::vector<std::pair<int, Item *>> &hor_edges, const ItemToBox &to_box, int level, bool horizontal)
-//{
-	//assert((ver_edges.size() % 2) == 0);
-	//assert(ver_edges.size() == hor_edges.size());
+			bg::set<bg::min_corner, 0>(right_box, bg::get<bg::min_corner, 0>(bb));
+			bg::set<bg::max_corner, 0>(right_box, bg::get<bg::max_corner, 0>(bb));
+			bg::set<bg::min_corner, 1>(right_box, bg::get<bg::max_corner, 1>(left_box)+1);
+			bg::set<bg::max_corner, 1>(right_box, bg::get<bg::max_corner, 1>(bb));
 
-	//for (const auto &ver_e : ver_edges) {
-		//PRINT("ver edge %d box %X\n", ver_e.first, ver_e.second);
-	//}
+			//printf("hsplit 0 %d->%d,%d->%d 1 %d->%d,%d->%d\n",
+			//bg::get<bg::min_corner, 0>(split_0), bg::get<bg::max_corner, 0>(split_0),
+			//bg::get<bg::min_corner, 1>(split_0), bg::get<bg::max_corner, 1>(split_0),
+			//bg::get<bg::min_corner, 0>(split_1), bg::get<bg::max_corner, 0>(split_1),
+			//bg::get<bg::min_corner, 1>(split_1), bg::get<bg::max_corner, 1>(split_1));
 
-	//float median = (float)(ver_edges[ver_edges.size()/2 - 1].first + ver_edges[ver_edges.size()/2].first) / 2;
+			assert((bg::get<bg::min_corner, 1>(left_box) < bg::get<bg::max_corner, 1>(left_box)));
+			assert((bg::get<bg::min_corner, 1>(right_box) < bg::get<bg::max_corner, 1>(right_box)));
+		} else {
+			assert((imedian > bg::get<bg::min_corner, 0>(bb) && imedian < bg::get<bg::max_corner, 0>(bb)));
 
-	//if (horizontal) {
-	//}
+			bg::set<bg::min_corner, 1>(left_box, bg::get<bg::min_corner, 1>(bb));
+			bg::set<bg::max_corner, 1>(left_box, bg::get<bg::max_corner, 1>(bb));
+			bg::set<bg::min_corner, 0>(left_box, bg::get<bg::min_corner, 0>(bb));
+			bg::set<bg::max_corner, 0>(left_box, imedian);
 
-	//PRINT("x median %g\n", x_median);
+			bg::set<bg::min_corner, 1>(right_box, bg::get<bg::min_corner, 1>(bb));
+			bg::set<bg::max_corner, 1>(right_box, bg::get<bg::max_corner, 1>(bb));
+			bg::set<bg::min_corner, 0>(right_box, bg::get<bg::max_corner, 0>(left_box)+1);
+			bg::set<bg::max_corner, 0>(right_box, bg::get<bg::max_corner, 0>(bb));
 
-////#ifdef DEBUG_MISR
-////#endif
+			//printf("vsplit 0 %d->%d,%d->%d 1 %d->%d,%d->%d\n",
+			//bg::get<bg::min_corner, 0>(split_0), bg::get<bg::max_corner, 0>(split_0),
+			//bg::get<bg::min_corner, 1>(split_0), bg::get<bg::max_corner, 1>(split_0),
+			//bg::get<bg::min_corner, 0>(split_1), bg::get<bg::max_corner, 0>(split_1),
+			//bg::get<bg::min_corner, 1>(split_1), bg::get<bg::max_corner, 1>(split_1));
 
-	//std::vector<std::pair<int, Item *>> left_ver;
-	//std::vector<std::pair<int, Item *>> right_ver;
-	//split_ver_edges(ver_edges, to_box,
-			//x_median,
-			//left_ver, right_ver);
+			assert((bg::get<bg::min_corner, 0>(left_box) < bg::get<bg::max_corner, 0>(left_box)));
+			assert((bg::get<bg::min_corner, 0>(right_box) < bg::get<bg::max_corner, 0>(right_box)));
+		}
 
-	//std::vector<Item *> left_sorted;
-	//std::vector<Item *> right_sorted;
-	//std::vector<Item *> middle_sorted;
-	//split_hor(sorted_items, to_box,
-			//x_median,
-			//left_sorted, right_sorted, middle_sorted);
+		//PRINT("median %g\n", median);
 
-	//std::vector<Item *> left_right_chosen;
-	//std::vector<Item *> middle_chosen;
-	//max_independent_rectangles_internal(left_ver, left_sorted, to_box, to_interval, left_right_chosen);
-	//max_independent_rectangles_internal(right_ver, right_sorted, to_box, to_interval, left_right_chosen);
-	//max_independent_intervals_from_sorted(middle_sorted, to_interval, middle_chosen);
+		int prev = -1;
+		for (const auto &e : ver_edges) {
+			assert(e.first > prev);
+			prev = e.first;
+		}
+		prev = -1;
+		for (const auto &e : hor_edges) {
+			assert(e.first > prev);
+			prev = e.first;
+		}
 
-	//if (left_right_chosen.size() > middle_chosen.size()) {
-		////chosen = std::move(left_right_chosen);
-		//chosen.insert(end(chosen), begin(left_right_chosen), end(left_right_chosen));
-	//} else {
-		////chosen = std::move(middle_chosen);
-		//chosen.insert(end(chosen), begin(middle_chosen), end(middle_chosen));
-	//}
-//}
+		//#ifdef DEBUG_MISR
+		//#endif
+		
+		node->bb = bb;
 
-//template<typename Item, typename ItemToBox, typename ItemToInterval>
-//void max_independent_rectangles(std::vector<Item> &items, const ItemToBox &to_box)
-//{
-	//std::vector<std::pair<int, Item *>> ver_edges;
-	//std::vector<std::pair<int, Item *>> hor_edges;
+		std::vector<std::pair<int, net_t *>> left_ver;
+		std::vector<std::pair<int, net_t *>> right_ver;
+		split_edges(ver_edges, 
+				median, horizontal,
+				left_ver, right_ver,
+				&node->nets);
 
-	//for (int i = 0; i < items.size(); ++i) {
-		//const auto &box = to_box(items[i]);
+		std::vector<std::pair<int, net_t *>> left_hor;
+		std::vector<std::pair<int, net_t *>> right_hor;
+		split_edges(hor_edges, 
+				median, horizontal,
+				left_hor, right_hor,
+				nullptr);
 
-		//ver_edges.push_back(std::make_pair(bg::get<bg::min_corner, 0>(box), &items[i]));
-		//ver_edges.push_back(std::make_pair(bg::get<bg::max_corner, 0>(box), &items[i]));
+		node->left = new fpga_tree_node_t;
+		node->right = new fpga_tree_node_t;
 
-		//hor_edges.push_back(std::make_pair(bg::get<bg::min_corner, 1>(box), &items[i]));
-		//hor_edges.push_back(std::make_pair(bg::get<bg::max_corner, 1>(box), &items[i]));
-	//}
+		assert(!left_ver.empty() && !right_ver.empty());
 
-	//std::sort(begin(ver_edges), end(ver_edges));
-	//std::sort(begin(hor_edges), end(hor_edges));
+		max_independent_rectangles_internal(left_ver, left_hor,
+				left_box,
+				level-1, !horizontal, node->left);
+		max_independent_rectangles_internal(right_ver, right_hor,
+				right_box,	
+				level-1, !horizontal, node->right);
+	} else {
+		node->bb = bb;
+		for (const auto &item : ver_edges) {
+			assert(bg::covered_by(item.second->bounding_box, bb));
+			node->nets.push_back(item.second);
+		}
+	}
+}
 
-	//max_independent_rectangles_internal(ver_edges, shor_edges, to_box, 0);
-//}
+void max_independent_rectangles(std::vector<net_t> &items, int level, fpga_tree_node_t *root)
+{
+	std::vector<std::pair<int, net_t *>> ver_edges;
+	std::vector<std::pair<int, net_t *>> hor_edges;
+
+	for (int i = 0; i < items.size(); ++i) {
+		const auto &box = items[i].bounding_box;
+
+		ver_edges.push_back(std::make_pair(bg::get<bg::min_corner, 0>(box), &items[i]));
+		ver_edges.push_back(std::make_pair(bg::get<bg::max_corner, 0>(box), &items[i]));
+
+		hor_edges.push_back(std::make_pair(bg::get<bg::min_corner, 1>(box), &items[i]));
+		hor_edges.push_back(std::make_pair(bg::get<bg::max_corner, 1>(box), &items[i]));
+	}
+
+	std::sort(begin(ver_edges), end(ver_edges));
+	std::sort(begin(hor_edges), end(hor_edges));
+
+	extern int nx, ny;
+	bool horizontal = ny > nx;
+
+	max_independent_rectangles_internal(ver_edges, hor_edges, bg::make<box>(0, 0, nx+1, ny+1), level, horizontal, root);
+}
 
 void split_box(const box &current, bool horizontal, box &split_0, box &split_1)
 {
@@ -2482,17 +2585,20 @@ static void init_rr_node_regions(const RRGraph &g, vector<region_t> &fpga_region
 	for (int i = 0; i < rr_regions.size(); ++i) {
 		const auto &props = get_vertex_props(g, i);
 
-		int num_regions = 0;
-		for (auto &fpga_r : fpga_regions) {
-			if (inside_region(props, fpga_r.bb)) {
-				assert(!rr_regions[i]);
-				rr_regions[i] = &fpga_r;
-				zlog_level(delta_log, ROUTER_V3, "RR %d is inside region %d\n", i, fpga_r.gid);
-				++num_regions;
+		if (props.type != SOURCE && props.type != SINK) {
+			int num_regions = 0;
+			for (auto &fpga_r : fpga_regions) {
+				if (inside_bb(props, fpga_r.bb)) {
+					assert(!rr_regions[i]);
+					rr_regions[i] = &fpga_r;
+					zlog_level(delta_log, ROUTER_V3, "RR %d is inside region %d\n", i, fpga_r.gid);
+					++num_regions;
+				}
 			}
+			assert(num_regions == 1);
+		} else {
+			rr_regions[i] = nullptr;
 		}
-
-		assert(num_regions == 1);
 	}
 }
 
@@ -2586,7 +2692,7 @@ bool speculative_deterministic_route_hb_fine(t_router_opts *opts)
 	//exit(0);
 
 //#if defined (PMC)
-	int retval;
+	//int retval;
 	/* papi library initialization */
 	//if ((retval=PAPI_library_init(PAPI_VER_CURRENT)) != PAPI_VER_CURRENT) {
 		//printf("Library initialization error! \n");
@@ -2621,6 +2727,15 @@ bool speculative_deterministic_route_hb_fine(t_router_opts *opts)
 	vector<net_t> nets;
 	vector<net_t> global_nets;
 	init_nets(nets, global_nets, opts->bb_factor, opts->large_bb);
+
+	//for (const auto &net : nets) {
+		//const auto &src_prop = get_vertex_props(router.g, net.source.rr_node);
+		//assert(net.source.y == src_prop.ylow + src_prop.pin_height);
+		//for (const auto &sink : net.sinks) {
+			//const auto &sink_prop = get_vertex_props(router.g, sink.rr_node);
+			//assert(sink.y == sink_prop.ylow + sink_prop.pin_height);
+		//}
+	//}
 
 #if defined(TEST)
 	net_t *largest_net = &nets[0];
@@ -2670,8 +2785,8 @@ bool speculative_deterministic_route_hb_fine(t_router_opts *opts)
 
 	extern int nx, ny;
 	bg::assign_values(router.root.bb, 0, 0, nx+1, ny+1);
-	//const int num_splits = log2(opts->num_threads);
-	const int num_splits = 0;
+	const int num_splits = log2(opts->num_threads);
+	//const int num_splits = 0;
 	bool horizontal_cut = ny > nx ? true : false;
 	fpga_bipartition(&router.root, num_splits, horizontal_cut);
 
@@ -2814,6 +2929,8 @@ bool speculative_deterministic_route_hb_fine(t_router_opts *opts)
 		}
 	}
 
+	//g_congestion = router.state.congestion;
+
 	router.state.route_trees = new route_tree_t[nets.size()];
 	//router.state.back_route_trees = new route_tree_t[nets.size()];
 	for (int i = 0; i < nets.size(); ++i) {
@@ -2943,7 +3060,6 @@ bool speculative_deterministic_route_hb_fine(t_router_opts *opts)
 	zlog_put_mdc("tid", buffer);
 
 	bool routed = false;
-	bool has_resched = false;
 	for (; router.iter < opts->max_router_iterations && !routed; ++router.iter) {
 		sprintf(buffer, "%d", router.iter.load());
 		zlog_put_mdc("iter", buffer);
@@ -3056,7 +3172,10 @@ bool speculative_deterministic_route_hb_fine(t_router_opts *opts)
 
 			bool valid = true;
 			for (int j = 0; j < num_vertices(router.g); ++j) {
-				if (router.state.congestion[i][j].recalc_occ != router.state.congestion[i][j].occ) {
+				const auto &props = get_vertex_props(router.g, j);
+				if (props.type == SOURCE || props.type == SINK) {
+					assert(router.state.congestion[i][j].recalc_occ <= props.capacity);
+				} else if (router.state.congestion[i][j].recalc_occ != router.state.congestion[i][j].occ) {
 					sprintf_rr_node_impl(j, buffer);
 					printf("Node %s occ mismatch, recalc: %d original: %d\n", buffer, router.state.congestion[i][j].recalc_occ, router.state.congestion[i][j].occ);
 					valid = false;
@@ -3276,7 +3395,7 @@ bool speculative_deterministic_route_hb_fine(t_router_opts *opts)
 					if (router.net_router[i] == thread && router.net_level[i] == level) {
 						double area = bg::area(nets[i].bounding_box);
 						unsigned long sinks = nets[i].sinks.size();
-						fprintf(out, "%d %d %g %lu %lu %d %d %d\n", router.net_level[i], router.net_router[i], area, sinks, duration_cast<nanoseconds>(router.net_route_time[i]).count(),
+						fprintf(out, "%d %d %d %g %lu %lu %d %d %d\n", router.net_level[i], router.net_router[i], i, area, sinks, duration_cast<nanoseconds>(router.net_route_time[i]).count(),
 								router.net_stats[i].num_heap_pops, router.net_stats[i].num_heap_pushes, router.net_stats[i].num_neighbor_visits);
 						total_area += area;
 						total_sinks += sinks;
