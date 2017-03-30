@@ -671,10 +671,10 @@ class SpeculativeDeterministicRouter {
 		}
 
 		//template<typename Graph, typename Edge, typename EdgeWeightFunc, typename Callbacks>
-		//friend void delta_stepping(const Graph &g, const vector<existing_source_t<Edge>> &sources, int sink, float delta, float *known_distance, float *distance, Edge *prev_edge, const EdgeWeightFunc &edge_weight, Callbacks &callbacks);
+		//friend void delta_stepping(const Graph &g, const vector<heap_node_t<Edge>> &sources, int sink, float delta, float *known_distance, float *distance, Edge *prev_edge, const EdgeWeightFunc &edge_weight, Callbacks &callbacks);
 
 		template<typename Graph, typename Edge, typename EdgeWeightFunc, typename ExpandCheckFunc, typename Callbacks>
-		friend void dijkstra(const Graph &g, const vector<existing_source_t<Edge>> &sources, int sink, float *known_distance, float *distance, Edge *prev_edge, const ExpandCheckFunc &expand_node, const EdgeWeightFunc &edge_weight, Callbacks &callbacks);
+		friend void dijkstra(const Graph &g, const vector<heap_node_t<Edge>> &sources, int sink, float *known_distance, float *distance, Edge *prev_edge, const ExpandCheckFunc &expand_node, const EdgeWeightFunc &edge_weight, Callbacks &callbacks);
 
 		//template<typename Edge, typename Callbacks>
 		//friend void relax(Buckets &buckets, float delta, vector<bool> &in_bucket, const vector<bool> &vertex_deleted,
@@ -769,7 +769,7 @@ class SpeculativeDeterministicRouter {
 						buffer, 
 						sink->current_bounding_box.xmin, sink->current_bounding_box.xmax, sink->current_bounding_box.ymin, sink->current_bounding_box.ymax);
 
-				vector<existing_source_t<RREdge>> sources;
+				vector<heap_node_t<RREdge>> sources;
 
 				for (const auto &rt_node : route_tree_get_nodes(rt)) {
 					const auto &rt_node_p = get_vertex_props(rt.graph, rt_node);

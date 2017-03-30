@@ -571,6 +571,21 @@ static void SetupRouterOpts(INP t_options Options, INP boolean TimingEnabled,
 	if (Options.Count[OT_PMC_OVERFLOW]) {
 		RouterOpts->pmc_overflow = Options.pmc_overflow;
 	}
+
+	RouterOpts->net_partitioner = NetPartitioner::Median;
+	if (Options.Count[OT_NET_PARTITIONER]) {
+		RouterOpts->net_partitioner = Options.net_partitioner;
+	}
+
+	RouterOpts->num_net_cuts = 0;
+	if (Options.Count[OT_NUM_NET_CUTS]) {
+		RouterOpts->num_net_cuts = Options.num_net_cuts;
+	}
+
+	RouterOpts->num_extra_cuts = 0;
+	if (Options.Count[OT_NUM_EXTRA_CUTS]) {
+		RouterOpts->num_extra_cuts = Options.num_extra_cuts;
+	}
 }
 
 static void SetupAnnealSched(INP t_options Options,

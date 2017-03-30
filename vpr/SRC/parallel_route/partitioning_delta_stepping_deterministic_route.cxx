@@ -2836,17 +2836,17 @@ class DeltaSteppingRouter {
 		int _instance;
 
 	private:
-		void popped_node(int v)
+		void popped_node(const heap_node_t<RREdge> &node)
 		{
 			char buffer[256];
-			sprintf_rr_node(v, buffer);
+			sprintf_rr_node(node.node, buffer);
 			zlog_level(delta_log, ROUTER_V3, "%s\n", buffer);
 			++_stats.num_heap_pops;
 
 			rand_delay();
 		}
 
-		void relax_node(int v, const RREdge &e)
+		void relax_node(const heap_node_t<RREdge> &node)
 		{
 			//RouteTreeNode rt_node = route_tree_get_rt_node(*_current_rt, v);
 
@@ -2860,12 +2860,13 @@ class DeltaSteppingRouter {
 				//}
 			//}
 
+			int v = node.node;
 			const auto &v_p = get_vertex_props(_g, v);
 
-			if (valid(e)) {
-				assert(v == get_target(_g, e));
+			if (valid(node.prev_edge)) {
+				assert(v == get_target(_g, node.prev_edge));
 
-				int u = get_source(_g, e);
+				int u = get_source(_g, node.prev_edge);
 
 				float u_delay;
 				float u_upstream_R;
@@ -2881,7 +2882,7 @@ class DeltaSteppingRouter {
 					u_delay = u_rt_node_p.delay;
 				}
 
-				const auto &e_p = get_edge_props(_g, e);
+				const auto &e_p = get_edge_props(_g, node.prev_edge);
 
 				extern struct s_switch_inf *switch_inf;
 				const struct s_switch_inf *sw = &switch_inf[e_p.switch_index];
@@ -2973,7 +2974,7 @@ class DeltaSteppingRouter {
 			return true;
 		}
 
-		void push_node(int node)
+		void push_node(const heap_node_t<RREdge> &node)
 		{
 			++_stats.num_heap_pushes;
 		}
@@ -3136,10 +3137,10 @@ class DeltaSteppingRouter {
 		}
 
 		template<typename Graph, typename Edge, typename EdgeWeightFunc, typename Callbacks>
-		friend void delta_stepping(const Graph &g, const vector<existing_source_t<Edge>> &sources, int sink, float delta, float *known_distance, float *distance, Edge *prev_edge, const EdgeWeightFunc &edge_weight, Callbacks &callbacks);
+		friend void delta_stepping(const Graph &g, const vector<heap_node_t<Edge>> &sources, int sink, float delta, float *known_distance, float *distance, Edge *prev_edge, const EdgeWeightFunc &edge_weight, Callbacks &callbacks);
 
 		template<typename Graph, typename Edge, typename EdgeWeightFunc, typename ExpandCheckFunc, typename Callbacks>
-		friend void dijkstra(const Graph &g, const vector<existing_source_t<Edge>> &sources, int sink, float *known_distance, float *distance, Edge *prev_edge, const ExpandCheckFunc &expand_node, const EdgeWeightFunc &edge_weight, Callbacks &callbacks);
+		friend void dijkstra(const Graph &g, const vector<heap_node_t<Edge>> &sources, int sink, float *known_distance, float *distance, Edge *prev_edge, const ExpandCheckFunc &expand_node, const EdgeWeightFunc &edge_weight, Callbacks &callbacks);
 
 		template<typename Edge, typename Callbacks>
 		friend void relax(Buckets &buckets, float delta, vector<bool> &in_bucket, const vector<bool> &vertex_deleted,
@@ -3229,7 +3230,7 @@ class DeltaSteppingRouter {
 				}
 				zlog_level(delta_log, ROUTER_V3, "\n");
 
-				vector<existing_source_t<RREdge>> sources;
+				vector<heap_node_t<RREdge>> sources;
 
 				for (const auto &rt_node : route_tree_get_nodes(rt)) {
 					const auto &rt_node_p = get_vertex_props(rt.graph, rt_node);

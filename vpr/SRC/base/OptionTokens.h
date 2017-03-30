@@ -97,6 +97,9 @@ enum e_OptionBaseToken {
 	OT_PART_SORT,
 	OT_NEW_LOAD_BALANCE,
 	OT_PMC_OVERFLOW,
+	OT_NET_PARTITIONER,
+	OT_NUM_NET_CUTS,
+	OT_NUM_EXTRA_CUTS,
 	OT_BASE_UNKNOWN /* Must be last since used for counting enum items */
 };
 
@@ -129,6 +132,8 @@ enum e_OptionArgToken {
 	OT_PART_SORT_NUM_SINKS,
 	OT_SCH_IND,
 	OT_SCH_FAST,
+	OT_NET_PART_UNIFORM,
+	OT_NET_PART_MEDIAN,
 	OT_ARG_UNKNOWN /* Must be last since used for counting enum items */
 };
 

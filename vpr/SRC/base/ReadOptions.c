@@ -37,6 +37,8 @@ static char **ReadScheduler(INP char **Args,
 		OUTP SchedulerType *Algo);
 static char **ReadPartSort(INP char **Args,
 		OUTP PartSortMetric *Algo);
+static char **ReadNetPartitioner(INP char **Args,
+		OUTP NetPartitioner *Algo);
 static char **ReadPackerAlgorithm(INP char **Args,
 		OUTP enum e_packer_algorithm *Algo);
 static char **ReadBaseCostType(INP char **Args,
@@ -503,6 +505,12 @@ ProcessOption(INP char **Args, INOUTP t_options * Options) {
 		return ReadOnOff(Args, &Options->new_load_balance);
 	case OT_PMC_OVERFLOW:
 		return ReadInt(Args, &Options->pmc_overflow);
+	case OT_NET_PARTITIONER:
+		return ReadNetPartitioner(Args, &Options->net_partitioner);
+	case OT_NUM_NET_CUTS:
+		return ReadInt(Args, &Options->num_net_cuts);
+	case OT_NUM_EXTRA_CUTS:
+		return ReadInt(Args, &Options->num_extra_cuts);
 			
 		/* Routing options valid only for timing-driven routing */
 	case OT_ASTAR_FAC:
@@ -881,6 +889,27 @@ ReadScheduler(INP char **Args, OUTP SchedulerType *Algo) {
 		break;
 	case OT_SCH_IND:
 		*Algo = SchedulerType::IND;
+		break;
+	default:
+		Error(*PrevArgs);
+	}
+
+	return Args;
+}
+
+static char **
+ReadNetPartitioner(INP char **Args, OUTP NetPartitioner *Part) {
+	enum e_OptionArgToken Token;
+	char **PrevArgs;
+
+	PrevArgs = Args;
+	Args = ReadToken(Args, &Token);
+	switch (Token) {
+	case OT_NET_PART_MEDIAN:
+		*Part = NetPartitioner::Median;
+		break;
+	case OT_NET_PART_UNIFORM:
+		*Part = NetPartitioner::Uniform;
 		break;
 	default:
 		Error(*PrevArgs);

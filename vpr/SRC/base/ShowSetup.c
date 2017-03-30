@@ -273,6 +273,22 @@ static void ShowRouterOpts(INP struct s_router_opts RouterOpts) {
 		vpr_printf(TIO_MESSAGE_INFO, "RouterOpts.new_load_balance: %s\n", RouterOpts.new_load_balance ? "on" : "off");
 		vpr_printf(TIO_MESSAGE_INFO, "RouterOpts.pmc_overflow: %d\n", RouterOpts.pmc_overflow);
 
+		vpr_printf(TIO_MESSAGE_INFO, "RouterOpts.net_partitioner: ");
+			switch (RouterOpts.net_partitioner) {
+			case NetPartitioner::Uniform:
+				vpr_printf(TIO_MESSAGE_INFO, "Uniform\n");
+				break;
+			case NetPartitioner::Median:
+				vpr_printf(TIO_MESSAGE_INFO, "Median\n");
+				break;
+			default:
+				vpr_printf(TIO_MESSAGE_INFO, "Unknown net partitioner\n");
+				exit(-1);
+			}
+
+		vpr_printf(TIO_MESSAGE_INFO, "RouterOpts.num_net_cuts: %d\n", RouterOpts.num_net_cuts);
+		vpr_printf(TIO_MESSAGE_INFO, "RouterOpts.num_extra_cuts: %d\n", RouterOpts.num_extra_cuts);
+
 		vpr_printf(TIO_MESSAGE_INFO, "RouterOpts.scheduler: ");
 		switch (RouterOpts.scheduler) {
 		case SchedulerType::FAST:

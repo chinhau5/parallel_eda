@@ -101,6 +101,9 @@ struct s_options {
     PartSortMetric part_sort_metric;
     boolean new_load_balance;
     int pmc_overflow;
+    NetPartitioner net_partitioner;
+    int num_net_cuts;
+    int num_extra_cuts;
 
 	/* Timing-driven router options only */
 	float astar_fac;

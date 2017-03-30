@@ -716,6 +716,8 @@ enum class SchedulerType { IND, FAST };
 
 enum class PartSortMetric { RouteTime, NumSinks };
 
+enum class NetPartitioner { Median, Uniform };
+
 #define NO_FIXED_CHANNEL_WIDTH -1
 
 typedef struct s_router_opts t_router_opts;
@@ -760,6 +762,9 @@ struct s_router_opts {
 	PartSortMetric part_sort_metric;
 	boolean new_load_balance;
 	int pmc_overflow;
+	NetPartitioner net_partitioner;
+	int num_net_cuts;
+	int num_extra_cuts;
 };
 
 /* All the parameters controlling the router's operation are in this        *
