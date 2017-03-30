@@ -2836,7 +2836,7 @@ class DeltaSteppingRouter {
 		int _instance;
 
 	private:
-		void popped_node(const heap_node_t<RREdge> &node)
+		void popped_node(const heap_node_t<RREdge, extra_route_state_t> &node)
 		{
 			char buffer[256];
 			sprintf_rr_node(node.node, buffer);

@@ -672,7 +672,7 @@ class SpeculativeDeterministicRouter {
 		timer::duration _wait_time;
 
 	private:
-		void popped_node(const heap_node_t<RREdge> &node)
+		void popped_node(const heap_node_t<RREdge, extra_route_state_t> &node)
 		{
 #if PROFILE_WAIT_LEVEL >= 1
 			set_context(_e_state, 0);
@@ -696,7 +696,7 @@ class SpeculativeDeterministicRouter {
 			//rand_delay();
 		}
 
-		void relax_node(const heap_node_t<RREdge> &node)
+		void relax_node(const heap_node_t<RREdge, extra_route_state_t> &node)
 		{
 			//RouteTreeNode rt_node = route_tree_get_rt_node(*_current_rt, v);
 
@@ -710,49 +710,50 @@ class SpeculativeDeterministicRouter {
 				//}
 			//}
 
-			int v = node.node;
-			const auto &v_p = get_vertex_props(_g, v);
+			//int v = node.node;
+			//const auto &v_p = get_vertex_props(_g, v);
 
-			if (valid(node.prev_edge)) {
-				assert(v == get_target(_g, node.prev_edge));
+			//if (valid(node.prev_edge)) {
+				//assert(v == get_target(_g, node.prev_edge));
 
-				int u = get_source(_g, node.prev_edge);
+				//int u = get_source(_g, node.prev_edge);
 
-				float u_delay;
-				float u_upstream_R;
-				if (_state[u].upstream_R != std::numeric_limits<float>::max()) {
-					assert(_state[u].delay != std::numeric_limits<float>::max());
-					u_upstream_R = _state[u].upstream_R;
-					u_delay = _state[u].delay;
-				} else {
-					auto rt_node = route_tree_get_rt_node(*_current_rt, u);
-					assert(rt_node != RouteTree::null_vertex());
-					const auto &u_rt_node_p = get_vertex_props(_current_rt->graph, rt_node);
-					u_upstream_R = u_rt_node_p.upstream_R;
-					u_delay = u_rt_node_p.delay;
-				}
+				//float u_delay;
+				//float u_upstream_R;
+				//if (_state[u].upstream_R != std::numeric_limits<float>::max()) {
+					//assert(_state[u].delay != std::numeric_limits<float>::max());
+					//u_upstream_R = _state[u].upstream_R;
+					//u_delay = _state[u].delay;
+				//} else {
+					//auto rt_node = route_tree_get_rt_node(*_current_rt, u);
+					//assert(rt_node != RouteTree::null_vertex());
+					//const auto &u_rt_node_p = get_vertex_props(_current_rt->graph, rt_node);
+					//u_upstream_R = u_rt_node_p.upstream_R;
+					//u_delay = u_rt_node_p.delay;
+				//}
 
-				const auto &e_p = get_edge_props(_g, node.prev_edge);
+				//const auto &e_p = get_edge_props(_g, node.prev_edge);
 
-				extern struct s_switch_inf *switch_inf;
-				const struct s_switch_inf *sw = &switch_inf[e_p.switch_index];
+				//extern struct s_switch_inf *switch_inf;
+				//const struct s_switch_inf *sw = &switch_inf[e_p.switch_index];
 
-				_state[v].upstream_R = sw->R + v_p.R;
-				if (!sw->buffered)  {
-					_state[v].upstream_R += u_upstream_R;
-				} 
+				//_state[v].upstream_R = sw->R + v_p.R;
+				//if (!sw->buffered)  {
+					//_state[v].upstream_R += u_upstream_R;
+				//} 
 
-				float delay;
-				if (sw->buffered) {
-					delay = sw->Tdel + v_p.C * (sw->R + 0.5 * v_p.R);
-				} else {
-					delay = sw->Tdel + v_p.C * (u_upstream_R + sw->R + 0.5 * v_p.R);
-				}
-				_state[v].delay = u_delay + delay;
-			} else {
-				_state[v].upstream_R = v_p.R;
-				_state[v].delay = v_p.C * 0.5 * v_p.R;
-			}
+				//float delay;
+				//if (sw->buffered) {
+					//delay = sw->Tdel + v_p.C * (sw->R + 0.5 * v_p.R);
+				//} else {
+					//delay = sw->Tdel + v_p.C * (u_upstream_R + sw->R + 0.5 * v_p.R);
+				//}
+				//_state[v].delay = u_delay + delay;
+			//} else {
+				//_state[v].upstream_R = v_p.R;
+				//_state[v].delay = v_p.C * 0.5 * v_p.R;
+			//}
+			_state[node.node] = node.extra;
 
 			if (!_modified_node_added[v]) {
 				_modified_nodes.push_back(v);
@@ -813,7 +814,7 @@ class SpeculativeDeterministicRouter {
 			return true;
 		}
 
-		pair<float, float> get_edge_weight(const RREdge &e)
+		void get_edge_weight(const RREdge &e, float &known_distance, float &distance, extra_route_state_t &extra)
 		{
 #if PROFILE_WAIT_LEVEL >= 1
 			set_context(_e_state, 2);
@@ -829,13 +830,14 @@ class SpeculativeDeterministicRouter {
 			const struct s_switch_inf *sw = &switch_inf[e_p.switch_index];
 
 			assert(_state[u].upstream_R != std::numeric_limits<float>::max());
-			float delay;
+
+			extra.upstream_R = sw->R + v_p.R;
 			if (sw->buffered) {
-				delay = sw->Tdel + v_p.C * (sw->R + 0.5 * v_p.R);
+				extra.delay = sw->Tdel + v_p.C * (sw->R + 0.5 * v_p.R);
 			} else {
-				delay = sw->Tdel + v_p.C * (_state[u].upstream_R + sw->R + 0.5 * v_p.R);
+				extra.upstream_R += _state[u].upstream_R;
+				extra.delay = sw->Tdel + v_p.C * (_state[u].upstream_R + sw->R + 0.5 * v_p.R);
 			}
-			extern t_rr_indexed_data *rr_indexed_data;
 
 			region_t *r = _rr_regions[v];
 
@@ -883,28 +885,27 @@ class SpeculativeDeterministicRouter {
 					//[this] (int id, const region_t *o) -> void { _acquired_regions[id] = true; },
 					//_instance, _g, _congestion, _pres_fac);
 
-			float congestion_cost = rr_indexed_data[v_p.cost_index].base_cost * get_acc_cost(_congestion, v) * get_pres_cost(_congestion, v);
-			float known_cost = _current_sink->criticality_fac * delay + (1 - _current_sink->criticality_fac) * congestion_cost;
+			extern t_rr_indexed_data *rr_indexed_data;
 
-			float upstream_R = sw->R + v_p.R;
-			if (!sw->buffered) {
-				upstream_R += _state[u].upstream_R;
-			}
-			float expected_cost = _astar_fac * get_timing_driven_expected_cost(v_p, get_vertex_props(_g, _current_sink->rr_node), _current_sink->criticality_fac, upstream_R);
+			float congestion_cost = rr_indexed_data[v_p.cost_index].base_cost * get_acc_cost(_congestion, v) * get_pres_cost(_congestion, v);
+
+			known_distance = _current_sink->criticality_fac * extra.delay + (1 - _current_sink->criticality_fac) * congestion_cost;
+
+			float expected_cost = _astar_fac * get_timing_driven_expected_cost(v_p, get_vertex_props(_g, _current_sink->rr_node), _current_sink->criticality_fac, extra.upstream_R);
+
+			distance = known_distance + expected_cost;
 
 			unsigned int xe, xk;
 			//memcpy(&xe, &expected_cost, sizeof (xe));
-			//memcpy(&xk, &known_cost, sizeof (xk));
+			//memcpy(&xk, &known_distance, sizeof (xk));
 
-			zlog_level(delta_log, ROUTER_V3, "\t%d -> %d delay %g congestion %g crit_fac %g known %g %a %X expected %g %a %X predicted %g %a\n", 
-					u, v, delay, congestion_cost, _current_sink->criticality_fac, known_cost, known_cost, xk, expected_cost, expected_cost, xe, known_cost + expected_cost, known_cost + expected_cost);
+			zlog_level(delta_log, ROUTER_V3, "\t%d -> %d delay %g upstream_R %g congestion %g crit_fac %g known %g %a %X expected %g %a %X predicted %g %a\n", 
+					u, v, extra.delay, extra.upstream_R, congestion_cost, _current_sink->criticality_fac, known_distance, known_distance, xk, expected_cost, expected_cost, xe, distance, distance);
 			//zlog_level(delta_log, ROUTER_V3, "\t[u: upstream %g] [edge: d %g R %g] [v: R %g C %g]\n",
 					//_state[u].upstream_R, sw->Tdel, sw->R, v_p.R, v_p.C);
-
-			return make_pair(known_cost, known_cost + expected_cost);
 		}
 
-		void push_node(const heap_node_t<RREdge> &node)
+		void push_node(const heap_node_t<RREdge, extra_route_state_t> &node)
 		{
 #if PROFILE_WAIT_LEVEL >= 1
 			set_context(_e_state, 4);
@@ -1075,8 +1076,8 @@ class SpeculativeDeterministicRouter {
 		//template<typename Graph, typename Edge, typename EdgeWeightFunc, typename Callbacks>
 		//friend void delta_stepping(const Graph &g, const vector<heap_node_t<Edge>> &sources, int sink, float delta, float *known_distance, float *distance, Edge *prev_edge, const EdgeWeightFunc &edge_weight, Callbacks &callbacks);
 
-		template<typename Graph, typename Edge, typename EdgeWeightFunc, typename ExpandCheckFunc, typename Callbacks>
-		friend void dijkstra(const Graph &g, const vector<heap_node_t<Edge>> &sources, int sink, float *known_distance, float *distance, Edge *prev_edge, const ExpandCheckFunc &expand_node, const EdgeWeightFunc &edge_weight, Callbacks &callbacks);
+		template<typename Graph, typename Edge, typename EdgeWeightFunc, typename ExpandCheckFunc, typename Callbacks, typename Extra>
+		friend void dijkstra(const Graph &g, const vector<heap_node_t<Edge, Extra>> &sources, int sink, float *known_distance, float *distance, Edge *prev_edge, const ExpandCheckFunc &expand_node, const EdgeWeightFunc &edge_weight, Callbacks &callbacks);
 
 		//template<typename Edge, typename Callbacks>
 		//friend void relax(Buckets &buckets, float delta, vector<bool> &in_bucket, const vector<bool> &vertex_deleted,
@@ -1196,7 +1197,7 @@ class SpeculativeDeterministicRouter {
 				set_context(_e_state, 7);
 #endif
 
-				vector<heap_node_t<RREdge>> sources;
+				vector<heap_node_t<RREdge, extra_route_state_t>> sources;
 
 #if defined(PROFILE_CLOCK)
 				auto add_to_heap_start = timer::now();
@@ -1227,7 +1228,7 @@ class SpeculativeDeterministicRouter {
 
 							zlog_level(delta_log, ROUTER_V3, "Adding %s back to heap [delay %g upstream_R %g] [kd=%g d=%g prev=%d]\n", buffer, rt_node_p.delay, rt_node_p.upstream_R, kd, d, get_source(_g, prev));
 
-							sources.push_back({ node, kd, d, prev });
+							sources.push_back({ node, kd, d, prev, { rt_node_p.upstream_R, rt_node_p.delay } });
 
 #if !defined(INSTRUMENT) && !defined(PMC)
 							//_e_state->logical_clock->fetch_add(INC_COUNT, std::memory_order_relaxed);
@@ -1254,7 +1255,7 @@ class SpeculativeDeterministicRouter {
 				dijkstra_clock_stat dijkstra_cs;
 				//dijkstra_cs;
 #endif
-				dijkstra(_g, sources, sink->rr_node, _known_distance, _distance, _prev_edge, [this] (int rr_node) -> bool { return expand_node(rr_node); }, [this] (const RREdge &e) -> pair<float, float> { return get_edge_weight(e); }, *this);
+				dijkstra(_g, sources, sink->rr_node, _known_distance, _distance, _prev_edge, [this] (int rr_node) -> bool { return expand_node(rr_node); }, [this] (const RREdge &e, float &known_distance, float &distance, extra_route_state_t &extra) -> void { return get_edge_weight(e, known_distance, distance, extra); }, *this);
 #if defined(PROFILE_CLOCK)
 				dijkstra_cs.time = timer::now()-dijkstra_start;
 				g_dijkstra[_instance].emplace_back(dijkstra_cs);
@@ -2206,9 +2207,47 @@ static void *worker_thread(void *args)
 	return nullptr;
 }
 
-void write_routes(const char *fname, const route_tree_t *route_trees, int num_nets);
-void write_net_dijkstra_stats(const char *fname, const vector<dijkstra_stats_t> &net_stats);
-void write_congestion_state(const char *fname, const congestion_t *congestion, int num_rr_nodes);
+void write_routes(const char *fname, const route_tree_t *route_trees, int num_nets)
+{
+	FILE *routes = fopen(fname, "w");
+
+	for (int i = 0; i < num_nets; ++i) {
+		fprintf(routes, "Net %d\n", i);
+		for (const auto &node : route_tree_get_nodes(route_trees[i])) {
+			const auto &props = get_vertex_props(route_trees[i].graph, node);
+			fprintf(routes, "%d\n", props.rr_node);
+		}
+	}
+
+	fclose(routes);
+}
+
+void write_net_dijkstra_stats(const char *fname, const vector<dijkstra_stats_t> &net_stats)
+{
+	FILE *stats = fopen(fname, "w");
+	int i = 0;
+	for (const auto &s : net_stats) {
+		fprintf(stats, "Net %d\n", i);
+		fprintf(stats, "%d\n", s.num_heap_pops);
+		fprintf(stats, "%d\n", s.num_neighbor_visits);
+		fprintf(stats, "%d\n", s.num_heap_pushes);
+
+		++i;
+	}
+	
+	fclose(stats);
+}
+
+void write_congestion_state(const char *fname, const congestion_t *congestion, int num_rr_nodes)
+{
+	FILE *state = fopen(fname, "w");
+
+	for (int i = 0; i < num_rr_nodes; ++i) {
+		fprintf(state, "%d %d\n", i, congestion[i].occ);
+	}
+	
+	fclose(state);
+}
 
 void print_tabs(int num)
 {

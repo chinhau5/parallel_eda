@@ -39,16 +39,17 @@ bool is_light_edge(const Edge &e, const EdgeWeightFunc &edge_weight, float delta
 	return edge_weight(e).second <= delta;
 }
 
-template<typename Edge>
+template<typename Edge, typename Extra>
 struct heap_node_t {
 	int node;
 	float known_distance;
 	float distance;
 	Edge prev_edge;
+	Extra extra;
 };
 
-template<typename Graph, typename Edge, typename EdgeWeightFunc, typename Callbacks>
-void delta_stepping(const Graph &g, const std::vector<heap_node_t<Edge>> &sources, int sink, float delta, float *known_distance, float *distance, Edge *prev_edge, const EdgeWeightFunc &edge_weight, Callbacks &callbacks)
+template<typename Graph, typename Edge, typename EdgeWeightFunc, typename Callbacks, typename Extra>
+void delta_stepping(const Graph &g, const std::vector<heap_node_t<Edge, Extra>> &sources, int sink, float delta, float *known_distance, float *distance, Edge *prev_edge, const EdgeWeightFunc &edge_weight, Callbacks &callbacks)
 {
 	Buckets buckets;
 	std::vector<bool> in_bucket(num_vertices(g), false);

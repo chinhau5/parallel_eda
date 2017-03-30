@@ -1,16 +1,16 @@
 #ifndef DIJKSTRA_H
 #define DIJKSTRA_H
 
-template<typename Edge>
-bool operator<(const heap_node_t<Edge> &a, const heap_node_t<Edge> &b)
+template<typename Edge, typename Extra>
+bool operator<(const heap_node_t<Edge, Extra> &a, const heap_node_t<Edge, Extra> &b)
 {
 	return a.distance > b.distance;
 }
 
-template<typename Graph, typename Edge, typename EdgeWeightFunc, typename ExpandCheckFunc, typename Callbacks>
-void dijkstra(const Graph &g, const std::vector<heap_node_t<Edge>> &sources, int sink, float *known_distance, float *distance, Edge *prev_edge, const ExpandCheckFunc &expand_node, const EdgeWeightFunc &edge_weight, Callbacks &callbacks)
+template<typename Graph, typename Edge, typename EdgeWeightFunc, typename ExpandCheckFunc, typename Callbacks, typename Extra>
+void dijkstra(const Graph &g, const std::vector<heap_node_t<Edge, Extra>> &sources, int sink, float *known_distance, float *distance, Edge *prev_edge, const ExpandCheckFunc &expand_node, const EdgeWeightFunc &edge_weight, Callbacks &callbacks)
 {
-	using Item = heap_node_t<Edge>;
+	using Item = heap_node_t<Edge, Extra>;
 	std::priority_queue<Item> heap;
 
 	for (const auto &s : sources) {
@@ -72,14 +72,22 @@ void dijkstra(const Graph &g, const std::vector<heap_node_t<Edge>> &sources, int
 				//zlog_level(delta_log, ROUTER_V3, "\tNeighbor: %d\n", v);
 
 				if (expand_node(v)) {
-					const auto &weight = edge_weight(e);
-					float kd = known_distance[item.node] + weight.first;
-					float d = known_distance[item.node] + weight.second;
+					float new_known_distance;
+					float new_distance;
+
+					Item new_node;
+
+					edge_weight(e, new_known_distance, new_distance, new_node.extra);
+
+					new_node.node = v;
+					new_node.known_distance = known_distance[item.node] + new_known_distance;
+					new_node.distance = known_distance[item.node] + new_distance;
+					new_node.prev_edge = e;
 
 					//zlog_level(delta_log, ROUTER_V3, "\t[w1 %X w2 %X] [kd=%X okd=%X] [d=%X od=%X] [kd=%g okd=%g] [d=%g od=%g]\n",
 					//*(unsigned int *)&weight.first, *(unsigned int *)&weight.second, *(unsigned int *)&kd, *(unsigned int *)&known_distance[v], *(unsigned int *)&d, *(unsigned int *)&distance[v], kd, known_distance[v], d, distance[v]);
 
-					if (kd < known_distance[v] && d < distance[v]) {
+					if (new_node.known_distance < known_distance[v] && new_node.distance < distance[v]) {
 						//assert(kd <= known_distance[v]);
 						//zlog_level(delta_log, ROUTER_V3, "\tPushing neighbor %d [pkd %g %a pd %g %a][edge k %g %a p %g %a][kd %g %a d %g %a] to heap\n",
 								//v,
@@ -88,7 +96,6 @@ void dijkstra(const Graph &g, const std::vector<heap_node_t<Edge>> &sources, int
 								//weight.first, weight.first, weight.second, weight.second,
 								//kd, kd, d, d);
 
-						Item new_node { v, kd, d, e };
 
 						callbacks.push_node(new_node);
 
