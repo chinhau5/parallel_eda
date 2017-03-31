@@ -590,7 +590,7 @@ float get_timing_driven_expected_cost_new(const rr_node_property_t &current, con
 	}
 }
 
-float get_timing_driven_expected_cost(const rr_node_property_t &current, const rr_node_property_t &target, float criticality_fac, float R_upstream)
+float get_timing_driven_expected_cost(const rr_node_property_t &current, const rr_node_property_t &target, float criticality_fac, float R_upstream, int *same, int *ortho)
 {
 
 	/* Determines the expected cost (due to both delay and resouce cost) to reach *
@@ -635,6 +635,13 @@ float get_timing_driven_expected_cost(const rr_node_property_t &current, const r
 
 		expected_cost = criticality_fac * Tdel
 				+ (1. - criticality_fac) * cong_cost;
+
+		if (same) {
+			*same = num_segs_same_dir;
+		}
+		if (ortho) {
+			*ortho = num_segs_ortho_dir;
+		}
 		return (expected_cost);
 	}
 

@@ -8,7 +8,7 @@
 bool operator<(const route_state_t &a, const route_state_t &b);
 
 float get_timing_driven_expected_cost(const rr_node_property_t &current, const rr_node_property_t &target,
-		float criticality_fac, float R_upstream);
+		float criticality_fac, float R_upstream, int *same = nullptr, int *ortho = nullptr);
 
 float analyze_timing(t_net_timing *net_timing);
 

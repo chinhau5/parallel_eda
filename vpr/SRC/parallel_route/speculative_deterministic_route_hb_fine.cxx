@@ -755,9 +755,9 @@ class SpeculativeDeterministicRouter {
 			//}
 			_state[node.node] = node.extra;
 
-			if (!_modified_node_added[v]) {
-				_modified_nodes.push_back(v);
-				_modified_node_added[v] = true;
+			if (!_modified_node_added[node.node]) {
+				_modified_nodes.push_back(node.node);
+				_modified_node_added[node.node] = true;
 			}
 		}
 
@@ -831,13 +831,19 @@ class SpeculativeDeterministicRouter {
 
 			assert(_state[u].upstream_R != std::numeric_limits<float>::max());
 
-			extra.upstream_R = sw->R + v_p.R;
+			float delay;
 			if (sw->buffered) {
-				extra.delay = sw->Tdel + v_p.C * (sw->R + 0.5 * v_p.R);
+				delay = sw->Tdel + v_p.C * (sw->R + 0.5 * v_p.R);
 			} else {
-				extra.upstream_R += _state[u].upstream_R;
-				extra.delay = sw->Tdel + v_p.C * (_state[u].upstream_R + sw->R + 0.5 * v_p.R);
+				delay = sw->Tdel + v_p.C * (_state[u].upstream_R + sw->R + 0.5 * v_p.R);
 			}
+			assert(_state[u].delay != std::numeric_limits<float>::max());
+			extra.delay = _state[u].delay + delay; 
+
+			extra.upstream_R = sw->R + v_p.R;
+			if (!sw->buffered) {
+				extra.upstream_R += _state[u].upstream_R;
+			} 
 
 			region_t *r = _rr_regions[v];
 
@@ -889,7 +895,7 @@ class SpeculativeDeterministicRouter {
 
 			float congestion_cost = rr_indexed_data[v_p.cost_index].base_cost * get_acc_cost(_congestion, v) * get_pres_cost(_congestion, v);
 
-			known_distance = _current_sink->criticality_fac * extra.delay + (1 - _current_sink->criticality_fac) * congestion_cost;
+			known_distance = _current_sink->criticality_fac * delay + (1 - _current_sink->criticality_fac) * congestion_cost;
 
 			float expected_cost = _astar_fac * get_timing_driven_expected_cost(v_p, get_vertex_props(_g, _current_sink->rr_node), _current_sink->criticality_fac, extra.upstream_R);
 
@@ -900,7 +906,7 @@ class SpeculativeDeterministicRouter {
 			//memcpy(&xk, &known_distance, sizeof (xk));
 
 			zlog_level(delta_log, ROUTER_V3, "\t%d -> %d delay %g upstream_R %g congestion %g crit_fac %g known %g %a %X expected %g %a %X predicted %g %a\n", 
-					u, v, extra.delay, extra.upstream_R, congestion_cost, _current_sink->criticality_fac, known_distance, known_distance, xk, expected_cost, expected_cost, xe, distance, distance);
+					u, v, delay, extra.upstream_R, congestion_cost, _current_sink->criticality_fac, known_distance, known_distance, xk, expected_cost, expected_cost, xe, distance, distance);
 			//zlog_level(delta_log, ROUTER_V3, "\t[u: upstream %g] [edge: d %g R %g] [v: R %g C %g]\n",
 					//_state[u].upstream_R, sw->Tdel, sw->R, v_p.R, v_p.C);
 		}
