@@ -111,6 +111,9 @@ void init_graph(RRGraph &g)
 		v.cost_index = rr_node[i].cost_index;
 		v.capacity = rr_node[i].capacity;
 
+		int num_matches = 0;
+		int pin_height;
+
 		switch (rr_node[i].type) {
 			case CHANX:
 			case CHANY:
@@ -128,7 +131,15 @@ void init_graph(RRGraph &g)
 			case IPIN:
 			case OPIN:
 				v.real_xlow = rr_node[i].xlow;
-				v.real_ylow = rr_node[i].ylow + tile->type->pin_height[rr_node[i].ptc_num];
+				pin_height = tile->type->pin_height[rr_node[i].ptc_num];
+				v.real_ylow = rr_node[i].ylow + pin_height;
+				//for (int side = 0; side < 4; ++side) {
+					//if (tile->type->pinloc[pin_height][side][rr_node[i].ptc_num] == 1) {
+						//++num_matches;
+					//}
+				//}
+				//printf("here\n");
+				//assert(num_matches == 1);
 				v.real_xhigh = rr_node[i].xhigh;
 				v.real_yhigh = v.real_ylow;
 

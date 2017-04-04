@@ -464,6 +464,9 @@ static int get_expected_segs_to_target(const rr_node_property_t &current, const 
 	ortho_inv_length = rr_indexed_data[ortho_cost_index].inv_length;
 	rr_type = current.type;
 
+	zlog_level(delta_log, ROUTER_V3, "\t[inv %g ortho_inv %g] [Target xlow %d ylow %d real_xlow %d real_ylow %d] ", inv_length, ortho_inv_length, target.xlow, target.ylow,
+			target.real_xlow, target.real_ylow);
+
 	if (rr_type == CHANX) {
 		ylow = current.ylow;
 		xhigh = current.xhigh;
@@ -475,13 +478,16 @@ static int get_expected_segs_to_target(const rr_node_property_t &current, const 
 			*num_segs_ortho_dir_ptr =
 					(int)(ROUND_UP((ylow - target_y + 1.) * ortho_inv_length));
 			no_need_to_pass_by_clb = 1;
+			zlog_level(delta_log, ROUTER_V3, "[ylow > target_y] ");
 		} else if (ylow < target_y - 1) { /* Below the CLB bottom? */
 			*num_segs_ortho_dir_ptr = (int)(ROUND_UP((target_y - ylow) *
 					ortho_inv_length));
 			no_need_to_pass_by_clb = 1;
+			zlog_level(delta_log, ROUTER_V3, "[ylow < target_y-1] ");
 		} else { /* In a row that passes by target CLB */
 			*num_segs_ortho_dir_ptr = 0;
 			no_need_to_pass_by_clb = 0;
+			zlog_level(delta_log, ROUTER_V3, "[same row] ");
 		}
 
 		/* Now count horizontal (same dir. as inode) segs. */
@@ -489,11 +495,14 @@ static int get_expected_segs_to_target(const rr_node_property_t &current, const 
 		if (xlow > target_x + no_need_to_pass_by_clb) {
 			num_segs_same_dir = (int)(ROUND_UP((xlow - no_need_to_pass_by_clb -
 							target_x) * inv_length));
+			zlog_level(delta_log, ROUTER_V3, "[xlow > target_x] ");
 		} else if (xhigh < target_x - no_need_to_pass_by_clb) {
 			num_segs_same_dir = (int)(ROUND_UP((target_x - no_need_to_pass_by_clb -
 							xhigh) * inv_length));
+			zlog_level(delta_log, ROUTER_V3, "[xhigh < target_x] ");
 		} else {
 			num_segs_same_dir = 0;
+			zlog_level(delta_log, ROUTER_V3, "[same column] ");
 		}
 	}
 
@@ -508,13 +517,16 @@ static int get_expected_segs_to_target(const rr_node_property_t &current, const 
 			*num_segs_ortho_dir_ptr = (int)(
 					ROUND_UP((xlow - target_x + 1.) * ortho_inv_length));
 			no_need_to_pass_by_clb = 1;
+			zlog_level(delta_log, ROUTER_V3, "[xlow > target_x] ");
 		} else if (xlow < target_x - 1) { /* Left of and not adjacent to the CLB? */
 			*num_segs_ortho_dir_ptr = (int)(ROUND_UP((target_x - xlow) *
 					ortho_inv_length));
 			no_need_to_pass_by_clb = 1;
+			zlog_level(delta_log, ROUTER_V3, "[xlow < target_x-1] ");
 		} else { /* In a column that passes by target CLB */
 			*num_segs_ortho_dir_ptr = 0;
 			no_need_to_pass_by_clb = 0;
+			zlog_level(delta_log, ROUTER_V3, "[same column] ");
 		}
 
 		/* Now count vertical (same dir. as inode) segs. */
@@ -522,13 +534,18 @@ static int get_expected_segs_to_target(const rr_node_property_t &current, const 
 		if (ylow > target_y + no_need_to_pass_by_clb) {
 			num_segs_same_dir = (int)(ROUND_UP((ylow - no_need_to_pass_by_clb -
 							target_y) * inv_length));
+			zlog_level(delta_log, ROUTER_V3, "[ylow > target_y] ");
 		} else if (yhigh < target_y - no_need_to_pass_by_clb) {
 			num_segs_same_dir = (int)(ROUND_UP((target_y - no_need_to_pass_by_clb -
 							yhigh) * inv_length));
+			zlog_level(delta_log, ROUTER_V3, "[yhigh < target_y] ");
 		} else {
 			num_segs_same_dir = 0;
+			zlog_level(delta_log, ROUTER_V3, "[same row] ");
 		}
 	}
+	
+	zlog_level(delta_log, ROUTER_V3, "\n");
 
 	return (num_segs_same_dir);
 }

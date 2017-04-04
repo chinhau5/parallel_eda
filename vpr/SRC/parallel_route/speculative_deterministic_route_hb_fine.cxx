@@ -36,7 +36,7 @@ using std::chrono::nanoseconds;
 //#define TEST
 #define WRITE_NO_WAIT
 //#define PROFILE_CLOCK
-#define PARTITIONER 1
+//#define PARTITIONER 1
 
 #define OVER_FMT    "handler(%d ) Overflow at %p! bit=%#llx \n"
 #define ERROR_RETURN(retval) { fprintf(stderr, "Error %d %s:line %d: \n", retval,__FILE__,__LINE__);  assert(false); }
@@ -44,6 +44,9 @@ using std::chrono::nanoseconds;
 //#define PTHREAD_BARRIER
 
 typedef struct extra_route_state_t {
+	int same;
+	int ortho;
+	bool existing;
 	float upstream_R;
 	float delay;
 } extra_route_state_t;
@@ -679,8 +682,8 @@ class SpeculativeDeterministicRouter {
 #endif
 			char buffer[256];
 			sprintf_rr_node(node.node, buffer);
-			zlog_level(delta_log, ROUTER_V3, "Current: %s [kd=%g %a okd=%g %a] [d=%g %a od=%g %a] prev=%d\n",
-					buffer,
+			zlog_level(delta_log, ROUTER_V3, "Current: %s Existing: %d [same %d ortho %d] [kd: %g %a okd: %g %a] [d: %g %a od: %g %a] prev: %d\n",
+					buffer, node.extra.existing, node.extra.same, node.extra.ortho,
 					node.known_distance, node.known_distance,
 					_known_distance[node.node], _known_distance[node.node],
 					node.distance, node.distance,
@@ -845,6 +848,8 @@ class SpeculativeDeterministicRouter {
 				extra.upstream_R += _state[u].upstream_R;
 			} 
 
+			extra.existing = false;
+
 			region_t *r = _rr_regions[v];
 
 			if (!r) {
@@ -897,7 +902,7 @@ class SpeculativeDeterministicRouter {
 
 			known_distance = _current_sink->criticality_fac * delay + (1 - _current_sink->criticality_fac) * congestion_cost;
 
-			float expected_cost = _astar_fac * get_timing_driven_expected_cost(v_p, get_vertex_props(_g, _current_sink->rr_node), _current_sink->criticality_fac, extra.upstream_R);
+			float expected_cost = _astar_fac * get_timing_driven_expected_cost(v_p, get_vertex_props(_g, _current_sink->rr_node), _current_sink->criticality_fac, extra.upstream_R, &extra.same, &extra.ortho);
 
 			distance = known_distance + expected_cost;
 
@@ -905,8 +910,8 @@ class SpeculativeDeterministicRouter {
 			//memcpy(&xe, &expected_cost, sizeof (xe));
 			//memcpy(&xk, &known_distance, sizeof (xk));
 
-			zlog_level(delta_log, ROUTER_V3, "\t%d -> %d delay %g upstream_R %g congestion %g crit_fac %g known %g %a %X expected %g %a %X predicted %g %a\n", 
-					u, v, delay, extra.upstream_R, congestion_cost, _current_sink->criticality_fac, known_distance, known_distance, xk, expected_cost, expected_cost, xe, distance, distance);
+			zlog_level(delta_log, ROUTER_V3, "\t%d -> %d delay %g upstream_R %g congestion %g crit_fac %g known %g %a %X expected %g %a %X same %d ortho %d predicted %g %a\n", 
+					u, v, delay, extra.upstream_R, congestion_cost, _current_sink->criticality_fac, known_distance, known_distance, xk, expected_cost, expected_cost, xe, extra.same, extra.ortho, distance, distance);
 			//zlog_level(delta_log, ROUTER_V3, "\t[u: upstream %g] [edge: d %g R %g] [v: R %g C %g]\n",
 					//_state[u].upstream_R, sw->Tdel, sw->R, v_p.R, v_p.C);
 		}
@@ -1195,8 +1200,10 @@ class SpeculativeDeterministicRouter {
 
 				sprintf_rr_node(sink->rr_node, buffer);
 				//zlog_level(delta_log, ROUTER_V3, "Current sink: %s BB %d->%d, %d->%d\n", buffer, sink->current_bounding_box.xmin, sink->current_bounding_box.xmax, sink->current_bounding_box.ymin, sink->current_bounding_box.ymax);
-				zlog_level(delta_log, ROUTER_V3, "Current sink: %s BB %d->%d,%d->%d\n",
-						buffer, 
+				const auto &sink_props = get_vertex_props(_g, sink->rr_node);
+				//assert(sink_props.real_xlow == sink_props.real_xhigh && sink_props.real_ylow == sink_props.real_yhigh);
+				zlog_level(delta_log, ROUTER_V3, "Current sink: %s [real %d %d] BB %d->%d,%d->%d\n",
+						buffer, sink_props.real_xlow, sink_props.real_ylow,
 						sink->current_bounding_box.xmin, sink->current_bounding_box.xmax, sink->current_bounding_box.ymin, sink->current_bounding_box.ymax);
 
 #if PROFILE_WAIT_LEVEL >= 1
@@ -1224,17 +1231,19 @@ class SpeculativeDeterministicRouter {
 						if (!inside_bb(node_p, _current_sink->bounding_box)) {
 							zlog_level(delta_log, ROUTER_V3, "Existing %s out of bounding box\n", buffer);
 						} else {
+							int same, ortho;
+							
 							float kd = sink->criticality_fac * rt_node_p.delay; 
-							float d = kd + _astar_fac * get_timing_driven_expected_cost(node_p, get_vertex_props(_g, sink->rr_node), sink->criticality_fac, rt_node_p.upstream_R); 
+							float d = kd + _astar_fac * get_timing_driven_expected_cost(node_p, sink_props, sink->criticality_fac, rt_node_p.upstream_R, &same, &ortho); 
 
 							RREdge prev = RRGraph::null_edge();
 							if (valid(rt_node_p.rt_edge_to_parent)) {
 								prev = get_edge_props(rt.graph, rt_node_p.rt_edge_to_parent).rr_edge;
 							}
 
-							zlog_level(delta_log, ROUTER_V3, "Adding %s back to heap [delay %g upstream_R %g] [kd=%g d=%g prev=%d]\n", buffer, rt_node_p.delay, rt_node_p.upstream_R, kd, d, get_source(_g, prev));
+							zlog_level(delta_log, ROUTER_V3, "Adding %s back to heap [same %d ortho %d] [delay %g upstream_R %g] [kd: %g d: %g prev: %d]\n", buffer, same, ortho, rt_node_p.delay, rt_node_p.upstream_R, kd, d, get_source(_g, prev));
 
-							sources.push_back({ node, kd, d, prev, { rt_node_p.upstream_R, rt_node_p.delay } });
+							sources.push_back({ node, kd, d, prev, { same, ortho, true, rt_node_p.upstream_R, rt_node_p.delay } });
 
 #if !defined(INSTRUMENT) && !defined(PMC)
 							//_e_state->logical_clock->fetch_add(INC_COUNT, std::memory_order_relaxed);
@@ -2262,6 +2271,563 @@ void print_tabs(int num)
 	}
 }
 
+void split_edges_lb(const std::vector<std::pair<int, net_t *>> &edges,
+		int opt_cut, bool horizontal,
+		std::vector<std::pair<int, net_t *>> &left, std::vector<std::pair<int, net_t *>> &right)
+{
+	for (const auto &edge : edges) {
+		const auto &box = edge.second->bounding_box;
+
+		int low;
+		int high;
+
+		if (horizontal) {
+			low = bg::get<bg::min_corner, 1>(box);
+			high = bg::get<bg::max_corner, 1>(box);
+		} else {
+			low = bg::get<bg::min_corner, 0>(box);
+			high = bg::get<bg::max_corner, 0>(box);
+		}
+
+		assert(low < high);
+
+		//printf("horizontal %d edge %d low %d high %d\n", horizontal, edge.first, low, high);
+		//assert((edge.first == low && edge.first != high) || (edge.first != low && edge.first == high));
+
+		if (high <= opt_cut) {
+			left.push_back(edge);
+		} else if (low > opt_cut) {
+			right.push_back(edge);
+		} else {
+			assert(low <= opt_cut && high > opt_cut);
+			//assert((low < opt_cut && high >= opt_cut) || );
+		}
+	}
+}
+
+template<typename Load, typename Edge>
+void bar2(const std::vector<net_t *> &nets, const Edge &edge, const Load &load, vector<vector<net_t *>> &sorted_nets, vector<int> &num_nets, vector<float> &loads)
+{
+	//int cut = -1;
+	//int total_num_nets = 0;
+	//for (int i = 0; i < sorted.size(); ++i) {
+		//if (cut == -1 || cut != sorted[i].first) {
+			//cut = sorted[i].first;
+			//assert(cut >= 0 && cut < num_nets.size());
+			//num_nets[cut] = total_num_nets;
+		//} else {
+			//assert(cut == sorted[i].first);
+		//} 
+
+		//++num_nets[cut];
+		//++total_num_nets;
+	//}
+	//assert(total_num_nets == sorted.size());
+	assert(sorted_nets.size() == num_nets.size());
+	assert(num_nets.size() == loads.size());
+
+	for (int i = 0; i < nets.size(); ++i) {
+		int cut = edge(nets[i]);
+
+		assert(cut >= 0 && cut < sorted_nets.size());
+
+		sorted_nets[cut].push_back(nets[i]);
+
+		++num_nets[cut];
+		loads[cut] += load(nets[i]);
+	}
+}
+
+template<typename T>
+void acc_left(vector<T> &items)
+{
+	T sum = items.front();
+	for (int i = 1; i < items.size(); ++i) {
+		items[i] += sum;
+		sum = items[i];
+	}
+}
+
+template<typename T>
+void acc_right(vector<T> &items)
+{
+	T sum = items.back();
+	for (int i = items.size()-2; i >= 0; --i) {
+		items[i] += sum;
+		sum = items[i];
+	}
+}
+
+template<int Axis, typename Load>
+void foo2(const std::vector<net_t *> &nets, const Load &load,
+		int num_all_nets, const pair<int, int> &bounds,
+		int &opt_cut, float &min_diff,
+		vector<net_t *> &left_nets, vector<net_t *> &right_nets, vector<net_t *> &middle_nets)
+{
+	assert(bounds.second > bounds.first);
+
+	vector<vector<net_t *>> sorted_end(bounds.second+1);
+	vector<int> num_left_nets(bounds.second+1, 0);
+	vector<float> left_loads(bounds.second+1, 0);
+	bar2(nets, [] (const net_t *net) -> int {
+			return bg::get<bg::max_corner, Axis>(net->bounding_box);
+			}, load,
+			sorted_end, num_left_nets, left_loads);
+
+	acc_left(num_left_nets);
+	acc_left(left_loads);
+
+	assert(num_left_nets.back() == nets.size());
+
+	printf("bounds: %d %d\n", bounds.first, bounds.second);
+
+	printf("all left: ");
+	for (int i = bounds.first; i < bounds.second+1; ++i) {
+		if (i % 8 == 0) {
+			printf("\n");
+		}
+		printf("%d ", num_left_nets[i]);
+	}
+	printf("\n");
+
+	vector<vector<net_t *>> sorted_start(bounds.second+1);
+	vector<int> num_right_nets(bounds.second+1, 0);
+	vector<float> right_loads(bounds.second+1, 0);
+	bar2(nets, [] (const net_t *net) -> int {
+			return bg::get<bg::min_corner, Axis>(net->bounding_box);
+			}, load,
+			sorted_start, num_right_nets, right_loads);
+
+	acc_right(num_right_nets);
+	acc_right(right_loads);
+
+	assert(num_right_nets.front() == nets.size());
+
+	//for (int i = num_grid_points-2; i >= 0; --i) {
+		//if (num_right_nets[i] == 0) {
+			//num_right_nets[i] = num_right_nets[i+1];
+		//}
+	//}
+
+	printf("all right: ");
+	for (int i = bounds.first; i < bounds.second+1; ++i) {
+		if (i % 8 == 0) {
+			printf("\n");
+		}
+		printf("%d ", num_right_nets[i]);
+	}
+	printf("\n");
+
+	for (int cut = bounds.first; cut < bounds.second+1; ++cut) {
+		//printf("cut %d\n", cut);
+
+		vector<bool> added(num_all_nets, false);
+
+		int num_left = 0;
+		//printf("num_left %d\n", num_left);
+		for (int i = 0; i <= cut; ++i) {
+			for (int j = 0; j < sorted_end[i].size(); ++j) {
+				assert((cut >= bg::get<bg::min_corner, Axis>(sorted_end[i][j]->bounding_box)));
+				assert((cut >= bg::get<bg::max_corner, Axis>(sorted_end[i][j]->bounding_box)));
+
+				int id = sorted_end[i][j]->local_id;
+
+				assert(!added[id]);
+				added[id] = true;
+
+				++num_left;
+
+				//printf("left net %d, %d %d\n", id, bg::get<bg::min_corner, 0>(sorted_end[i].second->bounding_box),
+				//bg::get<bg::max_corner, 0>(sorted_end[i].second->bounding_box));
+			}
+		}
+		assert(num_left == num_left_nets[cut]);
+
+		int num_right = 0;
+		if (cut + 1 < bounds.second+1) {
+			for (int i = cut+1; i < bounds.second+1; ++i) {
+				for (int j = 0; j < sorted_start[i].size(); ++j) {
+					assert((cut < bg::get<bg::min_corner, Axis>(sorted_start[i][j]->bounding_box)));
+					assert((cut < bg::get<bg::max_corner, Axis>(sorted_start[i][j]->bounding_box)));
+
+					int id = sorted_start[i][j]->local_id;
+
+					assert(!added[id]);
+					added[id] = true;
+
+					++num_right;
+					//printf("right net %d, %d %d\n", id, bg::get<bg::min_corner, 0>(sorted_start[i].second->bounding_box),
+					//bg::get<bg::max_corner, 0>(sorted_start[i].second->bounding_box));
+				}
+			}
+			assert(num_right == num_right_nets[cut+1]);
+		}
+		//printf("num_right %d\n", num_right);
+
+		int num_cross_nets = 0;
+		for (int i = 0; i < nets.size(); ++i) {
+			int id = nets[i]->local_id;
+
+			if (!added[id]) {
+				//printf("cross net %d, %d %d\n", id, bg::get<bg::min_corner, 0>(sorted_start[i].second->bounding_box),
+						//bg::get<bg::max_corner, 0>(sorted_start[i].second->bounding_box));
+
+				assert((cut >= bg::get<bg::min_corner, Axis>(nets[i]->bounding_box)));
+				assert((cut <= bg::get<bg::max_corner, Axis>(nets[i]->bounding_box)));
+
+				++num_cross_nets;
+			}
+		}
+
+		printf("cut %d num left/right/cross/total nets: %d/%d/%d/%lu\n",
+				cut,
+				num_left, num_right, num_cross_nets, nets.size());
+		assert(num_left + num_right + num_cross_nets == nets.size());
+		printf("\tleft/right loads %g/%g\n",
+				left_loads[cut], cut+1 < bounds.second+1 ? right_loads[cut+1] : 0);
+	}
+
+
+	min_diff = std::numeric_limits<float>::max();
+	opt_cut = -1;
+	for (int cut = bounds.first; cut < bounds.second+1; ++cut) {
+		float diff = abs(left_loads[cut] - right_loads[cut+1]);
+		if (diff < min_diff) {
+			opt_cut = cut;
+			min_diff = diff;
+		}
+	}
+	assert(opt_cut != -1);
+	assert(opt_cut + 1 <= bounds.second);
+
+	vector<bool> added(num_all_nets, false);
+	for (int i = 0; i <= opt_cut; ++i) {
+		for (int j = 0; j < sorted_end[i].size(); ++j) {
+			int id = sorted_end[i][j]->local_id;
+
+			assert(!added[id]);
+			added[id] = true;
+
+			left_nets.push_back(sorted_end[i][j]);
+
+			//printf("left net %d, %d %d\n", id, bg::get<bg::min_corner, 0>(sorted_end[i].second->bounding_box),
+			//bg::get<bg::max_corner, 0>(sorted_end[i].second->bounding_box));
+		}
+	}
+	assert(num_left_nets[opt_cut] == left_nets.size());
+
+	for (int i = opt_cut+1; i < bounds.second+1; ++i) {
+		for (int j = 0; j < sorted_start[i].size(); ++j) {
+
+			int id = sorted_start[i][j]->local_id;
+
+			assert(!added[id]);
+			added[id] = true;
+
+			right_nets.push_back(sorted_start[i][j]);
+
+			//printf("right net %d, %d %d\n", id, bg::get<bg::min_corner, 0>(sorted_start[i].second->bounding_box),
+			//bg::get<bg::max_corner, 0>(sorted_start[i].second->bounding_box));
+		}
+	}
+	assert(num_right_nets[opt_cut+1] == right_nets.size());
+
+	for (int i = 0; i < nets.size(); ++i) {
+		int id = nets[i]->local_id;
+
+		if (!added[id]) {
+			middle_nets.push_back(nets[i]);
+		}
+	}
+
+	assert(left_nets.size() + right_nets.size() + middle_nets.size() == nets.size());
+}
+
+void bar(const std::vector<std::pair<int, net_t *>> &sorted, int cut, int type,
+		int &cur, int &num_added, vector<net_t *> &nets, vector<bool> &added)
+{
+	num_added = 0;
+	for (cur = 0; cur < sorted.size() && sorted[cur].first <= cut; ++cur) {
+		int id = sorted[cur].second->local_id;
+
+		if (type == 1) {
+			printf("left net %d, %d %d\n", id, bg::get<bg::min_corner, 0>(sorted[cur].second->bounding_box),
+					bg::get<bg::max_corner, 0>(sorted[cur].second->bounding_box));
+		} else if (type == 2) {
+			printf("cross net %d, %d %d\n", id, bg::get<bg::min_corner, 0>(sorted[cur].second->bounding_box),
+					bg::get<bg::max_corner, 0>(sorted[cur].second->bounding_box));
+		}
+
+		assert(!added[id]);
+
+		nets.push_back(sorted[cur].second);
+		added[id] = true;
+
+		++num_added;
+	}
+}
+
+void bar_right(const std::vector<std::pair<int, net_t *>> &sorted, int cut, int type,
+		int &cur, int &num_added, vector<net_t *> &nets, vector<bool> &added)
+{
+	num_added = 0;
+	for (cur = 0; cur < sorted.size() && sorted[cur].first <= cut; ++cur) {
+		int id = sorted[cur].second->local_id;
+
+		if (type == 1) {
+			printf("left net %d, %d %d\n", id, bg::get<bg::min_corner, 0>(sorted[cur].second->bounding_box),
+					bg::get<bg::max_corner, 0>(sorted[cur].second->bounding_box));
+		} else if (type == 2) {
+			printf("cross net %d, %d %d\n", id, bg::get<bg::min_corner, 0>(sorted[cur].second->bounding_box),
+					bg::get<bg::max_corner, 0>(sorted[cur].second->bounding_box));
+		}
+
+		assert(!added[id]);
+
+		nets.push_back(sorted[cur].second);
+		added[id] = true;
+
+		++num_added;
+	}
+}
+
+void foo(const std::vector<std::pair<int, net_t *>> &sorted_start, const std::vector<std::pair<int, net_t *>> &sorted_end,
+		int num_all_nets,
+		int num_grid_points
+	   	)
+{
+	vector<int> num_left_nets(num_grid_points, 0);
+	vector<int> num_right_nets(num_grid_points, 0);
+
+	assert(sorted_start.size() == sorted_end.size());
+
+	int cur_sorted_end = 0;
+	int cur_sorted_start = 0;
+
+	for (int cut = 0; cut < num_grid_points; ++cut) {
+		vector<net_t *> left_nets;
+		/* cross net can change back to left net so we need per 'cut' vector */
+		vector<net_t *> right_nets;
+		vector<bool> added(num_all_nets, false);
+
+		printf("point %d\n", cut);
+
+		bar(sorted_end, cut, 1,
+				cur_sorted_end, num_left_nets[cut], left_nets, added);
+		printf("num left nets %lu\n", left_nets.size());
+		bar(sorted_start, cut, 2,
+				cur_sorted_start, num_right_nets[cut], right_nets, added);
+		printf("num right nets %lu\n", right_nets.size());
+
+		for (const auto &net : left_nets) {
+			assert((cut >= bg::get<bg::min_corner, 0>(net->bounding_box)));
+			assert((cut >= bg::get<bg::max_corner, 0>(net->bounding_box)));
+		}
+		for (const auto &net : right_nets) {
+			assert((cut < bg::get<bg::min_corner, 0>(net->bounding_box)));
+			assert((cut < bg::get<bg::max_corner, 0>(net->bounding_box)));
+		}
+		int num_cross_nets = 0;
+		for (int i = 0; i < sorted_start.size(); ++i) {
+			int id = sorted_start[i].second->local_id;
+			if (!added[id]) {
+				printf("cross net %d, %d %d\n", id, bg::get<bg::min_corner, 0>(sorted_start[i].second->bounding_box),
+						bg::get<bg::max_corner, 0>(sorted_start[i].second->bounding_box));
+
+				assert((cut >= bg::get<bg::min_corner, 0>(sorted_start[i].second->bounding_box)));
+				assert((cut <= bg::get<bg::max_corner, 0>(sorted_start[i].second->bounding_box)));
+
+				++num_cross_nets;
+			}
+		}
+		printf("num cross nets: %d\n", num_cross_nets);
+		printf("num nets: %lu\n", sorted_start.size());
+		assert(left_nets.size() + right_nets.size() + num_cross_nets == sorted_start.size());
+	}
+}
+
+template<typename Load>
+void max_independent_rectangles_internal_lb(
+		const std::vector<net_t *> &nets, const Load &load,
+		int num_all_nets, const box &bb, int level, bool horizontal,
+		fpga_tree_node_t *node)
+{
+	printf("level %d\n", level);
+
+	if (level > 0) {
+		//int prev = -1;
+		//for (const auto &e : ver_start) {
+			//assert(e.first >= prev);
+			//prev = e.first;
+		//}
+		//prev = -1;
+		//for (const auto &e : ver) {
+			//assert(e.first >= prev);
+			//prev = e.first;
+		//}
+
+		//for (const auto &ver_e : ver_edges) {
+			//PRINT("ver edge %d box %X\n", ver_e.first, ver_e.second);
+		//}
+		
+		int opt_cut;
+		float min_diff;
+
+		vector<net_t *> left_nets;
+		vector<net_t *> right_nets;
+
+		if (horizontal) {
+			foo2<1>(nets, load,
+					num_all_nets, make_pair(bg::get<bg::min_corner, 1>(bb), bg::get<bg::max_corner, 1>(bb)),
+					opt_cut, min_diff,
+					left_nets, right_nets, node->nets);
+		} else {
+			foo2<0>(nets, load,
+					num_all_nets, make_pair(bg::get<bg::min_corner, 0>(bb), bg::get<bg::max_corner, 0>(bb)),
+					opt_cut, min_diff,
+					left_nets, right_nets, node->nets);
+		}
+		
+		box left_box, right_box;
+		if (horizontal) {
+			assert((opt_cut > bg::get<bg::min_corner, 1>(bb) && opt_cut < bg::get<bg::max_corner, 1>(bb)));
+
+			bg::set<bg::min_corner, 0>(left_box, bg::get<bg::min_corner, 0>(bb));
+			bg::set<bg::max_corner, 0>(left_box, bg::get<bg::max_corner, 0>(bb));
+			bg::set<bg::min_corner, 1>(left_box, bg::get<bg::min_corner, 1>(bb));
+			bg::set<bg::max_corner, 1>(left_box, opt_cut);
+
+			bg::set<bg::min_corner, 0>(right_box, bg::get<bg::min_corner, 0>(bb));
+			bg::set<bg::max_corner, 0>(right_box, bg::get<bg::max_corner, 0>(bb));
+			bg::set<bg::min_corner, 1>(right_box, bg::get<bg::max_corner, 1>(left_box)+1);
+			bg::set<bg::max_corner, 1>(right_box, bg::get<bg::max_corner, 1>(bb));
+
+			//printf("hsplit 0 %d->%d,%d->%d 1 %d->%d,%d->%d\n",
+			//bg::get<bg::min_corner, 0>(split_0), bg::get<bg::max_corner, 0>(split_0),
+			//bg::get<bg::min_corner, 1>(split_0), bg::get<bg::max_corner, 1>(split_0),
+			//bg::get<bg::min_corner, 0>(split_1), bg::get<bg::max_corner, 0>(split_1),
+			//bg::get<bg::min_corner, 1>(split_1), bg::get<bg::max_corner, 1>(split_1));
+
+			assert((bg::get<bg::min_corner, 1>(left_box) < bg::get<bg::max_corner, 1>(left_box)));
+			assert((bg::get<bg::min_corner, 1>(right_box) < bg::get<bg::max_corner, 1>(right_box)));
+		} else {
+			assert((opt_cut > bg::get<bg::min_corner, 0>(bb) && opt_cut < bg::get<bg::max_corner, 0>(bb)));
+
+			bg::set<bg::min_corner, 1>(left_box, bg::get<bg::min_corner, 1>(bb));
+			bg::set<bg::max_corner, 1>(left_box, bg::get<bg::max_corner, 1>(bb));
+			bg::set<bg::min_corner, 0>(left_box, bg::get<bg::min_corner, 0>(bb));
+			bg::set<bg::max_corner, 0>(left_box, opt_cut);
+
+			bg::set<bg::min_corner, 1>(right_box, bg::get<bg::min_corner, 1>(bb));
+			bg::set<bg::max_corner, 1>(right_box, bg::get<bg::max_corner, 1>(bb));
+			bg::set<bg::min_corner, 0>(right_box, bg::get<bg::max_corner, 0>(left_box)+1);
+			bg::set<bg::max_corner, 0>(right_box, bg::get<bg::max_corner, 0>(bb));
+
+			//printf("vsplit 0 %d->%d,%d->%d 1 %d->%d,%d->%d\n",
+			//bg::get<bg::min_corner, 0>(split_0), bg::get<bg::max_corner, 0>(split_0),
+			//bg::get<bg::min_corner, 1>(split_0), bg::get<bg::max_corner, 1>(split_0),
+			//bg::get<bg::min_corner, 0>(split_1), bg::get<bg::max_corner, 0>(split_1),
+			//bg::get<bg::min_corner, 1>(split_1), bg::get<bg::max_corner, 1>(split_1));
+
+			assert((bg::get<bg::min_corner, 0>(left_box) < bg::get<bg::max_corner, 0>(left_box)));
+			assert((bg::get<bg::min_corner, 0>(right_box) < bg::get<bg::max_corner, 0>(right_box)));
+		}
+
+		print_tabs(level); printf("box %d %d %d %d hor %d opt_cut %d\n",
+				bg::get<bg::min_corner, 0>(bb), bg::get<bg::max_corner, 0>(bb),
+				bg::get<bg::min_corner, 1>(bb), bg::get<bg::max_corner, 1>(bb),
+				horizontal, opt_cut);
+
+		print_tabs(level); printf("\tleft %d %d %d %d\n",
+				bg::get<bg::min_corner, 0>(left_box), bg::get<bg::max_corner, 0>(left_box),
+				bg::get<bg::min_corner, 1>(left_box), bg::get<bg::max_corner, 1>(left_box));
+
+		print_tabs(level); printf("\tright %d %d %d %d\n",
+				bg::get<bg::min_corner, 0>(right_box), bg::get<bg::max_corner, 0>(right_box),
+				bg::get<bg::min_corner, 1>(right_box), bg::get<bg::max_corner, 1>(right_box));
+
+		//#ifdef DEBUG_MISR
+		//#endif
+		
+		node->bb = bb;
+
+		//std::vector<std::pair<int, net_t *>> left_ver_start;
+		//std::vector<std::pair<int, net_t *>> left_ver_end;
+		//std::vector<std::pair<int, net_t *>> right_ver_start;
+		//std::vector<std::pair<int, net_t *>> right_ver_end;
+		//split_edges_lb(ver_start, 
+				//opt_cut, horizontal,
+				//left_ver_start, right_ver_start);
+		//split_edges_lb(ver_end, 
+				//opt_cut, horizontal,
+				//left_ver_end, right_ver_end);
+
+		//std::vector<std::pair<int, net_t *>> left_hor_start;
+		//std::vector<std::pair<int, net_t *>> left_hor_end;
+		//std::vector<std::pair<int, net_t *>> right_hor_start;
+		//std::vector<std::pair<int, net_t *>> right_hor_end;
+		//split_edges_lb(hor_start, 
+				//opt_cut, horizontal,
+				//left_hor_start, right_hor_start);
+		//split_edges_lb(hor_end, 
+				//opt_cut, horizontal,
+				//left_hor_end, right_hor_end);
+
+		node->left = new fpga_tree_node_t;
+		node->right = new fpga_tree_node_t;
+
+		assert(!left_nets.empty() && !right_nets.empty());
+
+		max_independent_rectangles_internal_lb(left_nets, load, 
+				num_all_nets, left_box, level-1, !horizontal,
+				node->left);
+		max_independent_rectangles_internal_lb(right_nets, load,
+				num_all_nets, right_box, level-1, !horizontal,
+				node->right);
+	} else {
+		node->bb = bb;
+		for (const auto &item : nets) {
+			assert(bg::covered_by(item->bounding_box, bb));
+			node->nets.push_back(item);
+		}
+		node->left = nullptr;
+		node->right = nullptr;
+	}
+}
+
+template<typename Load>
+void max_independent_rectangles_lb(std::vector<net_t> &items, const Load &load, int level, fpga_tree_node_t *root)
+{
+	//std::vector<std::pair<int, net_t *>> ver_start;
+	//std::vector<std::pair<int, net_t *>> ver_end;
+
+	//std::vector<std::pair<int, net_t *>> hor_start;
+	//std::vector<std::pair<int, net_t *>> hor_end;
+
+	//for (int i = 0; i < items.size(); ++i) {
+		//const auto &box = items[i].bounding_box;
+
+		//ver_start.push_back(std::make_pair(bg::get<bg::min_corner, 0>(box), &items[i]));
+		//ver_end.push_back(std::make_pair(bg::get<bg::max_corner, 0>(box), &items[i]));
+
+		//hor_start.push_back(std::make_pair(bg::get<bg::min_corner, 1>(box), &items[i]));
+		//hor_end.push_back(std::make_pair(bg::get<bg::max_corner, 1>(box), &items[i]));
+	//}
+
+	//std::sort(begin(ver_start), end(ver_start));
+	//std::sort(begin(ver_end), end(ver_end));
+
+	//std::sort(begin(hor_start), end(hor_start));
+	//std::sort(begin(hor_end), end(hor_end));
+
+	//extern int nx, ny;
+	//bool horizontal = ny > nx;
+
+	////foo2(ver_start, ver_end, load, items.size(), nx+2);
+
+	//max_independent_rectangles_internal_lb(items, load, num_all_nets, bg::make<box>(0, 0, nx+1, ny+1), level, horizontal, root);
+}
+
 void split_edges(const std::vector<std::pair<int, net_t *>> &edges,
 		int median, bool horizontal,
 		std::vector<std::pair<int, net_t *>> &left, std::vector<std::pair<int, net_t *>> &right,
@@ -2424,6 +2990,22 @@ void max_independent_rectangles_internal(const std::vector<std::pair<int, net_t 
 		node->left = nullptr;
 		node->right = nullptr;
 	}
+}
+
+void clear_tree(fpga_tree_node_t *node)
+{
+	if (node->left) {
+		assert(node->right);
+
+		clear_tree(node->left);
+		delete node->left;
+
+		clear_tree(node->right);
+		delete node->right;
+	}
+
+	node->bb = bg::make_inverse<box>();
+	node->nets.clear();
 }
 
 void max_independent_rectangles(std::vector<net_t> &items, int level, fpga_tree_node_t *root)
@@ -2825,7 +3407,7 @@ bool speculative_deterministic_route_hb_fine(t_router_opts *opts)
 		}
 	}
 
-	printf("sizeof exec_state_t %d\n", sizeof(exec_state_t));
+	printf("sizeof exec_state_t %lu\n", sizeof(exec_state_t));
 
 	//test_fpga_bipartition();
 	//exit(0);
@@ -2946,7 +3528,11 @@ bool speculative_deterministic_route_hb_fine(t_router_opts *opts)
 		fill_fpga_tree(&router.root, nets);
 	} else {
 		assert(opts->net_partitioner == NetPartitioner::Median);
-		max_independent_rectangles(nets, opts->num_net_cuts, &router.root);
+
+		extern int nx, ny;
+		bool horizontal = ny > nx;
+
+		max_independent_rectangles_internal_lb(router.nets, [] (const net_t *net) -> float { return net->sinks.size(); }, router.nets.size(), bg::make<box>(0, 0, nx+1, ny+1), opts->num_net_cuts, horizontal, &router.root);
 	}
 
 	verify_tree(&router.root, nets);
