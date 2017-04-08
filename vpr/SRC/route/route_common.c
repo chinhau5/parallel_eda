@@ -47,7 +47,7 @@ bool partitioning_delta_stepping_deterministic_route(t_router_opts *opts);
 bool partitioning_delta_stepping_deterministic_route_virtual(t_router_opts *opts);
 bool speculative_deterministic_route(t_router_opts *opts);
 bool speculative_deterministic_route_hb(t_router_opts *opts);
-bool speculative_deterministic_route_hb_fine(t_router_opts *opts);
+bool speculative_deterministic_route_hb_fine(const t_router_opts *opts);
 bool new_astar_route(t_router_opts *opts);
 
 

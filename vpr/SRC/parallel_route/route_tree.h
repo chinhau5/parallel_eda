@@ -323,6 +323,48 @@ int route_tree_mark_congested_nodes_to_be_ripped(route_tree_t &rt, const RRGraph
 	return num_marked;
 }
 
+template<typename Congestion>
+bool route_tree_node_is_congested(route_tree_t &rt, RouteTreeNode rt_node, const RRGraph &g, const Congestion *congestion)
+{
+	auto &rt_node_p = get_vertex_props(rt.graph, rt_node);
+	const auto &rr_node_p = get_vertex_props(g, rt_node_p.rr_node);
+
+	return (get_occ(congestion, rt_node_p.rr_node) > rr_node_p.capacity);
+}
+
+template<typename Congestion>
+bool route_tree_is_congested_internal(route_tree_t &rt, RouteTreeNode rt_node, const RRGraph &g, const Congestion *congestion)
+{
+	bool is_congested = route_tree_node_is_congested(rt, rt_node, g, congestion);
+
+	if (!is_congested) {
+		auto bis = route_tree_get_branches(rt, rt_node);
+
+		for (auto bi = std::begin(bis); !is_congested && bi != std::end(bis); ++bi) {
+			const auto &child = get_target(rt.graph, *bi);
+
+			is_congested = route_tree_is_congested_internal(rt, child, g, congestion);
+		}
+	}
+
+	return is_congested;
+}
+
+template<typename Congestion>
+bool route_tree_is_congested(route_tree_t &rt, const RRGraph &g, const Congestion *congestion)
+{
+	int num_marked = 0;
+
+	assert(rt.root_rt_nodes.size() == 1 || rt.root_rt_nodes.size() == 0);
+
+	bool is_congested = false;
+	for (int i = 0; i < rt.root_rt_nodes.size() && !is_congested; ++i) {
+		is_congested = route_tree_is_congested_internal(rt, rt.root_rt_nodes[i], g, congestion);
+	}
+
+	return is_congested;
+}
+
 //std::shared_ptr<vector<path_node_t>> route_tree_get_path(const route_tree_t &rt, RRNode to_node);
 
 //RouteTreeNode route_tree_get_nearest_node(route_tree_t &rt, const point &p, const RRGraph &g, int *num_iters);

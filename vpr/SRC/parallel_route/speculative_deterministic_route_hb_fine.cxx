@@ -123,14 +123,15 @@ struct fpga_tree_node_t {
 template<typename Net>
 struct /*alignas(64)*/ router_t {
 	vector<Net> nets;
-	vector<region_t *> fpga_regions;
+	int num_all_nets;
+	vector<region_t> fpga_regions;
 	vector<region_t *> rr_regions;
 	std::atomic<int> iter;
 	worker_sync_t sync;
 	RRGraph g;
 	global_route_state_t state;
 
-	fpga_tree_node_t root;
+	fpga_tree_node_t net_root;
 	int num_levels;
 
 	exec_state_t *e_state;
@@ -562,7 +563,7 @@ void mods_add(int rr_node, int delta, vector<region_t *> &rr_regions, vector<Mod
 #endif
 }
 
-void mods_commit(vector<Mods *> &mods, int tid, int num_nodes, vector<region_t *> &fpga_regions, timer::duration &wait_time)
+void mods_commit(vector<Mods *> &mods, int tid, int num_nodes, vector<region_t> &fpga_regions, timer::duration &wait_time)
 {
 	assert(mods.size() == fpga_regions.size());
 
@@ -573,7 +574,7 @@ void mods_commit(vector<Mods *> &mods, int tid, int num_nodes, vector<region_t *
 #else
 			zlog_level(delta_log, ROUTER_V3, "Committing mods in region %d, size %lu\n", i, mods[i]->size());
 #endif
-			region_add_mod(*fpga_regions[i], tid, num_nodes, mods[i], wait_time);
+			region_add_mod(fpga_regions[i], tid, num_nodes, mods[i], wait_time);
 		}
 	}
 }
@@ -638,7 +639,7 @@ void mods_commit(vector<Mods *> &mods, int tid, int num_nodes, vector<region_t *
 class SpeculativeDeterministicRouter {
 	private:
 		RRGraph &_g;
-		vector<region_t *> &_fpga_regions;
+		vector<region_t> &_fpga_regions;
 		vector<region_t *> &_rr_regions;
 
 		int _num_nodes;
@@ -1097,7 +1098,7 @@ class SpeculativeDeterministicRouter {
 					//Callbacks &callbacks);
 
 	public:
-		SpeculativeDeterministicRouter(int index, int num_nodes, RRGraph &g, congestion_t **congestion, vector<region_t *> &fpga_regions, vector<region_t *> &rr_regions, exec_state_t *e_state, const float &pres_fac)
+		SpeculativeDeterministicRouter(int index, int num_nodes, RRGraph &g, congestion_t **congestion, vector<region_t> &fpga_regions, vector<region_t *> &rr_regions, exec_state_t *e_state, const float &pres_fac)
 			: _g(g), _fpga_regions(fpga_regions), _rr_regions(rr_regions), _pres_fac(pres_fac), _modified_node_added(num_vertices(g), false) 
 		{
 			_known_distance = new float[num_vertices(g)];
@@ -1204,7 +1205,7 @@ class SpeculativeDeterministicRouter {
 				//assert(sink_props.real_xlow == sink_props.real_xhigh && sink_props.real_ylow == sink_props.real_yhigh);
 				zlog_level(delta_log, ROUTER_V3, "Current sink: %s [real %d %d] BB %d->%d,%d->%d\n",
 						buffer, sink_props.real_xlow, sink_props.real_ylow,
-						sink->current_bounding_box.xmin, sink->current_bounding_box.xmax, sink->current_bounding_box.ymin, sink->current_bounding_box.ymax);
+						bg::get<bg::min_corner, 0>(sink->bounding_box), bg::get<bg::max_corner, 0>(sink->bounding_box), bg::get<bg::min_corner, 1>(sink->bounding_box), bg::get<bg::max_corner, 1>(sink->bounding_box));
 
 #if PROFILE_WAIT_LEVEL >= 1
 				set_context(_e_state, 7);
@@ -1344,7 +1345,7 @@ std::atomic<int> SpeculativeDeterministicRouter::_num_instances{ 0 };
 int get_next_net(det_mutex_t &lock, int tid, int num_nodes, std::atomic<int> &net_index, timer::duration &wait_time)
 {
 #if PROFILE_WAIT_LEVEL >= 1
-	g_e_state[tid].region = -1;
+	g_e_state[tid].region = -2;
 	set_context(&g_e_state[tid], 10);
 #endif
 #if PROFILE_WAIT_LEVEL >= 1
@@ -1360,6 +1361,9 @@ int get_next_net(det_mutex_t &lock, int tid, int num_nodes, std::atomic<int> &ne
 #endif
 	inet = net_index++;
 	det_mutex_unlock(lock, tid);
+
+	zlog_level(delta_log, ROUTER_V3, "Got inet: %d\n", inet);
+
 	return inet;
 }
 
@@ -1385,18 +1389,18 @@ static void do_work_3(router_t<net_t *> *router, SpeculativeDeterministicRouter 
 	vector<unsigned long> last_clock(router->num_levels);
 	vector<vector<const net_t *>> routed_nets(router->num_levels);
 
-	vector<timer::duration> net_route_time(router->nets.size(), timer::duration::max());
-	vector<dijkstra_stats_t> net_stats(router->nets.size(),
+	vector<timer::duration> net_route_time(router->num_all_nets, timer::duration::max());
+	vector<dijkstra_stats_t> net_stats(router->num_all_nets,
 			{ std::numeric_limits<int>::max(), std::numeric_limits<int>::max(), std::numeric_limits<int>::max() });
-	vector<int> net_level(router->nets.size(), -1);
+	vector<int> net_level(router->num_all_nets, -1);
 
-	vector<timer::duration> acc_net_route_time(router->nets.size(), timer::duration::max());
-	vector<unsigned long> acc_num_clock_ticks(router->nets.size(), std::numeric_limits<unsigned long>::max());
-	vector<unsigned long> acc_num_locks(router->nets.size(), std::numeric_limits<unsigned long>::max());
+	vector<timer::duration> acc_net_route_time(router->num_all_nets, timer::duration::max());
+	vector<unsigned long> acc_num_clock_ticks(router->num_all_nets, std::numeric_limits<unsigned long>::max());
+	vector<unsigned long> acc_num_locks(router->num_all_nets, std::numeric_limits<unsigned long>::max());
 
 	auto total_start = timer::now();
 
-	fpga_tree_node_t *node = &router->root;
+	fpga_tree_node_t *node = &router->net_root;
 	for (int level = 0; level < router->num_levels; ++level) {
 		router->e_state[tid].level = level;
 
@@ -1404,7 +1408,7 @@ static void do_work_3(router_t<net_t *> *router, SpeculativeDeterministicRouter 
 		int base = tid*regions_per_thread;
 		int count = tid == router->num_threads-1 ? regions_per_thread + (router->fpga_regions.size() % router->num_threads) : regions_per_thread;
 		for (int i = base; i < base+count; ++i) {
-			det_mutex_reset(router->fpga_regions[i]->mutex);
+			det_mutex_reset(router->fpga_regions[i].mutex);
 		}
 
 #if defined(INSTRUMENT)
@@ -1430,6 +1434,12 @@ static void do_work_3(router_t<net_t *> *router, SpeculativeDeterministicRouter 
 
 		zlog_level(delta_log, ROUTER_V3, "Current level: %d\n", level);
 
+		if (node) {
+			 zlog_level(delta_log, ROUTER_V3, "\tBB %d %d, %d %d\n", 
+					bg::get<bg::min_corner, 0>(node->bb), bg::get<bg::max_corner, 0>(node->bb),
+					bg::get<bg::min_corner, 1>(node->bb), bg::get<bg::max_corner, 1>(node->bb));
+		}
+
 		int num_nodes = (1 << level);
 		int threads_per_node = router->num_threads/num_nodes;
 		int inode = tid/threads_per_node;
@@ -1444,8 +1454,10 @@ static void do_work_3(router_t<net_t *> *router, SpeculativeDeterministicRouter 
 
 		auto route_start = timer::now();
 
-		while ((inet = get_next_net(router->sync.lock[level][inode], tid, num_nodes, router->sync.net_index[level][inode], get_net_wait_time)) < node->nets.size()) {
+		while (node && (inet = get_next_net(router->sync.lock[level][inode], tid, num_nodes, router->sync.net_index[level][inode], get_net_wait_time)) < node->nets.size()) {
 			net_t &net = *node->nets[inet];
+
+			assert(bg::covered_by(net.bounding_box, node->bb));
 
 			set_inet(&router->e_state[tid], net.local_id);
 
@@ -1551,7 +1563,7 @@ static void do_work_3(router_t<net_t *> *router, SpeculativeDeterministicRouter 
 
 #if PROFILE_WAIT_LEVEL >= 1
 		set_context(&router->e_state[tid], 500);
-		set_inet(&router->e_state[tid], -1);
+		set_inet(&router->e_state[tid], std::numeric_limits<int>::max());
 #endif
 
 		auto last_barrier_wait_start = timer::now();
@@ -1580,7 +1592,7 @@ static void do_work_3(router_t<net_t *> *router, SpeculativeDeterministicRouter 
 		for (auto &r : router->fpga_regions) {
 #ifdef SHORT_CRIT
 			all_mods.clear();
-			region_get_mods_unlocked(*r, tid, [&router, &tid, &all_mods] (const vector<mod_t> *mods) -> void {
+			region_get_mods_unlocked(r, tid, [&router, &tid, &all_mods] (const vector<mod_t> *mods) -> void {
 					all_mods.push_back(mods);
 					//#if !defined(INSTRUMENT) && !defined(PMC)
 					//_e_state->logical_clock->fetch_add(INC_COUNT, std::memory_order_relaxed);
@@ -1594,7 +1606,7 @@ static void do_work_3(router_t<net_t *> *router, SpeculativeDeterministicRouter 
 				}
 			}
 #else // SHORT_CRIT
-			region_get_mods_unlocked(*r, tid, [&router, &tid] (const vector<mod_t> *mods) -> void {
+			region_get_mods_unlocked(r, tid, [&router, &tid] (const vector<mod_t> *mods) -> void {
 					for (const auto &m : *mods) {
 					const auto &props = get_vertex_props(router->g, m.node);
 					update_first_order_congestion(router->state.congestion[tid], m.node, m.delta, props.capacity, router->pres_fac);
@@ -1612,7 +1624,7 @@ static void do_work_3(router_t<net_t *> *router, SpeculativeDeterministicRouter 
 		//tid, router->g, router->state.congestion[tid], router->pres_fac);
 		time[level].last_sync_time = timer::now()-last_sync_start;
 
-		if (threads_per_node > 1) {
+		if (node && threads_per_node > 1) {
 			int next_threads_per_node = threads_per_node / 2;
 			int next = (tid / next_threads_per_node) % 2;
 			if (next == 0) {
@@ -1885,7 +1897,7 @@ static void do_work_2(router_t<net_t *> *router, SpeculativeDeterministicRouter 
 	for (auto &r : router->fpga_regions) {
 #ifdef SHORT_CRIT
 		all_mods.clear();
-		region_get_mods_unlocked(*r, tid, [&router, &tid, &all_mods] (const vector<mod_t> *mods) -> void {
+		region_get_mods_unlocked(r, tid, [&router, &tid, &all_mods] (const vector<mod_t> *mods) -> void {
 				all_mods.push_back(mods);
 //#if !defined(INSTRUMENT) && !defined(PMC)
 				//_e_state->logical_clock->fetch_add(INC_COUNT, std::memory_order_relaxed);
@@ -1899,7 +1911,7 @@ static void do_work_2(router_t<net_t *> *router, SpeculativeDeterministicRouter 
 			}
 		}
 #else // SHORT_CRIT
-		region_get_mods_unlocked(*r, tid, [&router, &tid] (const vector<mod_t> *mods) -> void {
+		region_get_mods_unlocked(r, tid, [&router, &tid] (const vector<mod_t> *mods) -> void {
 			for (const auto &m : *mods) {
 				const auto &props = get_vertex_props(router->g, m.node);
 				update_first_order_congestion(router->state.congestion[tid], m.node, m.delta, props.capacity, router->pres_fac);
@@ -2491,7 +2503,13 @@ void foo2(const std::vector<net_t *> &nets, const Load &load,
 	min_diff = std::numeric_limits<float>::max();
 	opt_cut = -1;
 	for (int cut = bounds.first; cut < bounds.second+1; ++cut) {
-		float diff = abs(left_loads[cut] - right_loads[cut+1]);
+		float diff;
+		if (cut+1 < bounds.second+1) {
+			diff = abs(left_loads[cut] - right_loads[cut+1]);
+		} else {
+			diff = left_loads[cut];
+		}
+		assert(diff >= 0);
 		if (diff < min_diff) {
 			opt_cut = cut;
 			min_diff = diff;
@@ -2654,6 +2672,8 @@ void max_independent_rectangles_internal_lb(
 {
 	printf("level %d\n", level);
 
+	assert(!nets.empty());
+
 	if (level > 0) {
 		//int prev = -1;
 		//for (const auto &e : ver_start) {
@@ -2773,18 +2793,28 @@ void max_independent_rectangles_internal_lb(
 				//opt_cut, horizontal,
 				//left_hor_end, right_hor_end);
 
-		node->left = new fpga_tree_node_t;
-		node->right = new fpga_tree_node_t;
+		if (!left_nets.empty()) {
+			node->left = new fpga_tree_node_t;
 
-		assert(!left_nets.empty() && !right_nets.empty());
+			max_independent_rectangles_internal_lb(left_nets, load, 
+					num_all_nets, left_box, level-1, !horizontal,
+					node->left);
+		} else {
+			node->left = nullptr;
+		}
 
-		max_independent_rectangles_internal_lb(left_nets, load, 
-				num_all_nets, left_box, level-1, !horizontal,
-				node->left);
-		max_independent_rectangles_internal_lb(right_nets, load,
-				num_all_nets, right_box, level-1, !horizontal,
-				node->right);
+		if (!right_nets.empty()) {
+			node->right = new fpga_tree_node_t;
+
+			max_independent_rectangles_internal_lb(right_nets, load,
+					num_all_nets, right_box, level-1, !horizontal,
+					node->right);
+		} else { 
+			node->right = nullptr;
+		}
 	} else {
+		printf("last level\n");
+
 		node->bb = bb;
 		for (const auto &item : nets) {
 			assert(bg::covered_by(item->bounding_box, bb));
@@ -2796,7 +2826,7 @@ void max_independent_rectangles_internal_lb(
 }
 
 template<typename Load>
-void max_independent_rectangles_lb(std::vector<net_t> &items, const Load &load, int level, fpga_tree_node_t *root)
+void max_independent_rectangles_lb(std::vector<net_t> &items, const Load &load, int level, fpga_tree_node_t *net_root)
 {
 	//std::vector<std::pair<int, net_t *>> ver_start;
 	//std::vector<std::pair<int, net_t *>> ver_end;
@@ -2825,7 +2855,7 @@ void max_independent_rectangles_lb(std::vector<net_t> &items, const Load &load, 
 
 	////foo2(ver_start, ver_end, load, items.size(), nx+2);
 
-	//max_independent_rectangles_internal_lb(items, load, num_all_nets, bg::make<box>(0, 0, nx+1, ny+1), level, horizontal, root);
+	//max_independent_rectangles_internal_lb(items, load, num_all_nets, bg::make<box>(0, 0, nx+1, ny+1), level, horizontal, net_root);
 }
 
 void split_edges(const std::vector<std::pair<int, net_t *>> &edges,
@@ -2999,16 +3029,18 @@ void clear_tree(fpga_tree_node_t *node)
 
 		clear_tree(node->left);
 		delete node->left;
+		node->left = nullptr;
 
 		clear_tree(node->right);
 		delete node->right;
+		node->right = nullptr;
 	}
 
 	node->bb = bg::make_inverse<box>();
 	node->nets.clear();
 }
 
-void max_independent_rectangles(std::vector<net_t> &items, int level, fpga_tree_node_t *root)
+void max_independent_rectangles(std::vector<net_t> &items, int level, fpga_tree_node_t *net_root)
 {
 	std::vector<std::pair<int, net_t *>> ver_edges;
 	std::vector<std::pair<int, net_t *>> hor_edges;
@@ -3031,7 +3063,7 @@ void max_independent_rectangles(std::vector<net_t> &items, int level, fpga_tree_
 
 	vector<bool> added(items.size(), false);
 
-	max_independent_rectangles_internal(ver_edges, hor_edges, bg::make<box>(0, 0, nx+1, ny+1), level, horizontal, added, root);
+	max_independent_rectangles_internal(ver_edges, hor_edges, bg::make<box>(0, 0, nx+1, ny+1), level, horizontal, added, net_root);
 }
 
 void split_box(const box &current, bool horizontal, box &split_0, box &split_1)
@@ -3093,7 +3125,7 @@ void fpga_bipartition(fpga_tree_node_t *node, int level, bool horizontal)
 	}
 }
 
-void net_tree_to_region_tree(fpga_tree_node_t *net_node, fpga_tree_node_t *region_node, int extra_level)
+void net_tree_to_region_tree(fpga_tree_node_t *net_node, int extra_level, fpga_tree_node_t *region_node)
 {
 	region_node->bb = net_node->bb;
 
@@ -3105,8 +3137,8 @@ void net_tree_to_region_tree(fpga_tree_node_t *net_node, fpga_tree_node_t *regio
 		//region_node->left->bb = net_node->left->bb;
 		//region_node->right->bb = net_node->right->bb;
 
-		net_tree_to_region_tree(net_node->left, region_node->left, extra_level);
-		net_tree_to_region_tree(net_node->right, region_node->right, extra_level);
+		net_tree_to_region_tree(net_node->left, extra_level, region_node->left);
+		net_tree_to_region_tree(net_node->right, extra_level, region_node->right);
 	} else {
 		int width = bg::get<bg::max_corner, 0>(region_node->bb) - bg::get<bg::min_corner, 0>(region_node->bb);
 		int height = bg::get<bg::max_corner, 1>(region_node->bb) - bg::get<bg::min_corner, 1>(region_node->bb);
@@ -3157,11 +3189,11 @@ bool insert_net_into_fpga_tree(fpga_tree_node_t *node, net_t *net, int *total_in
 	return inserted || left_inserted || right_inserted;
 }
 
-void fill_fpga_tree(fpga_tree_node_t *root, vector<net_t> &nets)
+void fill_fpga_tree(fpga_tree_node_t *root, vector<net_t *> &nets)
 {
-	for (auto &net : nets) {
+	for (const auto &net : nets) {
 		int total_inserted = 0;
-		insert_net_into_fpga_tree(root, &net, &total_inserted);
+		insert_net_into_fpga_tree(root, net, &total_inserted);
 		assert(total_inserted == 1);
 	}
 }
@@ -3211,17 +3243,17 @@ void verify_tree_internal(fpga_tree_node_t *node, vector<net_t *> &nets)
 	}
 }
 
-void verify_tree(fpga_tree_node_t *root, const vector<net_t> &nets)
+void verify_tree(fpga_tree_node_t *root, const vector<net_t *> &nets)
 {
 	vector<net_t *> net_ptrs;
 	verify_tree_internal(root, net_ptrs);
 
 	std::sort(begin(net_ptrs), end(net_ptrs));
 
-	assert(net_ptrs.size() == nets.size());
-	for (int i = 0; i < nets.size(); ++i) {
-		assert(net_ptrs[i] == &nets[i]);
-	}
+	auto nets_copy = nets;
+	std::sort(begin(nets_copy), end(nets_copy));
+
+	assert(net_ptrs.size() == nets_copy.size());
 }
 
 //init_region(region_t &r, int gid, )
@@ -3235,7 +3267,7 @@ void verify_tree(fpga_tree_node_t *root, const vector<net_t> &nets)
 				//n.resize(num_threads, 0);
 			//}
 
-void fpga_regions_from_tree(fpga_tree_node_t *node, exec_state_t *e_state, int num_threads, int &gid, vector<region_t> &fpga_regions)
+static void fpga_regions_from_tree(fpga_tree_node_t *node, exec_state_t *e_state, int num_threads, int &gid, vector<region_t> &fpga_regions)
 {
 	assert(node);
 
@@ -3301,7 +3333,7 @@ static void init_fpga_regions(int split, exec_state_t *e_state, int num_threads,
 
 static void init_rr_node_regions(const RRGraph &g, vector<region_t> &fpga_regions, vector<region_t *> &rr_regions)
 {
-	rr_regions.resize(num_vertices(g), nullptr);	
+	rr_regions.resize(num_vertices(g));	
 
 	for (int i = 0; i < rr_regions.size(); ++i) {
 		const auto &props = get_vertex_props(g, i);
@@ -3310,7 +3342,6 @@ static void init_rr_node_regions(const RRGraph &g, vector<region_t> &fpga_region
 			int num_regions = 0;
 			for (auto &fpga_r : fpga_regions) {
 				if (inside_bb(props, fpga_r.bb)) {
-					assert(!rr_regions[i]);
 					rr_regions[i] = &fpga_r;
 					zlog_level(delta_log, ROUTER_V3, "RR %d is inside region %d\n", i, fpga_r.gid);
 					++num_regions;
@@ -3321,6 +3352,48 @@ static void init_rr_node_regions(const RRGraph &g, vector<region_t> &fpga_region
 			rr_regions[i] = nullptr;
 		}
 	}
+}
+
+void lmao(router_t<net_t *> &router, const t_router_opts *opts)
+{
+	fpga_tree_node_t region_root;
+
+	int num_fpga_cuts = opts->num_net_cuts + opts->num_extra_cuts;
+
+	if (opts->net_partitioner == NetPartitioner::Uniform) {
+		extern int nx, ny;
+		bool horizontal_cut = ny > nx ? true : false;
+
+		bg::assign_values(region_root.bb, 0, 0, nx+1, ny+1);
+		fpga_bipartition(&region_root, num_fpga_cuts, horizontal_cut);
+	} else {
+		assert(opts->net_partitioner == NetPartitioner::Median);
+
+		net_tree_to_region_tree(&router.net_root, opts->num_extra_cuts, &region_root);
+	}
+
+	printf("Region tree\n");
+	print_tree(&region_root, 0);
+
+	int gid = 0;
+	fpga_regions_from_tree(&region_root, router.e_state, opts->num_threads, gid, router.fpga_regions);
+	/* the assertion below is not true because the net tree is not a balanced binary tree */
+	//assert(router.fpga_regions.size() == (1 << num_fpga_cuts));
+
+	for (int i = 0; i < router.fpga_regions.size(); ++i) {
+		printf("fpga region %d, bb %d %d, %d %d\n", router.fpga_regions[i].gid,
+				bg::get<bg::min_corner, 0>(router.fpga_regions[i].bb), bg::get<bg::max_corner, 0>(router.fpga_regions[i].bb),
+				bg::get<bg::min_corner, 1>(router.fpga_regions[i].bb), bg::get<bg::max_corner, 1>(router.fpga_regions[i].bb));
+	}
+
+	/* checking */
+	for (int i = 0; i < router.fpga_regions.size(); ++i) {
+		for (int j = i+1; j < router.fpga_regions.size(); ++j) {
+			assert(!bg::intersects(router.fpga_regions[i].bb, router.fpga_regions[j].bb));
+		}
+	}
+
+	init_rr_node_regions(router.g, router.fpga_regions, router.rr_regions);
 }
 
 void write_mutex_stats(const char *dirname, int iter, int num_levels, int num_threads)
@@ -3369,7 +3442,36 @@ void write_inc_time(const char *filename, const vector<pair<inc_time_t, int>> &i
 	fclose(out);
 }
 
-bool speculative_deterministic_route_hb_fine(t_router_opts *opts)
+void lmao2(router_t<net_t *> &router, const t_router_opts *opts, int num_all_nets)
+{
+	router.num_levels = opts->num_net_cuts+1;
+
+	extern int nx, ny;
+	bool horizontal_cut = ny > nx ? true : false;
+
+	if (opts->net_partitioner == NetPartitioner::Uniform) {
+		bg::assign_values(router.net_root.bb, 0, 0, nx+1, ny+1);
+		fpga_bipartition(&router.net_root, opts->num_net_cuts, horizontal_cut);
+
+		fill_fpga_tree(&router.net_root, router.nets);
+	} else {
+		assert(opts->net_partitioner == NetPartitioner::Median);
+
+		extern int nx, ny;
+		bool horizontal = ny > nx;
+
+		max_independent_rectangles_internal_lb(router.nets, [] (const net_t *net) -> float { return net->sinks.size(); }, num_all_nets, bg::make<box>(0, 0, nx+1, ny+1), opts->num_net_cuts, horizontal, &router.net_root);
+	}
+
+	verify_tree(&router.net_root, router.nets);
+
+	printf("Net tree\n");
+	print_tree(&router.net_root, 0);
+
+	lmao(router, opts);
+}
+
+bool speculative_deterministic_route_hb_fine(const t_router_opts *opts)
 {
 	assert(g_e_state == nullptr);
 
@@ -3458,23 +3560,36 @@ bool speculative_deterministic_route_hb_fine(t_router_opts *opts)
 		//}
 	//}
 
+	router.num_all_nets = nets.size();
+
 #if defined(TEST)
-	net_t *largest_net = &nets[0];
-	for (auto &net : nets) {
-		if (net.sinks.size() > largest_net->sinks.size()) {
-			largest_net = &net;
+	//net_t *largest_net = &nets[0];
+	//for (auto &net : nets) {
+		//if (net.sinks.size() > largest_net->sinks.size()) {
+			//largest_net = &net;
+		//}
+	//}
+
+	//vector<net_t> test_nets;
+	//for (int i = 0; i < opts->num_threads; ++i) {
+		//test_nets.push_back(*largest_net);
+		//test_nets.back().local_id = i;
+	//}
+
+	//for (auto &net : test_nets) {
+		//router.nets.push_back(&net);
+	//}
+	sprintf(buffer, "%s/nets_inject.txt", dirname);
+	FILE *nets_in = fopen(buffer, "r");
+	while (!feof(nets_in)) {
+		if (buffer != fgets(buffer, sizeof(buffer), nets_in)) {
+			break;
 		}
+		int id = atoi(buffer);
+		router.nets.push_back(&nets[id]);
+		printf("Inject net %d\n", id);
 	}
-
-	vector<net_t> test_nets;
-	for (int i = 0; i < opts->num_threads; ++i) {
-		test_nets.push_back(*largest_net);
-		test_nets.back().local_id = i;
-	}
-
-	for (auto &net : test_nets) {
-		router.nets.push_back(&net);
-	}
+	fclose(nets_in);
 #else
 	for (int i = 0; i < nets.size(); ++i) {
 		router.nets.push_back(&nets[i]);
@@ -3518,60 +3633,9 @@ bool speculative_deterministic_route_hb_fine(t_router_opts *opts)
 	print_tree(&test_region_root, 0);
 #endif
 
-	extern int nx, ny;
-	bool horizontal_cut = ny > nx ? true : false;
+	lmao2(router, opts, nets.size());
 
-	if (opts->net_partitioner == NetPartitioner::Uniform) {
-		bg::assign_values(router.root.bb, 0, 0, nx+1, ny+1);
-		fpga_bipartition(&router.root, opts->num_net_cuts, horizontal_cut);
-
-		fill_fpga_tree(&router.root, nets);
-	} else {
-		assert(opts->net_partitioner == NetPartitioner::Median);
-
-		extern int nx, ny;
-		bool horizontal = ny > nx;
-
-		max_independent_rectangles_internal_lb(router.nets, [] (const net_t *net) -> float { return net->sinks.size(); }, router.nets.size(), bg::make<box>(0, 0, nx+1, ny+1), opts->num_net_cuts, horizontal, &router.root);
-	}
-
-	verify_tree(&router.root, nets);
-
-	router.num_levels = opts->num_net_cuts+1;
-
-	print_tree(&router.root, 0);
-
-	fpga_tree_node_t root_for_regions;
-	int num_fpga_cuts = opts->num_net_cuts + opts->num_extra_cuts;
-
-	if (opts->net_partitioner == NetPartitioner::Uniform) {
-		bg::assign_values(root_for_regions.bb, 0, 0, nx+1, ny+1);
-		fpga_bipartition(&root_for_regions, num_fpga_cuts, horizontal_cut);
-	} else {
-		assert(opts->net_partitioner == NetPartitioner::Median);
-
-		net_tree_to_region_tree(&router.root, &root_for_regions, opts->num_extra_cuts);
-	}
-
-	print_tree(&root_for_regions, 0);
-
-	vector<region_t> fpga_regions;
 	//init_fpga_regions(4, router.e_state, opts->num_threads, fpga_regions);
-	int gid = 0;
-	fpga_regions_from_tree(&root_for_regions, router.e_state, opts->num_threads, gid, fpga_regions);
-	assert(fpga_regions.size() == (1 << num_fpga_cuts));
-
-	/* checking */
-	for (int i = 0; i < fpga_regions.size(); ++i) {
-		for (int j = i+1; j < fpga_regions.size(); ++j) {
-			assert(!bg::intersects(fpga_regions[i].bb, fpga_regions[j].bb));
-		}
-	}
-
-	for (auto &r : fpga_regions) {
-		router.fpga_regions.push_back(&r);	
-	}
-	init_rr_node_regions(router.g, fpga_regions, router.rr_regions);
 
 	//vector<net_t> nets_copy = nets;
 	//std::sort(begin(nets_copy), end(nets_copy), [] (const net_t &a, const net_t &b) -> bool {
@@ -3811,6 +3875,7 @@ bool speculative_deterministic_route_hb_fine(t_router_opts *opts)
 	zlog_put_mdc("tid", buffer);
 
 	bool routed = false;
+	unsigned long prev_num_overused_nodes = std::numeric_limits<unsigned long>::max();
 	for (; router.iter < opts->max_router_iterations && !routed; ++router.iter) {
 		sprintf(buffer, "%d", router.iter.load());
 		zlog_put_mdc("iter", buffer);
@@ -3826,6 +3891,12 @@ bool speculative_deterministic_route_hb_fine(t_router_opts *opts)
 		//}
 		
 		//assert(router.sync.fast_global_pending_nets.size_approx() > 0);
+		sprintf(buffer, "%s/nets_iter_%d.txt", dirname, router.iter.load());
+
+		FILE *nets_out = fopen(buffer, "w");
+		for (const auto &net : router.nets) {
+			fprintf(nets_out, "%d\n", net->local_id);
+		}
 
 		for (int i = 0; i < router.num_levels; ++i) {
 			for (int j = 0; j < opts->num_threads; ++j) {
@@ -3845,7 +3916,7 @@ bool speculative_deterministic_route_hb_fine(t_router_opts *opts)
 			}
 		}
 
-		for (int i = 0; i < nets.size(); ++i) {
+		for (int i = 0; i < router.nets.size(); ++i) {
 			router.net_route_time[i] = timer::duration::zero();
 
 			router.net_stats[i].num_heap_pops = std::numeric_limits<int>::max();
@@ -3855,13 +3926,13 @@ bool speculative_deterministic_route_hb_fine(t_router_opts *opts)
 			router.net_router[i] = -1;
 		}
 
-		for (auto &net : nets) {
-			update_sink_criticalities(net, router.state.net_timing[net.vpr_id], router.params);
+		for (auto &net : router.nets) {
+			update_sink_criticalities(*net, router.state.net_timing[net->vpr_id], router.params);
 		}
 
-		for (int i = 0; i < fpga_regions.size(); ++i) {
-			region_clear_mods(fpga_regions[i]);
-			det_mutex_reset(fpga_regions[i].mutex);
+		for (int i = 0; i < router.fpga_regions.size(); ++i) {
+			region_clear_mods(router.fpga_regions[i]);
+			det_mutex_reset(router.fpga_regions[i].mutex);
 		}
 
 		/* must be initialized here to prevent race condition during get_next_net */
@@ -3895,9 +3966,9 @@ bool speculative_deterministic_route_hb_fine(t_router_opts *opts)
 						continue;
 					}
 
-					if (router.fpga_regions[i]->num_committed_mods[k][l] != router.fpga_regions[i]->mods[l].size()) {
-						printf("%d %d %d %d %d %lu\n", i, k, l, router.fpga_regions[i]->gid, router.fpga_regions[i]->num_committed_mods[k][l],
-								router.fpga_regions[i]->mods[l].size());
+					if (router.fpga_regions[i].num_committed_mods[k][l] != router.fpga_regions[i].mods[l].size()) {
+						printf("%d %d %d %d %d %lu\n", i, k, l, router.fpga_regions[i].gid, router.fpga_regions[i].num_committed_mods[k][l],
+								router.fpga_regions[i].mods[l].size());
 						assert(false);
 					}
 				}
@@ -3909,17 +3980,10 @@ bool speculative_deterministic_route_hb_fine(t_router_opts *opts)
 				router.state.congestion[i][j].recalc_occ = 0; 
 			}
 
-#if defined(TEST)
-			for (const auto &net : router.nets) {
-				check_route_tree(router.state.route_trees[net->local_id], *net, router.g);
-				recalculate_occ(router.state.route_trees[net->local_id], router.g, router.state.congestion[i]);
-			}
-#else
 			for (const auto &net : nets) {
 				check_route_tree(router.state.route_trees[net.local_id], net, router.g);
 				recalculate_occ(router.state.route_trees[net.local_id], router.g, router.state.congestion[i]);
 			}
-#endif
 
 			bool valid = true;
 			for (int j = 0; j < num_vertices(router.g); ++j) {
@@ -4102,6 +4166,30 @@ bool speculative_deterministic_route_hb_fine(t_router_opts *opts)
 				}
 			}
 
+			bool switch_to_phase_two = (router.iter > 10 && num_overused_nodes > prev_num_overused_nodes);
+			if (switch_to_phase_two) {
+				vector<net_t *> congested_nets;
+				for (const auto &net : router.nets) {
+					if (route_tree_is_congested(router.state.route_trees[net->local_id], router.g, router.state.congestion[0])) {
+						congested_nets.push_back(net);
+					}
+				}
+				assert(congested_nets.size() <= router.nets.size());
+
+				printf("Num congested nets: %lu\n", congested_nets.size());
+
+				router.nets = std::move(congested_nets);
+
+				clear_tree(&router.net_root);
+				router.fpga_regions.clear();
+
+				lmao2(router, opts, nets.size());
+
+				prev_num_overused_nodes = std::numeric_limits<unsigned long>::max();
+			} else {
+				prev_num_overused_nodes = num_overused_nodes;
+			}
+
 			//auto update_cost_start = timer::now();
 
 			if (router.iter == 0) {
@@ -4141,13 +4229,13 @@ bool speculative_deterministic_route_hb_fine(t_router_opts *opts)
 				FILE *out = fopen(buffer, "w");
 				double total_area = 0;
 				unsigned long total_sinks = 0;
-				for (int i = 0; i < router.net_router.size(); ++i) {
-					assert(nets[i].local_id == i);
-					if (router.net_router[i] == thread && router.net_level[i] == level) {
-						double area = bg::area(nets[i].bounding_box);
-						unsigned long sinks = nets[i].sinks.size();
-						fprintf(out, "%d %d %d %g %lu %lu %d %d %d\n", router.net_level[i], router.net_router[i], i, area, sinks, duration_cast<nanoseconds>(router.net_route_time[i]).count(),
-								router.net_stats[i].num_heap_pops, router.net_stats[i].num_heap_pushes, router.net_stats[i].num_neighbor_visits);
+				for (int i = 0; i < router.nets.size(); ++i) {
+					int id = router.nets[i]->local_id;
+					if (router.net_router[id] == thread && router.net_level[id] == level) {
+						double area = bg::area(router.nets[i]->bounding_box);
+						unsigned long sinks = router.nets[i]->sinks.size();
+						fprintf(out, "%d %d %d %g %lu %lu %d %d %d\n", router.net_level[id], router.net_router[id], id, area, sinks, duration_cast<nanoseconds>(router.net_route_time[id]).count(),
+								router.net_stats[id].num_heap_pops, router.net_stats[id].num_heap_pushes, router.net_stats[id].num_neighbor_visits);
 						total_area += area;
 						total_sinks += sinks;
 					}
@@ -4198,12 +4286,15 @@ bool speculative_deterministic_route_hb_fine(t_router_opts *opts)
 			//route_tree_clear(router.state.back_route_trees[i]);
 		//}
 		//std::swap(router.state.route_trees, router.state.back_route_trees);
-		for (int i = 0; i < nets.size(); ++i) {
-			router.state.back_added_rr_nodes[i].clear();
+		/* TODO: check whether this is correct */
+		for (int i = 0; i < router.nets.size(); ++i) {
+			int id = router.nets[i]->local_id;
+			router.state.back_added_rr_nodes[id].clear();
 		}
 		std::swap(router.state.added_rr_nodes, router.state.back_added_rr_nodes);
-		for (int i = 0; i < nets.size(); ++i) {
-			route_tree_clear(router.state.route_trees[i]);
+		for (int i = 0; i < router.nets.size(); ++i) {
+			int id = router.nets[i]->local_id;
+			route_tree_clear(router.state.route_trees[id]);
 		}
 	}
 

@@ -3,7 +3,7 @@
 
 #include "new_rr_graph.h"
 
-#define PRINT_RR_NODE
+//#define PRINT_RR_NODE
 
 void init_sprintf_rr_node(const RRGraph *_rr_graph);
 
