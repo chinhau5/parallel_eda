@@ -130,6 +130,7 @@ struct /*alignas(64)*/ router_t {
 	worker_sync_t sync;
 	RRGraph g;
 	global_route_state_t state;
+	bool phase_two;
 
 	fpga_tree_node_t net_root;
 	int num_levels;
@@ -1454,7 +1455,11 @@ static void do_work_3(router_t<net_t *> *router, SpeculativeDeterministicRouter 
 
 		auto route_start = timer::now();
 
-		while (node && (inet = get_next_net(router->sync.lock[level][inode], tid, num_nodes, router->sync.net_index[level][inode], get_net_wait_time)) < node->nets.size()) {
+		if (!node || (router->phase_two && (tid % threads_per_node != 0))) {
+			goto done_routing;
+		}
+
+		while ((inet = get_next_net(router->sync.lock[level][inode], tid, num_nodes, router->sync.net_index[level][inode], get_net_wait_time)) < node->nets.size()) {
 			net_t &net = *node->nets[inet];
 
 			assert(bg::covered_by(net.bounding_box, node->bb));
@@ -1494,6 +1499,7 @@ static void do_work_3(router_t<net_t *> *router, SpeculativeDeterministicRouter 
 #if PROFILE_WAIT_LEVEL >= 1
 				set_context(&router->e_state[tid], 9);
 #endif
+				assert(!router->state.back_added_rr_nodes[net.local_id].empty());
 
 				vector<Mods *> mods(router->fpga_regions.size(), nullptr);
 
@@ -1520,6 +1526,8 @@ static void do_work_3(router_t<net_t *> *router, SpeculativeDeterministicRouter 
 
 				mods_commit(mods, tid, num_nodes, router->fpga_regions, wait_time);
 			}
+
+			assert(route_tree_empty(router->state.route_trees[net.local_id]));
 
 			vector<const sink_t *> sinks;
 			for (int i = 0; i < net.sinks.size(); ++i) {
@@ -1549,6 +1557,7 @@ static void do_work_3(router_t<net_t *> *router, SpeculativeDeterministicRouter 
 			routed_nets[level].push_back(&net);
 		}
 
+done_routing:
 		time[level].route_time = timer::now()-route_start;
 		time[level].wait_time = wait_time;
 		time[level].get_net_wait_time = get_net_wait_time;
@@ -3733,6 +3742,7 @@ bool speculative_deterministic_route_hb_fine(const t_router_opts *opts)
 	//congestion_aligned = (congestion_t *)malloc(sizeof(congestion_t)*num_vertices(router.g));
 //#endif 
 	//router.state.congestion = new(congestion_aligned) congestion_t[num_vertices(router.g)];
+	router.phase_two = false;
 
 	router.state.congestion = new congestion_t *[opts->num_threads];
 	for (int i = 0; i < opts->num_threads; ++i) {
@@ -3958,47 +3968,6 @@ bool speculative_deterministic_route_hb_fine(const t_router_opts *opts)
 		//do_virtual_work(&router, *net_router);
 		do_work_3(&router, *net_router);
 
-		/* checking */
-		for (int i = 0; i < router.fpga_regions.size(); ++i) {
-			for (int k = 0; k < opts->num_threads; ++k) {
-				for (int l = 0; l < opts->num_threads; ++l) {
-					if (l == k) {
-						continue;
-					}
-
-					if (router.fpga_regions[i].num_committed_mods[k][l] != router.fpga_regions[i].mods[l].size()) {
-						printf("%d %d %d %d %d %lu\n", i, k, l, router.fpga_regions[i].gid, router.fpga_regions[i].num_committed_mods[k][l],
-								router.fpga_regions[i].mods[l].size());
-						assert(false);
-					}
-				}
-			}
-		}
-
-		for (int i = 0; i < opts->num_threads; ++i) {
-			for (int j = 0; j < num_vertices(router.g); ++j) {
-				router.state.congestion[i][j].recalc_occ = 0; 
-			}
-
-			for (const auto &net : nets) {
-				check_route_tree(router.state.route_trees[net.local_id], net, router.g);
-				recalculate_occ(router.state.route_trees[net.local_id], router.g, router.state.congestion[i]);
-			}
-
-			bool valid = true;
-			for (int j = 0; j < num_vertices(router.g); ++j) {
-				const auto &props = get_vertex_props(router.g, j);
-				if (props.type == SOURCE || props.type == SINK) {
-					assert(router.state.congestion[i][j].recalc_occ <= props.capacity);
-				} else if (router.state.congestion[i][j].recalc_occ != router.state.congestion[i][j].occ) {
-					sprintf_rr_node_impl(j, buffer);
-					printf("Node %s occ mismatch, recalc: %d original: %d\n", buffer, router.state.congestion[i][j].recalc_occ, router.state.congestion[i][j].occ);
-					valid = false;
-				}
-			}
-			assert(valid);
-		}
-
 		//printf("Resched time [has_resched %d]: %g\n", has_resched ? 1 : 0, duration_cast<nanoseconds>(resched_time).count()/1e9);
 
 		printf("Last clock:\n");
@@ -4151,6 +4120,48 @@ bool speculative_deterministic_route_hb_fine(const t_router_opts *opts)
 
 		//fclose(nrt);
 
+		/* checking */
+		for (int i = 0; i < router.fpga_regions.size(); ++i) {
+			for (int k = 0; k < opts->num_threads; ++k) {
+				for (int l = 0; l < opts->num_threads; ++l) {
+					if (l == k) {
+						continue;
+					}
+
+					if (router.fpga_regions[i].num_committed_mods[k][l] != router.fpga_regions[i].mods[l].size()) {
+						printf("%d %d %d %d %d %lu\n", i, k, l, router.fpga_regions[i].gid, router.fpga_regions[i].num_committed_mods[k][l],
+								router.fpga_regions[i].mods[l].size());
+						assert(false);
+					}
+				}
+			}
+		}
+
+		for (int i = 0; i < opts->num_threads; ++i) {
+			for (int j = 0; j < num_vertices(router.g); ++j) {
+				router.state.congestion[i][j].recalc_occ = 0; 
+			}
+
+			for (const auto &net : nets) {
+				check_route_tree(router.state.route_trees[net.local_id], net, router.g);
+				recalculate_occ(router.state.route_trees[net.local_id], router.g, router.state.congestion[i]);
+			}
+
+			bool valid = true;
+			for (int j = 0; j < num_vertices(router.g); ++j) {
+				const auto &props = get_vertex_props(router.g, j);
+				if (props.type == SOURCE || props.type == SINK) {
+					assert(router.state.congestion[i][j].recalc_occ <= props.capacity);
+				} else if (router.state.congestion[i][j].recalc_occ != router.state.congestion[i][j].occ) {
+					sprintf_rr_node_impl(j, buffer);
+					printf("Node %s occ mismatch, recalc: %d original: %d\n", buffer, router.state.congestion[i][j].recalc_occ, router.state.congestion[i][j].occ);
+					valid = false;
+				}
+			}
+			assert(valid);
+		}
+
+
 		unsigned long num_overused_nodes = 0;
 		vector<int> overused_nodes_by_type(NUM_RR_TYPES, 0);
 
@@ -4184,6 +4195,8 @@ bool speculative_deterministic_route_hb_fine(const t_router_opts *opts)
 				router.fpga_regions.clear();
 
 				lmao2(router, opts, nets.size());
+
+				router.phase_two = true;
 
 				prev_num_overused_nodes = std::numeric_limits<unsigned long>::max();
 			} else {
