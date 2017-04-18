@@ -140,12 +140,12 @@ void det_mutex_lock(det_mutex_t &m, int tid, int num_nodes)
 	auto &stat = stats[level][tid].back();
 
 	stat.index = m.e_state[tid].lock_count;
-	++(m.e_state[tid].lock_count);
 	stat.inet = get_inet(&m.e_state[tid]);
 	stat.context = m.e_state[tid].context;
 	stat.logical_clock = get_logical_clock(&m.e_state[tid]);
 	stat.level = level;
 	stat.released_logical_clock = m.released_logical_clock;
+	stat.num_incs = stat.logical_clock-m.e_state[tid].prev_lock_clock;
 #endif
 
 #if PROFILE_WAIT_LEVEL >= 2
@@ -163,6 +163,16 @@ void det_mutex_lock(det_mutex_t &m, int tid, int num_nodes)
 		if (i == tid) {
 			continue;
 		}
+
+		//stat.others.emplace_back();
+		//stat.others.back().tid = i;
+		//stat.others.back().logical_clock = other;
+		//stat.others.back().inet = get_inet(&m.e_state[i]);
+		//stat.others.back().lock_count = i;
+		//stat.others.back().tid = i;
+		//min_lock_count = m.e_state[i].lock_count;
+		//min_level = m.e_state[i].level;
+
 		unsigned long other = get_logical_clock(&m.e_state[i]);
 		if (other < stat.logical_clock) {
 			if (other < min_clock) {
@@ -174,6 +184,7 @@ void det_mutex_lock(det_mutex_t &m, int tid, int num_nodes)
 				min_level = m.e_state[i].level;
 			}
 		}
+
 	}
 
 	//if (cur < min_clock) {
@@ -197,6 +208,12 @@ void det_mutex_lock(det_mutex_t &m, int tid, int num_nodes)
 	auto wait_start = mtimer::now();
 #endif
 
+#if defined(TRACE_WAIT)
+	tracepoint(hello_world, my_first_tracepoint, tid, m.e_state[tid].context, 1, m.e_state[tid].lock_count);
+#endif
+
+	m.e_state[tid].prev_lock_clock = get_logical_clock(&m.e_state[tid]);
+
 #if defined(INSTRUMENT)
 	stop_logical_clock();
 #elif defined(PMC)
@@ -213,7 +230,7 @@ void det_mutex_lock(det_mutex_t &m, int tid, int num_nodes)
 #if PROFILE_WAIT_LEVEL >= 1
 	stat.num_rounds = 0;
 #endif
-#if PROFILE_WAIT_LEVEL >= 1
+#if defined(SET_CONTEXT)
 	set_context(&m.e_state[tid], 50);
 #endif
 	bool locked = false;
@@ -246,7 +263,8 @@ void det_mutex_lock(det_mutex_t &m, int tid, int num_nodes)
 
 				m.lock->unlock();
 
-				inc_logical_clock(&m.e_state[tid], 1);
+				//inc_logical_clock(&m.e_state[tid], 1);
+				set_logical_clock(&m.e_state[tid], m.released_logical_clock+1);
 			}
 		} else {
 			zlog_level(delta_log, ROUTER_V3, "\tLocked in physical time\n");
@@ -272,7 +290,11 @@ void det_mutex_lock(det_mutex_t &m, int tid, int num_nodes)
 		}
 	}
 
-#if PROFILE_WAIT_LEVEL >= 1
+#if defined(TRACE_WAIT)
+	tracepoint(hello_world, my_first_tracepoint, tid, m.e_state[tid].context, 2, m.e_state[tid].lock_count);
+#endif
+
+#if defined(SET_CONTEXT)
 	set_context(&m.e_state[tid], 51);
 #endif
 	inc_logical_clock(&m.e_state[tid], 1);
@@ -284,8 +306,11 @@ void det_mutex_lock(det_mutex_t &m, int tid, int num_nodes)
 #endif
 
 #if PROFILE_WAIT_LEVEL >= 1
-	stat.wait_time = mtimer::now()-wait_start;
+	stat.start = mtimer::now();
+	stat.wait_time = stat.start-wait_start;
 #endif
+
+	++(m.e_state[tid].lock_count);
 }
 
 void det_mutex_lock_no_wait(det_mutex_t &m, int tid)
@@ -297,12 +322,12 @@ void det_mutex_lock_no_wait(det_mutex_t &m, int tid)
 	auto &stat = stats[level][tid].back();
 
 	stat.index = m.e_state[tid].lock_count;
-	++(m.e_state[tid].lock_count);
 	stat.inet = get_inet(&m.e_state[tid]);
 	stat.context = m.e_state[tid].context;
-	stat.logical_clock = 0;
+	stat.logical_clock = get_logical_clock(&m.e_state[tid]);
 	stat.level = level;
 	stat.released_logical_clock = 0;
+	stat.num_incs = stat.logical_clock-m.e_state[tid].prev_lock_clock;
 
 	stat.max = 0;
 	stat.max_logical_clock = 0;
@@ -317,6 +342,12 @@ void det_mutex_lock_no_wait(det_mutex_t &m, int tid)
 	auto wait_start = mtimer::now();
 #endif
 
+#if defined(TRACE_WAIT)
+	tracepoint(hello_world, my_first_tracepoint, tid, m.e_state[tid].context, 3, m.e_state[tid].lock_count);
+#endif
+
+	m.e_state[tid].prev_lock_clock = get_logical_clock(&m.e_state[tid]);
+
 #if defined(INSTRUMENT)
 	stop_logical_clock();
 #elif defined(PMC)
@@ -325,16 +356,14 @@ void det_mutex_lock_no_wait(det_mutex_t &m, int tid)
 
 	zlog_level(delta_log, ROUTER_V3, "[%d] Thread %d acquiring lock, region %d cur clock %lu no wait [e_state %lX]\n", stat.index, tid, m.e_state[tid].region, get_logical_clock(&m.e_state[tid]), m.e_state);
 
-#if PROFILE_WAIT_LEVEL >= 1
-	stat.num_rounds = 0;
-#endif
-#if PROFILE_WAIT_LEVEL >= 1
+#if defined(SET_CONTEXT)
 	set_context(&m.e_state[tid], 52);
 #endif
-#if PROFILE_WAIT_LEVEL >= 1
-	++stat.num_rounds;
-#endif
 	m.lock->lock();
+
+#if defined(TRACE_WAIT)
+	tracepoint(hello_world, my_first_tracepoint, tid, m.e_state[tid].context, 4, m.e_state[tid].lock_count);
+#endif
 
 	zlog_level(delta_log, ROUTER_V3, "\tManaged to lock, released_thread %d released_logical_clock %lu released_no_wait %d\n", m.released_thread, m.released_logical_clock, m.released_no_wait);
 
@@ -352,8 +381,12 @@ void det_mutex_lock_no_wait(det_mutex_t &m, int tid)
 #endif
 
 #if PROFILE_WAIT_LEVEL >= 1
-	stat.wait_time = mtimer::now()-wait_start;
+	stat.num_rounds = 1;
+	stat.start = mtimer::now();
+	stat.wait_time = stat.start-wait_start;
 #endif
+
+	++(m.e_state[tid].lock_count);
 }
 
 void det_mutex_unlock(det_mutex_t &m, int tid)
@@ -362,6 +395,11 @@ void det_mutex_unlock(det_mutex_t &m, int tid)
 	stop_logical_clock();
 #elif defined(PMC)
 	stop_logical_clock(tid);
+#endif
+
+#if PROFILE_WAIT_LEVEL >= 1
+	auto &stat = stats[m.e_state[tid].level][tid].back();
+	stat.length = mtimer::now()-stat.start;
 #endif
 
 	unsigned long cur = get_logical_clock(&m.e_state[tid]);
@@ -381,7 +419,7 @@ void det_mutex_unlock(det_mutex_t &m, int tid)
 
 	zlog_level(delta_log, ROUTER_V3, "Thread %d released lock, region %d clock %lu [e_state %lX]\n", tid, m.e_state[tid].region, get_logical_clock(&m.e_state[tid]), m.e_state);
 
-#if PROFILE_WAIT_LEVEL >= 1
+#if defined(SET_CONTEXT)
 	set_context(&m.e_state[tid], 53);
 #endif
 	inc_logical_clock(&m.e_state[tid], 1);
@@ -401,6 +439,11 @@ void det_mutex_unlock_no_wait(det_mutex_t &m, int tid)
 	stop_logical_clock(tid);
 #endif
 
+#if PROFILE_WAIT_LEVEL >= 1
+	auto &stat = stats[m.e_state[tid].level][tid].back();
+	stat.length = mtimer::now()-stat.start;
+#endif
+
 	m.released_thread = tid;
 	m.released_no_wait = 1;
 
@@ -410,7 +453,7 @@ void det_mutex_unlock_no_wait(det_mutex_t &m, int tid)
 
 	zlog_level(delta_log, ROUTER_V3, "Thread %d released lock, region %d clock %lu no wait [e_state %lX]\n", tid, m.e_state[tid].region, get_logical_clock(&m.e_state[tid]), m.e_state);
 
-#if PROFILE_WAIT_LEVEL >= 1
+#if defined(SET_CONTEXT)
 	set_context(&m.e_state[tid], 54);
 #endif
 	inc_logical_clock(&m.e_state[tid], 1);

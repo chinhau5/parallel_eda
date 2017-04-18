@@ -25,8 +25,8 @@
 
 using namespace std;
 
-using timer = std::chrono::high_resolution_clock;
-//using timer = myclock;
+//using timer = std::chrono::high_resolution_clock;
+using timer = myclock;
 using std::chrono::duration_cast;
 using std::chrono::nanoseconds;
 
@@ -162,20 +162,26 @@ struct /*alignas(64)*/ router_t {
 	vector<int> net_level;
 };
 
-#if defined(WRITE_NO_WAIT)
+#if defined(PROFILE_CLOCK)
 
 struct add_to_heap_clock_stat {
-	int num_added;
+	unsigned long num_clocks;
+	int net;
+	int level;
 	timer::duration time;
 };
 
 struct dijkstra_clock_stat {
-	unsigned long a;
+	unsigned long num_clocks;
+	int net;
+	int level;
 	timer::duration time;
 };
 
 struct backtrack_clock_stat {
 	unsigned long num_clocks;
+	int net;
+	int level;
 	timer::duration time;
 };
 
@@ -190,9 +196,9 @@ static exec_state_t *g_e_state;
 //static tbb::spin_mutex g_lock;
 
 #if defined(PROFILE_CLOCK)
-static vector<vector<add_to_heap_clock_stat>, tbb::cache_aligned_allocator<vector<add_to_heap_clock_stat>>> g_add_to_heap;
-static vector<vector<dijkstra_clock_stat>, tbb::cache_aligned_allocator<vector<dijkstra_clock_stat>>> g_dijkstra;
-static vector<vector<backtrack_clock_stat>, tbb::cache_aligned_allocator<vector<backtrack_clock_stat>>> g_backtrack;
+static vector<vector<add_to_heap_clock_stat>> g_add_to_heap;
+static vector<vector<dijkstra_clock_stat>> g_dijkstra;
+static vector<vector<backtrack_clock_stat>> g_backtrack;
 #endif
 
 static char dirname[256];
@@ -358,7 +364,7 @@ void stop_logical_clock(int es)
 
 void region_add_mod(region_t &o, int tid, int num_nodes, Mods *mods, timer::duration &wait_time)
 {
-#if PROFILE_WAIT_LEVEL >= 1
+#if defined(SET_CONTEXT)
 	g_e_state[tid].region = o.gid;
 #endif
 
@@ -382,7 +388,7 @@ void region_add_mod(region_t &o, int tid, int num_nodes, Mods *mods, timer::dura
 
 void region_add_mod(region_t &o, int tid, int num_nodes, Mods *mods, timer::duration &wait_time)
 {
-#if PROFILE_WAIT_LEVEL >= 1
+#if defined(SET_CONTEXT)
 	g_e_state[tid].region = o.gid;
 #endif
 
@@ -506,7 +512,7 @@ void region_get_mods_unlocked(region_t &o, int tid, const Callback &f)
 template<typename Callback>
 void region_get_mods(region_t &o, int tid, int num_nodes, const Callback &f, timer::duration &wait_time)
 {
-#if PROFILE_WAIT_LEVEL >= 1
+#if defined(SET_CONTEXT)
 	g_e_state[tid].region = o.gid;
 #endif
 
@@ -679,7 +685,7 @@ class SpeculativeDeterministicRouter {
 	private:
 		void popped_node(const heap_node_t<RREdge, extra_route_state_t> &node)
 		{
-#if PROFILE_WAIT_LEVEL >= 1
+#if defined(SET_CONTEXT)
 			set_context(_e_state, 0);
 #endif
 			char buffer[256];
@@ -768,7 +774,7 @@ class SpeculativeDeterministicRouter {
 
 		bool expand_node(int node)
 		{
-#if PROFILE_WAIT_LEVEL >= 1
+#if defined(SET_CONTEXT)
 			set_context(_e_state, 1);
 #endif
 #if !defined(INSTRUMENT) && !defined(PMC)
@@ -821,7 +827,7 @@ class SpeculativeDeterministicRouter {
 
 		void get_edge_weight(const RREdge &e, float &known_distance, float &distance, extra_route_state_t &extra)
 		{
-#if PROFILE_WAIT_LEVEL >= 1
+#if defined(SET_CONTEXT)
 			set_context(_e_state, 2);
 #endif
 
@@ -920,7 +926,7 @@ class SpeculativeDeterministicRouter {
 
 		void push_node(const heap_node_t<RREdge, extra_route_state_t> &node)
 		{
-#if PROFILE_WAIT_LEVEL >= 1
+#if defined(SET_CONTEXT)
 			set_context(_e_state, 4);
 #endif
 
@@ -977,7 +983,7 @@ class SpeculativeDeterministicRouter {
 
 		void backtrack(int sink_node, route_tree_t &rt, vector<RRNode> &added_rr_nodes)
 		{
-#if PROFILE_WAIT_LEVEL >= 1
+#if defined(SET_CONTEXT)
 			set_context(_e_state, 5);
 #endif
 
@@ -1018,7 +1024,7 @@ class SpeculativeDeterministicRouter {
 
 			RRNode child_rr_node = sink_node;
 
-#if PROFILE_WAIT_LEVEL >= 1
+#if defined(SET_CONTEXT)
 			set_context(_e_state, 6);
 #endif
 
@@ -1090,7 +1096,7 @@ class SpeculativeDeterministicRouter {
 		//friend void delta_stepping(const Graph &g, const vector<heap_node_t<Edge>> &sources, int sink, float delta, float *known_distance, float *distance, Edge *prev_edge, const EdgeWeightFunc &edge_weight, Callbacks &callbacks);
 
 		template<typename Graph, typename Edge, typename EdgeWeightFunc, typename ExpandCheckFunc, typename Callbacks, typename Extra>
-		friend void dijkstra(const Graph &g, const vector<heap_node_t<Edge, Extra>> &sources, int sink, float *known_distance, float *distance, Edge *prev_edge, const ExpandCheckFunc &expand_node, const EdgeWeightFunc &edge_weight, Callbacks &callbacks);
+		friend void dijkstra(const Graph &g, priority_queue<heap_node_t<Edge, Extra>> &sources, int sink, float *known_distance, float *distance, Edge *prev_edge, const ExpandCheckFunc &expand_node, const EdgeWeightFunc &edge_weight, Callbacks &callbacks);
 
 		//template<typename Edge, typename Callbacks>
 		//friend void relax(Buckets &buckets, float delta, vector<bool> &in_bucket, const vector<bool> &vertex_deleted,
@@ -1208,16 +1214,21 @@ class SpeculativeDeterministicRouter {
 						buffer, sink_props.real_xlow, sink_props.real_ylow,
 						bg::get<bg::min_corner, 0>(sink->bounding_box), bg::get<bg::max_corner, 0>(sink->bounding_box), bg::get<bg::min_corner, 1>(sink->bounding_box), bg::get<bg::max_corner, 1>(sink->bounding_box));
 
-#if PROFILE_WAIT_LEVEL >= 1
+#if defined(SET_CONTEXT)
 				set_context(_e_state, 7);
 #endif
 
-				vector<heap_node_t<RREdge, extra_route_state_t>> sources;
+				//vector<heap_node_t<RREdge, extra_route_state_t>> sources;
+				std::priority_queue<heap_node_t<RREdge, extra_route_state_t>> sources;
 
 #if defined(PROFILE_CLOCK)
-				auto add_to_heap_start = timer::now();
 				add_to_heap_clock_stat add_to_heap;
-				add_to_heap.num_added = 0;
+
+				add_to_heap.level = log2(_num_nodes);
+				add_to_heap.net = get_inet(_e_state);
+				add_to_heap.num_clocks = get_logical_clock(_e_state);
+
+				auto add_to_heap_start = timer::now();
 #endif
 
 				dijkstra_stats_t before = _stats;
@@ -1245,15 +1256,12 @@ class SpeculativeDeterministicRouter {
 
 							zlog_level(delta_log, ROUTER_V3, "Adding %s back to heap [same %d ortho %d] [delay %g upstream_R %g] [kd: %g d: %g prev: %d]\n", buffer, same, ortho, rt_node_p.delay, rt_node_p.upstream_R, kd, d, get_source(_g, prev));
 
-							sources.push_back({ node, kd, d, prev, { same, ortho, true, rt_node_p.upstream_R, rt_node_p.delay } });
+							//sources.push_back({ node, kd, d, prev, { same, ortho, true, rt_node_p.upstream_R, rt_node_p.delay } });
+							sources.push({ node, kd, d, prev, { same, ortho, true, rt_node_p.upstream_R, rt_node_p.delay } });
 
 #if !defined(INSTRUMENT) && !defined(PMC)
 							//_e_state->logical_clock->fetch_add(INC_COUNT, std::memory_order_relaxed);
 							inc_logical_clock(_e_state, INC_COUNT);
-#endif
-
-#if defined(PROFILE_CLOCK)
-							++add_to_heap.num_added;
 #endif
 						}
 					} else {
@@ -1263,18 +1271,30 @@ class SpeculativeDeterministicRouter {
 
 #if defined(PROFILE_CLOCK)
 				add_to_heap.time = timer::now()-add_to_heap_start;
+
+				add_to_heap.num_clocks = get_logical_clock(_e_state)-add_to_heap.num_clocks;
+
 				g_add_to_heap[_instance].emplace_back(add_to_heap);
 #endif
 
 				//delta_stepping(_g, sources, sink->rr_node, delta, _known_distance, _distance, _prev_edge, [this] (const RREdge &e) -> pair<float, float> { return get_edge_weight(e); }, *this);
 #if defined(PROFILE_CLOCK)
-				auto dijkstra_start = timer::now();
 				dijkstra_clock_stat dijkstra_cs;
-				//dijkstra_cs;
+
+				dijkstra_cs.level = log2(_num_nodes);
+				dijkstra_cs.net = get_inet(_e_state);
+				dijkstra_cs.num_clocks = get_logical_clock(_e_state);
+
+				auto dijkstra_start = timer::now();
 #endif
+
 				dijkstra(_g, sources, sink->rr_node, _known_distance, _distance, _prev_edge, [this] (int rr_node) -> bool { return expand_node(rr_node); }, [this] (const RREdge &e, float &known_distance, float &distance, extra_route_state_t &extra) -> void { return get_edge_weight(e, known_distance, distance, extra); }, *this);
+
 #if defined(PROFILE_CLOCK)
 				dijkstra_cs.time = timer::now()-dijkstra_start;
+
+				dijkstra_cs.num_clocks = get_logical_clock(_e_state)-dijkstra_cs.num_clocks;
+
 				g_dijkstra[_instance].emplace_back(dijkstra_cs);
 #endif
 
@@ -1287,21 +1307,27 @@ class SpeculativeDeterministicRouter {
 						);
 
 #if defined(PROFILE_CLOCK)
-				auto backtrack_start  = timer::now();
 				backtrack_clock_stat backtrack_cs;
+
+				backtrack_cs.level = log2(_num_nodes);
+				backtrack_cs.net = get_inet(_e_state);
 				backtrack_cs.num_clocks = get_logical_clock(_e_state);
+
+				auto backtrack_start  = timer::now();
 #endif
 				backtrack(sink->rr_node, rt, added_rr_nodes);
 #if defined(PROFILE_CLOCK)
-				backtrack_cs.num_clocks = get_logical_clock(_e_state)-backtrack_cs.num_clocks;
 				backtrack_cs.time = timer::now()-backtrack_start;
+
+				backtrack_cs.num_clocks = get_logical_clock(_e_state)-backtrack_cs.num_clocks;
+
 				g_backtrack[_instance].emplace_back(backtrack_cs);
 #endif
 
 				assert(get_vertex_props(rt.graph, route_tree_get_rt_node(rt, sink->rr_node)).delay == _state[sink->rr_node].delay);
 				net_timing.delay[sink->id+1] = _state[sink->rr_node].delay;
 
-#if PROFILE_WAIT_LEVEL >= 1
+#if defined(SET_CONTEXT)
 				set_context(_e_state, 8);
 #endif
 
@@ -1345,11 +1371,9 @@ std::atomic<int> SpeculativeDeterministicRouter::_num_instances{ 0 };
 
 int get_next_net(det_mutex_t &lock, int tid, int num_nodes, std::atomic<int> &net_index, timer::duration &wait_time)
 {
-#if PROFILE_WAIT_LEVEL >= 1
+#if defined(SET_CONTEXT)
 	g_e_state[tid].region = -2;
 	set_context(&g_e_state[tid], 10);
-#endif
-#if PROFILE_WAIT_LEVEL >= 1
 #endif
 
 	int inet;
@@ -1403,8 +1427,6 @@ static void do_work_3(router_t<net_t *> *router, SpeculativeDeterministicRouter 
 
 	fpga_tree_node_t *node = &router->net_root;
 	for (int level = 0; level < router->num_levels; ++level) {
-		router->e_state[tid].level = level;
-
 		int regions_per_thread = router->fpga_regions.size()/router->num_threads;
 		int base = tid*regions_per_thread;
 		int count = tid == router->num_threads-1 ? regions_per_thread + (router->fpga_regions.size() % router->num_threads) : regions_per_thread;
@@ -1412,14 +1434,22 @@ static void do_work_3(router_t<net_t *> *router, SpeculativeDeterministicRouter 
 			det_mutex_reset(router->fpga_regions[i].mutex);
 		}
 
+		router->e_state[tid].level = level;
+
+#if defined(SET_CONTEXT)
+		set_context(&router->e_state[tid], -2);
+#endif
+
 #if defined(INSTRUMENT)
 		reset_logical_clock();
 #else
 		set_logical_clock(&router->e_state[tid], 0);
-		set_inet(&router->e_state[tid], -tid-1); /* guarantees that cur_inet != inet */
 #endif
-
 		assert(get_logical_clock(&router->e_state[tid]) == 0);
+
+		set_inet(&router->e_state[tid], -tid-1); /* guarantees that cur_inet != inet */
+
+		router->e_state[tid].prev_lock_clock = 0;
 
 #if defined(INSTRUMENT)
 		start_logical_clock();
@@ -1496,7 +1526,7 @@ static void do_work_3(router_t<net_t *> *router, SpeculativeDeterministicRouter 
 				//}
 				//}
 
-#if PROFILE_WAIT_LEVEL >= 1
+#if defined(SET_CONTEXT)
 				set_context(&router->e_state[tid], 9);
 #endif
 				assert(!router->state.back_added_rr_nodes[net.local_id].empty());
@@ -1570,10 +1600,10 @@ done_routing:
 #endif
 		last_clock[level] = get_logical_clock(&router->e_state[tid]);
 
-#if PROFILE_WAIT_LEVEL >= 1
+#if defined(SET_CONTEXT)
 		set_context(&router->e_state[tid], 500);
-		set_inet(&router->e_state[tid], std::numeric_limits<int>::max());
 #endif
+		set_inet(&router->e_state[tid], std::numeric_limits<int>::max());
 
 		auto last_barrier_wait_start = timer::now();
 #ifdef PTHREAD_BARRIER
@@ -1808,7 +1838,7 @@ static void do_work_2(router_t<net_t *> *router, SpeculativeDeterministicRouter 
 			//}
 			//}
 			
-#if PROFILE_WAIT_LEVEL >= 1
+#if defined(SET_CONTEXT)
 			set_context(&router->e_state[tid], 9);
 #endif
 
@@ -1875,10 +1905,10 @@ static void do_work_2(router_t<net_t *> *router, SpeculativeDeterministicRouter 
 #endif
 	router->last_clock[0][tid] = get_logical_clock(&router->e_state[tid]);
 
-#if PROFILE_WAIT_LEVEL >= 1
+#if defined(SET_CONTEXT)
 	set_context(&router->e_state[tid], 500);
-	set_inet(&router->e_state[tid], -1);
 #endif
+	set_inet(&router->e_state[tid], -1);
 
 	auto last_barrier_wait_start = timer::now();
 #ifdef PTHREAD_BARRIER
@@ -2681,6 +2711,11 @@ void max_independent_rectangles_internal_lb(
 {
 	printf("level %d\n", level);
 
+	print_tabs(level); printf("box %d %d %d %d hor %d\n",
+			bg::get<bg::min_corner, 0>(bb), bg::get<bg::max_corner, 0>(bb),
+			bg::get<bg::min_corner, 1>(bb), bg::get<bg::max_corner, 1>(bb),
+			horizontal);
+
 	assert(!nets.empty());
 
 	if (level > 0) {
@@ -2716,10 +2751,12 @@ void max_independent_rectangles_internal_lb(
 					opt_cut, min_diff,
 					left_nets, right_nets, node->nets);
 		}
+
+		printf("opt_cut %d\n", opt_cut);
 		
 		box left_box, right_box;
 		if (horizontal) {
-			assert((opt_cut > bg::get<bg::min_corner, 1>(bb) && opt_cut < bg::get<bg::max_corner, 1>(bb)));
+			assert((opt_cut >= bg::get<bg::min_corner, 1>(bb) && opt_cut <= bg::get<bg::max_corner, 1>(bb)));
 
 			bg::set<bg::min_corner, 0>(left_box, bg::get<bg::min_corner, 0>(bb));
 			bg::set<bg::max_corner, 0>(left_box, bg::get<bg::max_corner, 0>(bb));
@@ -2737,10 +2774,10 @@ void max_independent_rectangles_internal_lb(
 			//bg::get<bg::min_corner, 0>(split_1), bg::get<bg::max_corner, 0>(split_1),
 			//bg::get<bg::min_corner, 1>(split_1), bg::get<bg::max_corner, 1>(split_1));
 
-			assert((bg::get<bg::min_corner, 1>(left_box) < bg::get<bg::max_corner, 1>(left_box)));
-			assert((bg::get<bg::min_corner, 1>(right_box) < bg::get<bg::max_corner, 1>(right_box)));
+			assert((bg::get<bg::min_corner, 1>(left_box) <= bg::get<bg::max_corner, 1>(left_box)));
+			assert((bg::get<bg::min_corner, 1>(right_box) <= bg::get<bg::max_corner, 1>(right_box)));
 		} else {
-			assert((opt_cut > bg::get<bg::min_corner, 0>(bb) && opt_cut < bg::get<bg::max_corner, 0>(bb)));
+			assert((opt_cut >= bg::get<bg::min_corner, 0>(bb) && opt_cut <= bg::get<bg::max_corner, 0>(bb)));
 
 			bg::set<bg::min_corner, 1>(left_box, bg::get<bg::min_corner, 1>(bb));
 			bg::set<bg::max_corner, 1>(left_box, bg::get<bg::max_corner, 1>(bb));
@@ -2758,14 +2795,9 @@ void max_independent_rectangles_internal_lb(
 			//bg::get<bg::min_corner, 0>(split_1), bg::get<bg::max_corner, 0>(split_1),
 			//bg::get<bg::min_corner, 1>(split_1), bg::get<bg::max_corner, 1>(split_1));
 
-			assert((bg::get<bg::min_corner, 0>(left_box) < bg::get<bg::max_corner, 0>(left_box)));
-			assert((bg::get<bg::min_corner, 0>(right_box) < bg::get<bg::max_corner, 0>(right_box)));
+			assert((bg::get<bg::min_corner, 0>(left_box) <= bg::get<bg::max_corner, 0>(left_box)));
+			assert((bg::get<bg::min_corner, 0>(right_box) <= bg::get<bg::max_corner, 0>(right_box)));
 		}
-
-		print_tabs(level); printf("box %d %d %d %d hor %d opt_cut %d\n",
-				bg::get<bg::min_corner, 0>(bb), bg::get<bg::max_corner, 0>(bb),
-				bg::get<bg::min_corner, 1>(bb), bg::get<bg::max_corner, 1>(bb),
-				horizontal, opt_cut);
 
 		print_tabs(level); printf("\tleft %d %d %d %d\n",
 				bg::get<bg::min_corner, 0>(left_box), bg::get<bg::max_corner, 0>(left_box),
@@ -3237,18 +3269,24 @@ void test_fpga_bipartition()
 void verify_tree_internal(fpga_tree_node_t *node, vector<net_t *> &nets)
 {
 	for (const auto &net : node->nets) {
-		bg::covered_by(net->bounding_box, node->bb);
+		assert(bg::covered_by(net->bounding_box, node->bb));
 		nets.push_back(net);
 	}
 
 	if (node->left) {
-		assert(node->right);
 		assert(bg::covered_by(node->left->bb, node->bb));
-		assert(bg::covered_by(node->right->bb, node->bb));
-		assert(!bg::intersects(node->left->bb, node->right->bb));
 
 		verify_tree_internal(node->left, nets);
+	}
+
+	if (node->right) {
+		assert(bg::covered_by(node->right->bb, node->bb));
+
 		verify_tree_internal(node->right, nets);
+	}
+
+	if (node->left && node->right) {
+		assert(!bg::intersects(node->left->bb, node->right->bb));
 	}
 }
 
@@ -3422,11 +3460,12 @@ void write_mutex_stats(const char *dirname, int iter, int num_levels, int num_th
 
 				//fprintf(out, "%g %lu %d %lu %d\n", duration_cast<nanoseconds>(s.wait_time).count()/1e9, min_diff, mine->second, max_diff, maxe->second);
 				//for (const auto 
-				fprintf(out, "%d %g %d %lu 00 %lu %d %d %d 00 %lu %d %d %d 00 %d %d\n",
-						s.index, duration_cast<nanoseconds>(s.wait_time).count()/1e9, s.num_rounds, s.max, 
+				fprintf(out, "%d %g %d %lu %lu 00 %lu %d %d %d 00 %lu %d %d %d 00 %d %d 00 %g\n",
+						s.index, duration_cast<nanoseconds>(s.wait_time).count()/1e9, s.num_rounds, s.max, s.num_incs,
 						s.logical_clock, s.level, s.inet, s.context,
 						s.max_logical_clock, s.max_level, s.max_inet, s.max_context,
-						s.max_thread, s.max_lock_count);
+						s.max_thread, s.max_lock_count,
+						duration_cast<nanoseconds>(s.length).count()/1e9);
 			}
 		}
 
@@ -3451,9 +3490,13 @@ void write_inc_time(const char *filename, const vector<pair<inc_time_t, int>> &i
 	fclose(out);
 }
 
-void lmao2(router_t<net_t *> &router, const t_router_opts *opts, int num_all_nets)
+template<typename Load>
+void lmao2(router_t<net_t *> &router, const t_router_opts *opts, int num_all_nets, const Load &load)
 {
 	router.num_levels = opts->num_net_cuts+1;
+
+	clear_tree(&router.net_root);
+	router.fpga_regions.clear();
 
 	extern int nx, ny;
 	bool horizontal_cut = ny > nx ? true : false;
@@ -3469,7 +3512,7 @@ void lmao2(router_t<net_t *> &router, const t_router_opts *opts, int num_all_net
 		extern int nx, ny;
 		bool horizontal = ny > nx;
 
-		max_independent_rectangles_internal_lb(router.nets, [] (const net_t *net) -> float { return net->sinks.size(); }, num_all_nets, bg::make<box>(0, 0, nx+1, ny+1), opts->num_net_cuts, horizontal, &router.net_root);
+		max_independent_rectangles_internal_lb(router.nets, load, num_all_nets, bg::make<box>(0, 0, nx+1, ny+1), opts->num_net_cuts, horizontal, &router.net_root);
 	}
 
 	verify_tree(&router.net_root, router.nets);
@@ -3588,7 +3631,7 @@ bool speculative_deterministic_route_hb_fine(const t_router_opts *opts)
 	//for (auto &net : test_nets) {
 		//router.nets.push_back(&net);
 	//}
-	sprintf(buffer, "%s/nets_inject.txt", dirname);
+	sprintf(buffer, "/tmp/nets_inject.txt", dirname);
 	FILE *nets_in = fopen(buffer, "r");
 	while (!feof(nets_in)) {
 		if (buffer != fgets(buffer, sizeof(buffer), nets_in)) {
@@ -3642,7 +3685,10 @@ bool speculative_deterministic_route_hb_fine(const t_router_opts *opts)
 	print_tree(&test_region_root, 0);
 #endif
 
-	lmao2(router, opts, nets.size());
+	router.net_root.left = nullptr;
+	router.net_root.right = nullptr;
+
+	lmao2(router, opts, nets.size(), [] (const net_t *net) -> float { return net->sinks.size(); });
 
 	//init_fpga_regions(4, router.e_state, opts->num_threads, fpga_regions);
 
@@ -3828,7 +3874,7 @@ bool speculative_deterministic_route_hb_fine(const t_router_opts *opts)
 #ifdef __linux__
 		cpu_set_t cpuset;
 		CPU_ZERO(&cpuset);
-		CPU_SET(4+i, &cpuset);
+		CPU_SET(i, &cpuset);
 		assert(pthread_attr_setaffinity_np(&attr, sizeof(cpu_set_t), &cpuset) == 0);
 #endif
 
@@ -3883,6 +3929,8 @@ bool speculative_deterministic_route_hb_fine(const t_router_opts *opts)
 
 	sprintf(buffer, "%d", net_router->get_instance());
 	zlog_put_mdc("tid", buffer);
+	
+	int num_repartitions = 0;
 
 	bool routed = false;
 	unsigned long prev_num_overused_nodes = std::numeric_limits<unsigned long>::max();
@@ -3890,7 +3938,7 @@ bool speculative_deterministic_route_hb_fine(const t_router_opts *opts)
 		sprintf(buffer, "%d", router.iter.load());
 		zlog_put_mdc("iter", buffer);
 
-		printf("Routing iteration: %d\n", router.iter.load());
+		printf("Routing iteration: %d Num repartitions: %d\n", router.iter.load(), num_repartitions);
 
 		//assert(router.sync.num_incoming_edges.empty());
 
@@ -3942,17 +3990,21 @@ bool speculative_deterministic_route_hb_fine(const t_router_opts *opts)
 
 		for (int i = 0; i < router.fpga_regions.size(); ++i) {
 			region_clear_mods(router.fpga_regions[i]);
-			det_mutex_reset(router.fpga_regions[i].mutex);
 		}
 
 		/* must be initialized here to prevent race condition during get_next_net */
 		for (int i = 0; i < opts->num_threads; ++i) {
-			set_logical_clock(&router.e_state[i], 0);
-			set_inet(&router.e_state[i], -i-1); /* guarantees that cur_inet != inet */
+//#if defined(SET_CONTEXT)
+			//set_context(&router.e_state[i], -2);
+//#endif
+
+			//set_logical_clock(&router.e_state[i], 0);
+			//set_inet(&router.e_state[i], -i-1); [> guarantees that cur_inet != inet <]
+
+			//router.e_state[i].context = -1;
+			router.e_state[i].lock_count = 0;
 
 			router.e_state[i].total_counter = 0;
-			router.e_state[i].context = -1;
-			router.e_state[i].lock_count = 0;
 		}
 
 		for (int i = 0; i < router.num_levels; ++i) {
@@ -4120,6 +4172,89 @@ bool speculative_deterministic_route_hb_fine(const t_router_opts *opts)
 
 		//fclose(nrt);
 
+		for (int level = 0; level < router.num_levels; ++level) {
+			for (int thread = 0; thread < router.num_threads; ++thread) {
+				sprintf(buffer, "%s/net_route_time_iter_%d_level_%d_thread_%d.txt", dirname, router.iter.load(), level, thread);
+				FILE *out = fopen(buffer, "w");
+				double total_area = 0;
+				unsigned long total_sinks = 0;
+				for (int i = 0; i < router.nets.size(); ++i) {
+					int id = router.nets[i]->local_id;
+					if (router.net_router[id] == thread && router.net_level[id] == level) {
+						double area = bg::area(router.nets[i]->bounding_box);
+						unsigned long sinks = router.nets[i]->sinks.size();
+						fprintf(out, "%d %d %d %g %lu %lu %d %d %d\n", router.net_level[id], router.net_router[id], id, area, sinks, duration_cast<nanoseconds>(router.net_route_time[id]).count(),
+								router.net_stats[id].num_heap_pops, router.net_stats[id].num_heap_pushes, router.net_stats[id].num_neighbor_visits);
+						total_area += area;
+						total_sinks += sinks;
+					}
+				}
+				//fprintf(out, "%g %lu\n", total_area, total_sinks);
+				fclose(out);
+			}
+		}
+
+		if (routed) {
+			sprintf(buffer, "%s/routes_final.txt", dirname);
+		} else {
+			sprintf(buffer, "%s/routes_iter_%d.txt", dirname, router.iter.load());
+		}
+		write_routes(buffer, router.state.route_trees, nets.size());
+
+		if (routed) {
+			sprintf(buffer, "%s/net_dijkstra_stats_final.txt", dirname);
+		} else {
+			sprintf(buffer, "%s/net_dijkstra_stats_%d.txt", dirname, router.iter.load());
+		}
+		write_net_dijkstra_stats(buffer, router.net_stats);
+
+		if (routed) {
+			sprintf(buffer, "%s/congestion_state_final.txt", dirname);
+		} else {
+			sprintf(buffer, "%s/congestion_state_%d.txt", dirname, router.iter.load());
+		}
+		write_congestion_state(buffer, router.state.congestion[0], num_vertices(router.g));
+
+		write_mutex_stats(dirname, router.iter, router.num_levels, opts->num_threads);
+
+		for (int i = 0; i < opts->num_threads; ++i) {
+			sprintf(buffer, "%s/inc_iter_%d_tid_%d.txt", dirname, router.iter.load(), i);
+			write_inc_time(buffer, get_inc_time(i));
+		}
+
+#if defined(PROFILE_CLOCK)
+		for (int level = 0; level < router.num_levels; ++level) {
+			for (int i = 0; i < g_add_to_heap.size(); ++i) {
+				sprintf(buffer, "%s/add_to_heap_cs_iter_%d_tid_%d.txt", dirname, router.iter.load(), i);
+				FILE *cs_out = fopen(buffer, "w");
+				for (const auto &cs : g_add_to_heap[i]) {
+					fprintf(cs_out, "%lu %ld %d %d\n", cs.num_clocks, duration_cast<nanoseconds>(cs.time).count(), cs.level, cs.net);
+				}
+				fclose(cs_out);
+			}
+		}
+
+		for (int level = 0; level < router.num_levels; ++level) {
+			for (int i = 0; i < g_backtrack.size(); ++i) {
+				sprintf(buffer, "%s/backtrack_cs_iter_%d_tid_%d.txt", dirname, router.iter.load(), i);
+				FILE *cs_out = fopen(buffer, "w");
+				for (const auto &cs : g_backtrack[i]) {
+					fprintf(cs_out, "%lu %ld %d %d\n", cs.num_clocks, duration_cast<nanoseconds>(cs.time).count(), cs.level, cs.net);
+				}
+				fclose(cs_out);
+			}
+		}
+
+		for (int i = 0; i < g_dijkstra.size(); ++i) {
+			sprintf(buffer, "%s/dijkstra_cs_iter_%d_tid_%d.txt", dirname, router.iter.load(), i);
+			FILE *cs_out = fopen(buffer, "w");
+			for (const auto &cs : g_dijkstra[i]) {
+				fprintf(cs_out, "%lu %ld %d %d\n", cs.num_clocks, duration_cast<nanoseconds>(cs.time).count(), cs.level, cs.net);
+			}
+			fclose(cs_out);
+		}
+#endif
+
 		/* checking */
 		for (int i = 0; i < router.fpga_regions.size(); ++i) {
 			for (int k = 0; k < opts->num_threads; ++k) {
@@ -4161,6 +4296,9 @@ bool speculative_deterministic_route_hb_fine(const t_router_opts *opts)
 			assert(valid);
 		}
 
+		if (router.iter == 0) {
+			//lmao2(router, opts, nets.size(), [&router] (const net_t *net) -> float { return router.net_stats[net->local_id].num_heap_pops; });
+		}
 
 		unsigned long num_overused_nodes = 0;
 		vector<int> overused_nodes_by_type(NUM_RR_TYPES, 0);
@@ -4191,12 +4329,11 @@ bool speculative_deterministic_route_hb_fine(const t_router_opts *opts)
 
 				router.nets = std::move(congested_nets);
 
-				clear_tree(&router.net_root);
-				router.fpga_regions.clear();
-
-				lmao2(router, opts, nets.size());
+				lmao2(router, opts, nets.size(), [&router] (const net_t *net) -> float { return router.net_stats[net->local_id].num_heap_pops; });
 
 				router.phase_two = true;
+
+				++num_repartitions;
 
 				prev_num_overused_nodes = std::numeric_limits<unsigned long>::max();
 			} else {
@@ -4236,56 +4373,6 @@ bool speculative_deterministic_route_hb_fine(const t_router_opts *opts)
 			}
 		}
 
-		for (int level = 0; level < router.num_levels; ++level) {
-			for (int thread = 0; thread < router.num_threads; ++thread) {
-				sprintf(buffer, "%s/net_route_time_iter_%d_level_%d_thread_%d.txt", dirname, router.iter.load(), level, thread);
-				FILE *out = fopen(buffer, "w");
-				double total_area = 0;
-				unsigned long total_sinks = 0;
-				for (int i = 0; i < router.nets.size(); ++i) {
-					int id = router.nets[i]->local_id;
-					if (router.net_router[id] == thread && router.net_level[id] == level) {
-						double area = bg::area(router.nets[i]->bounding_box);
-						unsigned long sinks = router.nets[i]->sinks.size();
-						fprintf(out, "%d %d %d %g %lu %lu %d %d %d\n", router.net_level[id], router.net_router[id], id, area, sinks, duration_cast<nanoseconds>(router.net_route_time[id]).count(),
-								router.net_stats[id].num_heap_pops, router.net_stats[id].num_heap_pushes, router.net_stats[id].num_neighbor_visits);
-						total_area += area;
-						total_sinks += sinks;
-					}
-				}
-				fprintf(out, "%g %lu\n", total_area, total_sinks);
-				fclose(out);
-			}
-		}
-
-		if (routed) {
-			sprintf(buffer, "%s/routes_final.txt", dirname);
-		} else {
-			sprintf(buffer, "%s/routes_iter_%d.txt", dirname, router.iter.load());
-		}
-		write_routes(buffer, router.state.route_trees, nets.size());
-
-		if (routed) {
-			sprintf(buffer, "%s/net_dijkstra_stats_final.txt", dirname);
-		} else {
-			sprintf(buffer, "%s/net_dijkstra_stats_%d.txt", dirname, router.iter.load());
-		}
-		write_net_dijkstra_stats(buffer, router.net_stats);
-
-		if (routed) {
-			sprintf(buffer, "%s/congestion_state_final.txt", dirname);
-		} else {
-			sprintf(buffer, "%s/congestion_state_%d.txt", dirname, router.iter.load());
-		}
-		write_congestion_state(buffer, router.state.congestion[0], num_vertices(router.g));
-
-		write_mutex_stats(dirname, router.iter, router.num_levels, opts->num_threads);
-
-		for (int i = 0; i < opts->num_threads; ++i) {
-			sprintf(buffer, "%s/inc_iter_%d_tid_%d.txt", dirname, router.iter.load(), i);
-			write_inc_time(buffer, get_inc_time(i));
-		}
-
 		//auto analyze_timing_start = timer::now();
 
 		float crit_path_delay = analyze_timing(router.state.net_timing);
@@ -4299,7 +4386,6 @@ bool speculative_deterministic_route_hb_fine(const t_router_opts *opts)
 			//route_tree_clear(router.state.back_route_trees[i]);
 		//}
 		//std::swap(router.state.route_trees, router.state.back_route_trees);
-		/* TODO: check whether this is correct */
 		for (int i = 0; i < router.nets.size(); ++i) {
 			int id = router.nets[i]->local_id;
 			router.state.back_added_rr_nodes[id].clear();

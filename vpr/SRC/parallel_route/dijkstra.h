@@ -1,6 +1,11 @@
 #ifndef DIJKSTRA_H
 #define DIJKSTRA_H
 
+#include <boost/heap/binomial_heap.hpp>
+#include <boost/heap/d_ary_heap.hpp>
+#include <boost/heap/fibonacci_heap.hpp>
+#include <boost/heap/priority_queue.hpp>
+
 template<typename Edge, typename Extra>
 bool operator<(const heap_node_t<Edge, Extra> &a, const heap_node_t<Edge, Extra> &b)
 {
@@ -8,14 +13,16 @@ bool operator<(const heap_node_t<Edge, Extra> &a, const heap_node_t<Edge, Extra>
 }
 
 template<typename Graph, typename Edge, typename EdgeWeightFunc, typename ExpandCheckFunc, typename Callbacks, typename Extra>
-void dijkstra(const Graph &g, const std::vector<heap_node_t<Edge, Extra>> &sources, int sink, float *known_distance, float *distance, Edge *prev_edge, const ExpandCheckFunc &expand_node, const EdgeWeightFunc &edge_weight, Callbacks &callbacks)
+void dijkstra(const Graph &g, std::priority_queue<heap_node_t<Edge, Extra>> &heap, int sink, float *known_distance, float *distance, Edge *prev_edge, const ExpandCheckFunc &expand_node, const EdgeWeightFunc &edge_weight, Callbacks &callbacks)
 {
 	using Item = heap_node_t<Edge, Extra>;
-	std::priority_queue<Item> heap;
+	//std::priority_queue<Item> heap;
+	//boost::heap::d_ary_heap<Item> heap;
+	//boost::heap::priority_queue<Item> heap;
 
-	for (const auto &s : sources) {
-		heap.push(s);
-	}
+	//for (const auto &s : sources) {
+		//heap.push(s);
+	//}
 
 	bool found = false;
 	while (!heap.empty() && !found) {

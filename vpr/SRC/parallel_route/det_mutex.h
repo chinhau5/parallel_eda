@@ -9,10 +9,14 @@
 #include <x86intrin.h>
 #include "log.h"
 #include "clock.h"
+#include "tp.h"
 
 #define PROFILE_WAIT_LEVEL 2
+#define SET_CONTEXT
+//#define TRACE_WAIT
 //#define PMC
 #define TSC
+#define INC_THRESHOLD 1000000
 
 //using mtimer = std::chrono::high_resolution_clock;
 using mtimer = myclock;
@@ -27,12 +31,25 @@ struct alignas(64) exec_state_t {
 	int context;
 	int region;
 	int level;
+	unsigned long prev_lock_clock;
 	std::atomic<unsigned long> previous_logical_clock;
 	long long total_counter;
 };
 
+struct copyable_state_t {
+	int tid;
+	unsigned long logical_clock;
+	int inet;
+	int lock_count;
+	int context;
+	int region;
+	int level;
+};
+
 struct det_mutex_stats_t {
 	int index;
+
+	unsigned long num_incs;
 
 	unsigned long released_logical_clock;
 
@@ -45,6 +62,7 @@ struct det_mutex_stats_t {
 	int level;
 
 	//std::vector<std::pair<unsigned long, int>> max_clock_diff;
+	std::vector<copyable_state_t> others;
 	
 	unsigned long max;
 	int max_thread;
@@ -54,6 +72,9 @@ struct det_mutex_stats_t {
 	int max_context;
 	int max_inet;
 	int max_level;
+
+	mtimer::time_point start;
+	mtimer::duration length;
 };
 
 const std::vector<det_mutex_stats_t> &get_wait_stats(int level, int tid);
@@ -81,10 +102,18 @@ int inline get_context(exec_state_t *state)
 	return state->context;
 }
 
+#define mem_order std::memory_order_seq_cst
+
 void inline inc_logical_clock_no_profile(exec_state_t *state, int count)
 {
 	//state->logical_clock->fetch_add(count, std::memory_order_relaxed);
-	state->logical_clock.fetch_add(count, std::memory_order_relaxed);
+	if (state->logical_clock.load() - state->prev_lock_clock < INC_THRESHOLD) {
+#if defined(TRACE_WAIT)
+		tracepoint(hello_world, my_first_tracepoint, state->tid, state->context, 0, state->lock_count);
+#endif
+	
+		state->logical_clock.fetch_add(count, mem_order);
+	}
 
 	zlog_level(delta_log, ROUTER_V3, "Increasing logical clock to %lu from %d\n", state->logical_clock.load(), get_context(state));
 }
@@ -109,22 +138,26 @@ void inline inc_logical_clock(exec_state_t *state, int count)
 void inline set_logical_clock(exec_state_t *state, int count)
 {
 	//state->logical_clock->fetch_add(count, std::memory_order_relaxed);
-	state->logical_clock.store(count, std::memory_order_relaxed);
+#if defined(TRACE_WAIT)
+	tracepoint(hello_world, my_first_tracepoint, state->tid, state->context, 0, state->lock_count);
+#endif
+
+	state->logical_clock.store(count, mem_order);
 }
 
 unsigned long inline get_logical_clock(exec_state_t *state)
 {
-	return state->logical_clock.load(std::memory_order_relaxed);
+	return state->logical_clock.load(mem_order);
 }
 
 void inline set_inet(exec_state_t *state, int inet)
 {
-	state->inet.store(inet, std::memory_order_relaxed);
+	state->inet.store(inet, mem_order);
 }
 
 int inline get_inet(exec_state_t *state)
 {
-	return state->inet.load(std::memory_order_relaxed);
+	return state->inet.load(mem_order);
 }
 
 struct det_mutex_t {
