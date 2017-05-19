@@ -2451,7 +2451,7 @@ void init_route_structs(const RRGraph &g, const vector<net_t> &nets, const vecto
 
 	route_trees.resize(nets.size());
     for (int i = 0; i < nets.size(); ++i) {
-        route_tree_init(route_trees[i]);
+        route_tree_init(route_trees[i], &g);
     }
 
     *net_timing = new t_net_timing[nets.size()+global_nets.size()];
@@ -2479,7 +2479,7 @@ void init_route_structs_mpi(const RRGraph &g, const vector<net_t> &nets, const v
 
 	route_trees.resize(nets.size());
     for (int i = 0; i < nets.size(); ++i) {
-        route_tree_init(route_trees[i]);
+        route_tree_init(route_trees[i], &g);
     }
 
     *net_timing = new t_net_timing[nets.size()+global_nets.size()];
@@ -2510,7 +2510,7 @@ void init_route_structs_locked(const RRGraph &g, const vector<net_t> &nets, cons
 
 	route_trees.resize(nets.size());
     for (int i = 0; i < nets.size(); ++i) {
-        route_tree_init(route_trees[i]);
+        route_tree_init(route_trees[i], &g);
     }
 
     *net_timing = new t_net_timing[nets.size()+global_nets.size()];
@@ -2865,7 +2865,7 @@ void recv_route_tree(const net_t *net, const RRGraph &g, vector<route_tree_t> &r
 
 		const auto &rr_node_p = get_vertex_props(g, rr_node);
 
-		RouteTreeNode rt_node = route_tree_add_rr_node(route_trees[net->local_id], rr_node, g);
+		RouteTreeNode rt_node = route_tree_add_rr_node(route_trees[net->local_id], rr_node);
 		assert(rt_node != RouteTree::null_vertex());
 
 		route_tree_set_node_properties(route_trees[net->local_id], rt_node, rr_node_p.type != IPIN && rr_node_p.type != SINK, recv[i].upstream_R, recv[i].delay);
@@ -2979,7 +2979,7 @@ void recv_route_tree(net_t *net, const RRGraph &g, vector<vector<sink_t *>> &rou
 
 		const auto &rr_node_p = get_vertex_props(g, rr_node);
 
-		RouteTreeNode rt_node = route_tree_add_rr_node(route_trees[net->local_id], rr_node, g);
+		RouteTreeNode rt_node = route_tree_add_rr_node(route_trees[net->local_id], rr_node);
 		assert(rt_node != RouteTree::null_vertex());
 
 		route_tree_set_node_properties(route_trees[net->local_id], rt_node, rr_node_p.type != IPIN && rr_node_p.type != SINK, recv[i].upstream_R, recv[i].delay);

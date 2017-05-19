@@ -25,6 +25,11 @@ struct cache_edge_t {
 	}
 };
 
+template<typename Properties>
+struct cache_edge_storage_t {
+
+};
+
 template<typename VertexProperties, typename EdgeProperties>
 struct cache_vertex_t {
 	//int m_id;
@@ -73,26 +78,30 @@ struct cache_graph_t {
 		return { -1, -1, -1 };
 	}
 
-	class const_edge_iterator : public boost::iterator_facade<const_edge_iterator, const cache_edge_t<EdgeProperties>, boost::forward_traversal_tag> {
+	template<typename Graph, typename Value>
+	class base_edge_iterator : public boost::iterator_facade<base_edge_iterator<Graph, Value>, Value, boost::forward_traversal_tag> {
 		public:
-			const_edge_iterator(const cache_graph_t<VertexProperties, EdgeProperties> &_g, int _current_v, int _end_v)
-				: g(_g), current_v(_current_v), end_v(_end_v)
+			base_edge_iterator(Graph &_g, bool begin)
+				: g(_g)
 			{
-				if (current_v < end_v) {
-					while (current_v < end_v && num_out_edges(g, current_v) == 0) {
+				if (begin) {
+					current_v = 0;
+					while (current_v < num_vertices(g) && num_out_edges(g, current_v) == 0) {
 						++current_v;
 					}
 
-					if (current_v < end_v) {
+					if (current_v < num_vertices(g)) {
 						current_e = 0;
-						end_e = g.vertices[current_v].edges.size();
+						end_e = num_out_edges(g, current_v);
 					} else {
-						current_e = 0;
-						end_e = 0;
+						assert(current_v == num_vertices(g));
+						current_e = -1;
+						end_e = -1;
 					}
 				} else {
-					current_e = 0;
-					end_e = 0;
+					current_v = num_vertices(g);
+					current_e = -1;
+					end_e = -1;
 				}
 			}
 
@@ -107,101 +116,169 @@ struct cache_graph_t {
 					if (current_e == end_e) {
 						++current_v;
 
-						while (current_v < end_v && num_out_edges(g, current_v) == 0) {
+						while (current_v < num_vertices(g) && num_out_edges(g, current_v) == 0) {
 							++current_v;
 						}
 
-						if (current_v < end_v) {
+						if (current_v < num_vertices(g)) {
 							current_e = 0;
 							end_e = num_out_edges(g, current_v);
+						} else {
+							assert(current_v == num_vertices(g));
+							current_e = -1;
+							end_e = -1;
 						}
 					}
 				}
 			}
 
-			bool equal(const const_edge_iterator &other) const
+			bool equal(const base_edge_iterator &other) const
 			{
-				bool eq = current_v == other.current_v 
-				&& (current_v == end_v || current_e == other.current_e);
-				return eq;
+				return current_v == other.current_v && current_e == other.current_e;
 			}
 
-			const cache_edge_t<EdgeProperties> &dereference() const
+			Value &dereference() const
 			{
 				return g.vertices[current_v].edges[current_e];
 			}
 			
-			const cache_graph_t<VertexProperties, EdgeProperties> &g;
+			Graph &g;
 			int current_v;
-			int end_v;
 			int current_e;
 			int end_e;
 	};
 
-	class edge_iterator : public boost::iterator_facade<edge_iterator, cache_edge_t<EdgeProperties>, boost::forward_traversal_tag> {
-		public:
-			edge_iterator(cache_graph_t<VertexProperties, EdgeProperties> &_g, int _current_v, int _end_v)
-				: g(_g), current_v(_current_v), end_v(_end_v)
-			{
-				if (current_v < end_v) {
-					while (current_v < end_v && num_out_edges(g, current_v) == 0) {
-						++current_v;
-					}
+	typedef base_edge_iterator<const cache_graph_t<VertexProperties, EdgeProperties>, const cache_edge_t<EdgeProperties>> edge_iterator;
 
-					if (current_v < end_v) {
-						current_e = 0;
-						end_e = g.vertices[current_v].edges.size();
-					} else {
-						current_e = 0;
-						end_e = 0;
-					}
-				} else {
-					current_e = 0;
-					end_e = 0;
-				}
-			}
+	//class const_edge_iterator : public boost::iterator_facade<const_edge_iterator, const cache_edge_t<EdgeProperties>, boost::forward_traversal_tag> {
+		//public:
+			//const_edge_iterator(const cache_graph_t<VertexProperties, EdgeProperties> &_g, int _current_v, int _end_v)
+				//: g(_g), current_v(_current_v), end_v(_end_v)
+			//{
+				//if (current_v < end_v) {
+					//while (current_v < end_v && num_out_edges(g, current_v) == 0) {
+						//++current_v;
+					//}
 
-		private:
-			friend class boost::iterator_core_access;
+					//if (current_v < end_v) {
+						//current_e = 0;
+						//end_e = g.vertices[current_v].edges.size();
+					//} else {
+						//current_e = 0;
+						//end_e = 0;
+					//}
+				//} else {
+					//current_e = 0;
+					//end_e = 0;
+				//}
+			//}
 
-			void increment()
-			{
-				if (current_e < end_e) {
-					++current_e;
+		//private:
+			//friend class boost::iterator_core_access;
 
-					if (current_e == end_e) {
-						++current_v;
+			//void increment()
+			//{
+				//if (current_e < end_e) {
+					//++current_e;
 
-						while (current_v < end_v && num_out_edges(g, current_v) == 0) {
-							++current_v;
-						}
+					//if (current_e == end_e) {
+						//++current_v;
 
-						if (current_v < end_v) {
-							current_e = 0;
-							end_e = num_out_edges(g, current_v);
-						}
-					}
-				}
-			}
+						//while (current_v < end_v && num_out_edges(g, current_v) == 0) {
+							//++current_v;
+						//}
 
-			bool equal(const edge_iterator &other) const
-			{
-				bool eq = current_v == other.current_v 
-				&& (current_v == end_v || current_e == other.current_e);
-				return eq;
-			}
+						//if (current_v < end_v) {
+							//current_e = 0;
+							//end_e = num_out_edges(g, current_v);
+						//}
+					//}
+				//}
+			//}
 
-			cache_edge_t<EdgeProperties> &dereference() const
-			{
-				return g.vertices[current_v].edges[current_e];
-			}
+			//bool equal(const const_edge_iterator &other) const
+			//{
+				//bool eq = current_v == other.current_v 
+				//&& (current_v == end_v || current_e == other.current_e);
+				//return eq;
+			//}
+
+			//const cache_edge_t<EdgeProperties> &dereference() const
+			//{
+				//return g.vertices[current_v].edges[current_e];
+			//}
 			
-			cache_graph_t<VertexProperties, EdgeProperties> &g;
-			int current_v;
-			int end_v;
-			int current_e;
-			int end_e;
-	};
+			//const cache_graph_t<VertexProperties, EdgeProperties> &g;
+			//int current_v;
+			//int end_v;
+			//int current_e;
+			//int end_e;
+	//};
+
+	//class edge_iterator : public boost::iterator_facade<edge_iterator, cache_edge_t<EdgeProperties>, boost::forward_traversal_tag> {
+		//public:
+			//edge_iterator(cache_graph_t<VertexProperties, EdgeProperties> &_g, int _current_v, int _end_v)
+				//: g(_g), current_v(_current_v), end_v(_end_v)
+			//{
+				//if (current_v < end_v) {
+					//while (current_v < end_v && num_out_edges(g, current_v) == 0) {
+						//++current_v;
+					//}
+
+					//if (current_v < end_v) {
+						//current_e = 0;
+						//end_e = g.vertices[current_v].edges.size();
+					//} else {
+						//current_e = 0;
+						//end_e = 0;
+					//}
+				//} else {
+					//current_e = 0;
+					//end_e = 0;
+				//}
+			//}
+
+		//private:
+			//friend class boost::iterator_core_access;
+
+			//void increment()
+			//{
+				//if (current_e < end_e) {
+					//++current_e;
+
+					//if (current_e == end_e) {
+						//++current_v;
+
+						//while (current_v < end_v && num_out_edges(g, current_v) == 0) {
+							//++current_v;
+						//}
+
+						//if (current_v < end_v) {
+							//current_e = 0;
+							//end_e = num_out_edges(g, current_v);
+						//}
+					//}
+				//}
+			//}
+
+			//bool equal(const edge_iterator &other) const
+			//{
+				//bool eq = current_v == other.current_v 
+				//&& (current_v == end_v || current_e == other.current_e);
+				//return eq;
+			//}
+
+			//cache_edge_t<EdgeProperties> &dereference() const
+			//{
+				//return g.vertices[current_v].edges[current_e];
+			//}
+			
+			//cache_graph_t<VertexProperties, EdgeProperties> &g;
+			//int current_v;
+			//int end_v;
+			//int current_e;
+			//int end_e;
+	//};
 
 	//struct out_edge_iterator : public std::iterator<
 					  //typename std::forward_iterator_tag,
@@ -349,12 +426,12 @@ struct cache_graph_t {
 };
 
 template<typename VertexProperties, typename EdgeProperties>
-boost::iterator_range<typename cache_graph_t<VertexProperties, EdgeProperties>::const_edge_iterator>
+boost::iterator_range<typename cache_graph_t<VertexProperties, EdgeProperties>::edge_iterator>
 get_edges(const cache_graph_t<VertexProperties, EdgeProperties> &g) 
 {
 	return boost::make_iterator_range(
-			typename cache_graph_t<VertexProperties, EdgeProperties>::const_edge_iterator(g, 0, g.vertices.size()), 
-			typename cache_graph_t<VertexProperties, EdgeProperties>::const_edge_iterator(g, g.vertices.size(), g.vertices.size()) 
+			typename cache_graph_t<VertexProperties, EdgeProperties>::edge_iterator(g, true), 
+			typename cache_graph_t<VertexProperties, EdgeProperties>::edge_iterator(g, false) 
 			);
 }
 

@@ -7,21 +7,21 @@
 
 using namespace std;
 
-void route_tree_init(route_tree_t &rt)
+void route_tree_init(route_tree_t &rt, const RRGraph *rrg)
 {
+	rt.rrg = rrg;
 	rt.root_rt_node_id = RouteTree::null_vertex();
 	rt.num_nodes = 0;
 }
 
 void route_tree_clear(route_tree_t &rt)
 {
-	rt.root_rt_node_id = RouteTree::null_vertex();
 	rt.root_rt_nodes.clear();
+	rt.root_rt_node_id = RouteTree::null_vertex();
 	rt.num_nodes = 0;
 	clear_vertices(rt.graph);
+	assert(num_vertices(rt.graph) == 0 && num_edges(rt.graph) == 0);
 	rt.rr_node_to_rt_node.clear();
-
-	assert(route_tree_empty(rt));
 }
 
 bool route_tree_empty(const route_tree_t &rt)
@@ -72,7 +72,7 @@ route_tree_get_branches(const route_tree_t &rt, RouteTreeNode rt_node)
 	return get_out_edges(rt.graph, rt_node);
 }
 
-RouteTreeNode route_tree_add_rr_node(route_tree_t &rt, RRNode rr_node, const RRGraph &g)
+RouteTreeNode route_tree_add_rr_node(route_tree_t &rt, RRNode rr_node)
 {
 	const auto &iter = rt.rr_node_to_rt_node.find(rr_node);
 
@@ -159,6 +159,16 @@ const RouteTreeEdge &route_tree_add_edge_between_rr_node(route_tree_t &rt, RRNod
 	return edge;
 }
 
+bool route_tree_has_edge(const route_tree_t &rt, RRNode a, RRNode b)
+{
+	RouteTreeNode rt_node_a = route_tree_get_rt_node(rt, a);
+	RouteTreeNode rt_node_b = route_tree_get_rt_node(rt, b);
+
+	assert(rt_node_a != RouteTree::null_vertex());
+	assert(rt_node_b != RouteTree::null_vertex());
+
+	return has_edge(rt.graph, rt_node_a, rt_node_b);
+}
 
 RouteTreeNode route_tree_get_rt_node(const route_tree_t &rt, RRNode rr_node)
 {
@@ -324,7 +334,7 @@ void route_tree_add_path(route_tree_t &rt, const std::shared_ptr<vector<path_nod
 
 	char buffer[256];
 
-	RouteTreeNode current_rt_node = route_tree_add_rr_node(rt, current_rr_node_id, g);
+	RouteTreeNode current_rt_node = route_tree_add_rr_node(rt, current_rr_node_id);
 	assert(current_rt_node != RouteTree::null_vertex());
 
 	/*assert(rt.rr_node_to_path.find(path[0].rr_node_id) == rt.rr_node_to_path.end());*/
@@ -347,7 +357,7 @@ void route_tree_add_path(route_tree_t &rt, const std::shared_ptr<vector<path_nod
 
 		bool last = i == path.size()-1;
 		if (!last) {
-			RouteTreeNode previous_rt_node = route_tree_add_rr_node(rt, previous_rr_node_id, g);
+			RouteTreeNode previous_rt_node = route_tree_add_rr_node(rt, previous_rr_node_id);
 			assert(previous_rt_node != RouteTree::null_vertex());
 
 			sprintf_rr_node(previous_rr_node_id, buffer);
@@ -457,7 +467,7 @@ void route_tree_remove_edge(route_tree_t &rt, const RouteTreeEdge &rt_edge)
 	to_p.rt_edge_to_parent = RouteTree::null_edge();
 }
 
-void route_tree_remove_node(route_tree_t &rt, RRNode rr_node, const RRGraph &g)
+void route_tree_remove_node(route_tree_t &rt, RRNode rr_node)
 {
 	RouteTreeNode rt_node = route_tree_get_rt_node(rt, rr_node);
 	auto &rt_node_p = get_vertex_props(rt.graph, rt_node);
@@ -518,7 +528,7 @@ void route_tree_rip_up_marked(route_tree_t &rt, const RRGraph &g, congestion_t *
 				update_one_cost_internal(rr_node, g, congestion, -1, pres_fac); 
 			}
 
-			route_tree_remove_node(rt, rr_node, g);
+			route_tree_remove_node(rt, rr_node);
 
 			rt_node_p.pending_rip_up = false;
 			assert(rt_node_p.ripped_up == false);
@@ -572,7 +582,7 @@ void route_tree_rip_up_marked(route_tree_t &rt, const RRGraph &g, congestion_loc
 			} else {
 				update_one_cost_internal(rr_node, g, congestion, -1, pres_fac, lock, lock_perf); 
 			}
-			route_tree_remove_node(rt, rr_node, g);
+			route_tree_remove_node(rt, rr_node);
 			rt_node_p.pending_rip_up = false;
 			rt_node_p.ripped_up = true;
 
@@ -624,7 +634,7 @@ void route_tree_rip_up_marked(route_tree_t &rt, const RRGraph &g, congestion_loc
 			} else {
 				update_one_cost_internal(rr_node, g, congestion, -1, pres_fac); 
 			}
-			route_tree_remove_node(rt, rr_node, g);
+			route_tree_remove_node(rt, rr_node);
 			rt_node_p.pending_rip_up = false;
 			rt_node_p.ripped_up = true;
 
@@ -676,7 +686,7 @@ void route_tree_rip_up_marked_mpi_rma(route_tree_t &rt, const RRGraph &g, const 
 			} else {
 				update_one_cost_internal_mpi_rma(rr_node, g, pid, this_pid, congestion, win, -1, pres_fac); 
 			}
-			route_tree_remove_node(rt, rr_node, g);
+			route_tree_remove_node(rt, rr_node);
 			rt_node_p.pending_rip_up = false;
 			rt_node_p.ripped_up = true;
 
@@ -767,7 +777,7 @@ void route_tree_rip_up_marked_mpi_send_recv(route_tree_t &rt, const RRGraph &g, 
 			rt_node_p.pending_rip_up = false;
 			rt_node_p.ripped_up = true;
 
-			route_tree_remove_node(rt, rr_node, g);
+			route_tree_remove_node(rt, rr_node);
 		} else {
 			zlog_level(delta_log, ROUTER_V2, "NOT ripping up node %s from route tree\n", buffer);
 			/* invalid assertion because we might have ripped this up from another virtual net */

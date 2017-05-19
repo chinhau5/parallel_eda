@@ -14,7 +14,7 @@ typedef struct rt_edge_property_t {
 	RREdge rr_edge;
 } rt_edge_property_t;
 
-typedef fast_edge_t<rt_edge_property_t> RouteTreeEdge;
+typedef cache_edge_t<rt_edge_property_t> RouteTreeEdge;
 
 typedef struct rt_node_property_t {
 	RRNode rr_node;
@@ -32,17 +32,18 @@ typedef struct rt_node_property_t {
 	bool reexpand;
 	//RREdge rr_edge_to_parent;
 	float upstream_R;	
-	float downstream_C;
 	float delay;
+	float downstream_C;
 	/*float upstream_R_from_route_state;*/
 } rt_node_property_t;
 
-typedef fast_graph_t<rt_node_property_t, rt_edge_property_t> RouteTree;
+typedef cache_graph_t<rt_node_property_t, rt_edge_property_t> RouteTree;
 typedef int RouteTreeNode;
 
 typedef struct route_tree_t {
 	typedef std::pair<segment, int> rtree_value;
 
+	const RRGraph *rrg;
 	RouteTree graph;
 	std::vector<int> root_rt_nodes;
 	int root_rt_node_id;
@@ -107,7 +108,7 @@ typedef struct route_tree_t {
 	//typedef typename RouteTree::out_edges_const_iterator branch_const_iterator;
 } route_tree_t;
 
-void route_tree_init(route_tree_t &rt);
+void route_tree_init(route_tree_t &rt, const RRGraph *rrg);
 
 bool route_tree_empty(const route_tree_t &rt);
 
@@ -115,7 +116,7 @@ int route_tree_num_nodes(const route_tree_t &rt);
 
 //void route_tree_is_only_path_internal(const RRGraph &g, const RRNode &node);
 
-RouteTreeNode route_tree_add_rr_node(route_tree_t &rt, RRNode rr_node, const RRGraph &g);
+RouteTreeNode route_tree_add_rr_node(route_tree_t &rt, RRNode rr_node);
 
 //int route_tree_num_nodes(const route_tree_t &rt);
 
@@ -123,7 +124,9 @@ const RouteTreeEdge &route_tree_add_edge_between_rr_node(route_tree_t &rt, RRNod
 
 void route_tree_remove_edge(route_tree_t &rt, const RouteTreeEdge &rt_edge);
 
-void route_tree_remove_node(route_tree_t &rt, RRNode rr_node, const RRGraph &g);
+void route_tree_remove_node(route_tree_t &rt, RRNode rr_node);
+
+bool route_tree_has_edge(const route_tree_t &rt, RRNode a, RRNode b);
 
 RouteTreeNode route_tree_get_rt_node(const route_tree_t &rt, RRNode rr_node);
 
@@ -224,7 +227,7 @@ void route_tree_rip_up_marked_mpi_collective(route_tree_t &rt, const RRGraph &g,
 			rt_node_p.pending_rip_up = false;
 			rt_node_p.ripped_up = true;
 
-			route_tree_remove_node(rt, rr_node, g);
+			route_tree_remove_node(rt, rr_node);
 		} else {
 			zlog_level(delta_log, ROUTER_V2, "NOT ripping up node %s from route tree\n", buffer);
 			/* invalid assertion because we might have ripped this up from another virtual net */

@@ -138,7 +138,7 @@ bool locking_route(t_router_opts *opts, int run)
 
 	vector<route_tree_t> route_trees(nets.size());
 	for (int i = 0; i < nets.size(); ++i) {
-		route_tree_init(route_trees[i]);
+		route_tree_init(route_trees[i], &g);
 	}
 
 	vector<route_state_t *> states(opts->num_threads);

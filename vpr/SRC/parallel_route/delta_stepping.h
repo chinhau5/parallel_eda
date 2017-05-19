@@ -2,19 +2,12 @@
 #define DELTA_STEPPING_H
 
 #include "cache_graph.h"
+#include "delta_stepping_common.h"
 
 //using namespace std;
 
-using Buckets = std::vector<std::vector<int> *>;
-
-void bucket_insert(Buckets &buckets, float delta, std::vector<bool> &in_bucket, int v, float distance);
-
-bool bucket_remove(Buckets &buckets, float delta, std::vector<bool> &in_bucket, const std::vector<bool> &vertex_deleted, int v, float *distance);
-
-int bucket_get_non_empty(const Buckets &buckets);
-
 template<typename Edge, typename Callbacks>
-void relax(Buckets &buckets, float delta, std::vector<bool> &in_bucket, const std::vector<bool> &vertex_deleted,
+void relax(Buckets &buckets, float delta, std::vector<int> &in_bucket, const std::vector<bool> &vertex_deleted,
 		float *known_distance, float *distance, Edge *prev_edge,
 		int v, float new_known_distance, float new_distance, const Edge &edge,
 		Callbacks &callbacks)
@@ -52,7 +45,7 @@ template<typename Graph, typename Edge, typename EdgeWeightFunc, typename Callba
 void delta_stepping(const Graph &g, const std::vector<heap_node_t<Edge, Extra>> &sources, int sink, float delta, float *known_distance, float *distance, Edge *prev_edge, const EdgeWeightFunc &edge_weight, Callbacks &callbacks)
 {
 	Buckets buckets;
-	std::vector<bool> in_bucket(num_vertices(g), false);
+	std::vector<int> in_bucket(num_vertices(g), -1);
 	std::vector<bool> vertex_deleted(num_vertices(g), false);
 
 	for (const auto &s : sources) {
@@ -81,8 +74,8 @@ void delta_stepping(const Graph &g, const std::vector<heap_node_t<Edge, Extra>> 
 				found = true;
 			}
 
-			assert(in_bucket[u]);
-			in_bucket[u] = false;
+			assert(in_bucket[u] >= 0);
+			in_bucket[u] = -1;
 
 			if (!vertex_deleted[u]) {
 				vertex_deleted[u] = true;

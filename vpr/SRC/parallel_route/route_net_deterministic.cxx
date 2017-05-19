@@ -146,7 +146,7 @@ vector<const sink_t *> route_net_deterministic(const RRGraph &g, int vpr_id, con
 		zlog_level(delta_log, ROUTER_V2, "Empty route tree. Setting root to %s\n", buffer);
 
 		const auto &source_rr_node = get_vertex_props(g, source->rr_node);
-		RouteTreeNode root_rt_node = route_tree_add_rr_node(rt, source->rr_node, g);
+		RouteTreeNode root_rt_node = route_tree_add_rr_node(rt, source->rr_node);
 		route_tree_set_node_properties(rt, root_rt_node, true, source_rr_node.R, 0.5 * source_rr_node.R * source_rr_node.C);
 		route_tree_add_root(rt, source->rr_node);
 
@@ -260,7 +260,7 @@ vector<const sink_t *> route_net_deterministic(const RRGraph &g, int vpr_id, con
 			sprintf_rr_node(sink->rr_node, buffer);
 			zlog_level(delta_log, ROUTER_V3, "Adding %s to route tree\n", buffer);
 
-			RouteTreeNode rt_node = route_tree_add_rr_node(rt, sink->rr_node, g);
+			RouteTreeNode rt_node = route_tree_add_rr_node(rt, sink->rr_node);
 			assert(rt_node != RouteTree::null_vertex());
 			route_tree_set_node_properties(rt, rt_node, false, state[sink->rr_node].upstream_R, state[sink->rr_node].delay);
 			update_one_cost_internal(sink->rr_node, g, congestion, 1, pres_fac);
@@ -276,7 +276,7 @@ vector<const sink_t *> route_net_deterministic(const RRGraph &g, int vpr_id, con
 					sprintf_rr_node(parent_rr_node, buffer);
 					zlog_level(delta_log, ROUTER_V3, "Adding %s to route tree\n", buffer);
 
-					RouteTreeNode parent_rt_node = route_tree_add_rr_node(rt, parent_rr_node, g);
+					RouteTreeNode parent_rt_node = route_tree_add_rr_node(rt, parent_rr_node);
 					if (parent_rt_node != RouteTree::null_vertex()) {
 						route_tree_set_node_properties(rt, parent_rt_node, parent_rr_node_p.type != IPIN && parent_rr_node_p.type != SINK, state[parent_rr_node].upstream_R, state[parent_rr_node].delay);
 					}
