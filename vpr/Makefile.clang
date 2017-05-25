@@ -28,8 +28,10 @@ INCLUDES += -I/usr/local/include
 INCLUDES += -I../libarchfpga/include -I../printhandler/SRC/TIO_InputOutputHandlers
 INCLUDES += -I/home/chinhau5/zlog/include
 INCLUDES += -I/home/chinhau5/Downloads/metis-5.1.0/include
-INCLUDES += -I/home/chinhau5/Downloads/tbb2017_20161128oss/include
-INCLUDES += -I/home/chinhau5/Downloads/boost_1_60_0
+#INCLUDES += -I/home/chinhau5/Downloads/tbb2017_20161128oss/include
+INCLUDES += -I/home/chinhau5/Downloads/tbb-2017_U6/include
+#INCLUDES += -I/home/chinhau5/Downloads/boost_1_60_0
+INCLUDES += -I/opt/intel/vtune_amplifier_xe/include
 
 HIDE =
 

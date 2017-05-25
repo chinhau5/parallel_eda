@@ -3,15 +3,20 @@ BUILD_ROOT = newbuild
 LIBS = vpr/build/libvpr.a libarchfpga/build/libarchfpga.a printhandler/build/libprinthandler.a pcre/build/libpcre.a  
 SUB_DIRS = vpr libarchfpga printhandler pcre
 
-LIB_DIR = /usr/local/lib /usr/lib/openmpi /home/chinhau5/zlog/lib /home/chinhau5/Downloads/metis-5.1.0/build/Linux-x86_64/libmetis /home/chinhau5/Downloads/tbb2017_20161128oss/lib/intel64/gcc4.7
+LIB_DIR = /usr/local/lib /usr/lib/openmpi /home/chinhau5/zlog/lib /home/chinhau5/Downloads/metis-5.1.0/build/Linux-x86_64/libmetis
+#LIB_DIR += /home/chinhau5/Downloads/tbb2017_20161128oss/lib/intel64/gcc4.7
+LIB_DIR += /home/chinhau5/Downloads/tbb-2017_U6/build/linux_intel64_gcc_cc6.3.1_libc2.25_kernel4.9.28_release
+
 LIB_CMD = $(addprefix -L,$(LIB_DIR))
 
 comma = ,
 RPATH = $(addprefix -Wl$(comma)-rpath$(comma), $(LIB_DIR))
 
-LINK_LIBS = X11 pthread lttng-ust dl m rt zlog boost_timer boost_system boost_thread tbb metis mpi mpi_cxx papi
+#LINK_LIBS = X11 pthread lttng-ust dl m rt zlog boost_timer boost_system boost_thread tbb metis mpi mpi_cxx papi
+LINK_LIBS = X11 pthread dl m rt zlog boost_timer boost_system boost_thread tbb metis mpi mpi_cxx
 LINK_LIBS := $(addprefix -l,$(LINK_LIBS))
-
+LINK_LIBS += /opt/intel/vtune_amplifier_xe/lib64/libittnotify.a
+#LINK_LIBS += -ltbbmalloc_proxy
 CXX = g++
 
 OPT = -O2

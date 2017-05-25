@@ -3,6 +3,7 @@
 #include <condition_variable>
 #include <sys/stat.h>
 #include <papi.h>
+#include <ittnotify.h>
 
 #include "vpr_types.h"
 
@@ -41,30 +42,34 @@ using std::chrono::nanoseconds;
 
 //#define PTHREAD_BARRIER
 
-typedef struct extra_route_state_t {
+__itt_domain* domain = __itt_domain_create("MyTraces.MyDomain");
+__itt_string_handle* shMyTask = __itt_string_handle_create("Route Task");
+__itt_string_handle* shAnalysisTask = __itt_string_handle_create("Analysis Task");
+
+struct extra_route_state_t {
 	int same;
 	int ortho;
 	bool existing;
 	float upstream_R;
 	float delay;
-} extra_route_state_t;
+};
 
-typedef struct dijkstra_stats_t {
+struct dijkstra_stats_t {
 	int num_heap_pops;
 	int num_heap_pushes;
 	int num_neighbor_visits;
-} dijkstra_stats_t;
+};
 
-typedef struct global_route_state_t {
+struct global_route_state_t {
 	congestion_t *congestion;
 	route_tree_t *route_trees;
 	//route_tree_t *back_route_trees;
 	vector<RRNode> *added_rr_nodes;	
 	vector<RRNode> *back_added_rr_nodes;	
 	t_net_timing *net_timing;
-} global_route_state_t;
+};
 
-typedef struct worker_sync_t {
+struct worker_sync_t {
 	/*alignas(64)*/ std::atomic<int> stop_routing;
 	/*alignas(64)*/ std::atomic<int> **net_index;
 #ifdef PTHREAD_BARRIER
@@ -76,7 +81,7 @@ typedef struct worker_sync_t {
 #endif
 	//std::atomic<int> nums_net_to_route;
 	//std::atomic<bool> has_global;
-} worker_sync_t;
+};
 
 struct runtime_t {
 	timer::duration route_time;
@@ -87,9 +92,28 @@ struct runtime_t {
 	timer::duration last_sync_time;
 };
 
+struct new_virtual_net_t {
+	int local_index;
+	int global_index;
+	const net_t *net;
+	const source_t *source;
+	vector<const sink_t *> sinks;
+	box bounding_box;
+};
+
 struct fpga_tree_node_t {
 	box bb;
+
 	vector<net_t *> nets;
+	vector<new_virtual_net_t> vnets;
+
+	vector<vector<new_virtual_net_t *>> scheduled;
+
+	vector<new_virtual_net_t *> roots;
+	vector<vector<int>> net_g;
+	vector<int> num_incoming_edges;
+	vector<std::atomic<int> *> current_num_incoming_edges;
+
 	fpga_tree_node_t *left;
 	fpga_tree_node_t *right;
 };
@@ -288,6 +312,7 @@ class SinkRouter {
 		RRNode _existing_opin;
 
 		const sink_t *_current_sink;
+		box _bounding_box;
 
 		dijkstra_stats_t _stats;
 
@@ -407,7 +432,7 @@ class SinkRouter {
 				return false;
 			}
 
-			if (!inside_bb(prop, _current_sink->bounding_box)) {
+			if (!inside_bb(prop, _bounding_box)) {
 				zlog_level(delta_log, ROUTER_V3, "outside of bounding box\n");
 				return false;
 			}
@@ -514,77 +539,70 @@ class SinkRouter {
 			return previous_edge;
 		}
 
-		void backtrack(int sink_node, route_tree_t &rt)
+		void backtrack(int sink_node, route_tree_t &rt, vector<RRNode> &added_rr_nodes)
 		{
-			char buffer[256];
-			sprintf_rr_node(sink_node, buffer);
-			zlog_level(delta_log, ROUTER_V3, "Adding %s to route tree\n", buffer);
+			RRNode rr_node = sink_node;
+			RRNode child_rr_node = RRGraph::null_vertex();
+			RREdge edge = RRGraph::null_edge();
 
-			RouteTreeNode rt_node = route_tree_add_rr_node(rt, sink_node);
-			assert(rt_node != RouteTree::null_vertex());
-			assert(_state[sink_node].upstream_R != std::numeric_limits<float>::max() && _state[sink_node].delay != std::numeric_limits<float>::max());
-			route_tree_set_node_properties(rt, rt_node, false, _state[sink_node].upstream_R, _state[sink_node].delay);
+			bool stop = false;
+			while (!stop) {
+				const auto &rr_node_p = get_vertex_props(_g, rr_node);
 
-			const auto &sink_node_p = get_vertex_props(_g, sink_node);
-			assert(inside_bb(sink_node_p, _current_sink->bounding_box));
-
-			zlog_level(delta_log, ROUTER_V3, "\n");
-
-			RREdge edge = get_previous_edge(sink_node, rt);
-
-			RRNode child_rr_node = sink_node;
-
-			while (valid(edge)) {
-				RRNode parent_rr_node = get_source(_g, edge);
-
-				const auto &parent_rr_node_p = get_vertex_props(_g, parent_rr_node);
-
-				sprintf_rr_node(parent_rr_node, buffer);
+				char buffer[256];
+				sprintf_rr_node(rr_node, buffer);
 				zlog_level(delta_log, ROUTER_V3, "Adding %s to route tree\n", buffer);
 
-				RouteTreeNode parent_rt_node = route_tree_add_rr_node(rt, parent_rr_node);
-				if (parent_rt_node != RouteTree::null_vertex()) {
-					assert(_state[parent_rr_node].upstream_R != std::numeric_limits<float>::max() && _state[parent_rr_node].delay != std::numeric_limits<float>::max());
-					route_tree_set_node_properties(rt, parent_rt_node, parent_rr_node_p.type != IPIN && parent_rr_node_p.type != SINK, _state[parent_rr_node].upstream_R, _state[parent_rr_node].delay);
-				} 
+				RouteTreeNode rt_node = route_tree_add_rr_node(rt, rr_node);
+				if (rt_node != RouteTree::null_vertex()) {
+					assert(inside_bb(rr_node_p, _bounding_box));
 
-				assert(child_rr_node == get_target(_g, edge));
+					assert(_state[rr_node].upstream_R != std::numeric_limits<float>::max() && _state[rr_node].delay != std::numeric_limits<float>::max());
+					route_tree_set_node_properties(rt, rt_node, rr_node_p.type != IPIN && rr_node_p.type != SINK, _state[rr_node].upstream_R, _state[rr_node].delay);
 
-				char buffer2[256];
-				sprintf_rr_node(child_rr_node, buffer2);
+					if (rr_node_p.type == SOURCE) {
+						route_tree_add_root(rt, rr_node);
+					}
 
-				zlog_level(delta_log, ROUTER_V3, "Adding edge %s -> %s\n", buffer, buffer2);
-
-				const RouteTreeEdge &rt_edge = route_tree_add_edge_between_rr_node(rt, parent_rr_node, child_rr_node); 
-				auto &rt_edge_props = get_edge_props(rt.graph, rt_edge);
-				rt_edge_props.rr_edge = edge;
-
-				if (parent_rr_node_p.type == OPIN && _existing_opin == RRGraph::null_vertex()) {
-					_existing_opin = parent_rr_node;
+					added_rr_nodes.push_back(rr_node);
+				} else {
+					stop = true;
 				}
 
-				if ((parent_rt_node != RouteTree::null_vertex()) && (get_vertex_props(_g, parent_rr_node).type != SOURCE)) {
-					const auto &rr_node_p = get_vertex_props(_g, parent_rr_node);
-					assert(inside_bb(rr_node_p, _current_sink->bounding_box));
+				if (rr_node_p.type == OPIN && _existing_opin == RRGraph::null_vertex()) {
+					_existing_opin = rr_node;
+				}
 
-					//commit(*_current_regions, _g, parent_rr_node, 1, _instance);
-					//if (get_vertex_props(_g, parent_rr_node).type != SOURCE) {
-					//} else {
-						//g_lock.lock();
-						//for (int i = 0; i < _num_instances; ++i) {
-							////if (i != _instance) {
-								//update_first_order_congestion(g_congestion[i], parent_rr_node, 1, rr_node_p.capacity, _pres_fac);
-							////}
-						//}
-						//g_lock.unlock();
-					//} 
+				if (child_rr_node != RRGraph::null_vertex()) {
+					char buffer2[256];
+					sprintf_rr_node(child_rr_node, buffer2);
+
+					zlog_level(delta_log, ROUTER_V3, "Adding edge %s -> %s\n", buffer, buffer2);
+
+					const RouteTreeEdge &rt_edge = route_tree_add_edge_between_rr_node(rt, rr_node, child_rr_node); 
+					auto &rt_edge_props = get_edge_props(rt.graph, rt_edge);
+					assert(valid(edge));
+					assert(get_source(_g, edge) == rr_node && get_target(_g, edge) == child_rr_node);
+					rt_edge_props.rr_edge = edge;
 				}
 
 				zlog_level(delta_log, ROUTER_V3, "\n");
 
-				child_rr_node = parent_rr_node;
-				edge = get_previous_edge(parent_rr_node, rt);
+				child_rr_node = rr_node;
+				edge = _prev_edge[rr_node];
+				if (valid(edge)) {
+					rr_node = get_source(_g, edge);
+				} else {
+					stop = true;
+				}
 			}
+		}
+
+		void reset_stats()
+		{
+			_stats.num_heap_pops = 0;
+			_stats.num_heap_pushes = 0;
+			_stats.num_neighbor_visits = 0;
 		}
 
 		//template<typename Graph, typename Edge, typename EdgeWeightFunc, typename Callbacks>
@@ -619,37 +637,18 @@ class SinkRouter {
 			reset_stats();
 		}
 
-		void reset_stats()
+		void route(const source_t *source, const sink_t *sink, const box &bounding_box, float astar_fac, route_tree_t &rt, vector<RRNode> &added_rr_nodes, float &delay, dijkstra_stats_t *stats)
 		{
-			_stats.num_heap_pops = 0;
-			_stats.num_heap_pushes = 0;
-			_stats.num_neighbor_visits = 0;
-		}
-
-		const dijkstra_stats_t &get_stats() const
-		{
-			return _stats;
-		}
-
-		void route(const source_t *source, const sink_t *sink, float astar_fac, route_tree_t &rt, float &delay)
-		{
-			char buffer[256];
-
-			_astar_fac = astar_fac;
 			_current_sink = sink;
+			_bounding_box = bounding_box;
+			_astar_fac = astar_fac;
 
 			/* TODO: we should not reset the exisiting OPIN here */
 			_existing_opin = RRGraph::null_vertex();
 
-			const auto &source_p = get_vertex_props(_g, source->rr_node);
+			reset_stats();
 
-			RouteTreeNode root_rt_node = route_tree_add_rr_node(rt, source->rr_node);
-			assert(root_rt_node != RouteTree::null_vertex());
-			route_tree_set_node_properties(rt, root_rt_node, true, source_p.R, 0.5 * source_p.R * source_p.C);
-			route_tree_add_root(rt, source->rr_node);
-
-			assert(rt.root_rt_nodes.size() == 1);
-
+			char buffer[256];
 			sprintf_rr_node(sink->rr_node, buffer);
 			//zlog_level(delta_log, ROUTER_V3, "Current sink: %s BB %d->%d, %d->%d\n", buffer, sink->current_bounding_box.xmin, sink->current_bounding_box.xmax, sink->current_bounding_box.ymin, sink->current_bounding_box.ymax);
 			const auto &sink_p = get_vertex_props(_g, sink->rr_node);
@@ -658,15 +657,48 @@ class SinkRouter {
 					buffer, sink_p.real_xlow, sink_p.real_ylow,
 					bg::get<bg::min_corner, 0>(sink->bounding_box), bg::get<bg::max_corner, 0>(sink->bounding_box), bg::get<bg::min_corner, 1>(sink->bounding_box), bg::get<bg::max_corner, 1>(sink->bounding_box));
 
-			//vector<heap_node_t<RREdge, extra_route_state_t>> sources;
 			std::priority_queue<heap_node_t<RREdge, extra_route_state_t>> sources;
-			int same, ortho;
 
-			const auto &rt_node_p = get_vertex_props(rt.graph, root_rt_node);
-			float kd = sink->criticality_fac * rt_node_p.delay; 
-			float d = kd + _astar_fac * get_timing_driven_expected_cost(source_p, sink_p, sink->criticality_fac, rt_node_p.upstream_R, &same, &ortho); 
+			if (source) {
+				const auto &source_p = get_vertex_props(_g, source->rr_node);
+				float delay = 0.5 * source_p.R * source_p.C;
+				float kd = sink->criticality_fac * delay;
+				int same, ortho;
+				float d = kd + _astar_fac * get_timing_driven_expected_cost(source_p, sink_p, sink->criticality_fac, source_p.R, &same, &ortho); 
 
-			sources.push({ source->rr_node, kd, d, RRGraph::null_edge(), { same, ortho, true, rt_node_p.upstream_R, rt_node_p.delay } });
+				sources.push({ source->rr_node, kd, d, RRGraph::null_edge(), { same, ortho, false, source_p.R, delay } });
+			} else {
+				for (const auto &rt_node : route_tree_get_nodes(rt)) {
+					const auto &rt_node_p = get_vertex_props(rt.graph, rt_node);
+					RRNode node = rt_node_p.rr_node;
+					const auto &node_p = get_vertex_props(_g, node);
+
+					sprintf_rr_node(node, buffer);
+
+					if (rt_node_p.reexpand) {
+						if (!inside_bb(node_p, _bounding_box)) {
+							zlog_level(delta_log, ROUTER_V3, "Existing %s out of bounding box\n", buffer);
+						} else {
+							int same, ortho;
+
+							float kd = sink->criticality_fac * rt_node_p.delay; 
+							float d = kd + _astar_fac * get_timing_driven_expected_cost(node_p, sink_p, sink->criticality_fac, rt_node_p.upstream_R, &same, &ortho); 
+
+							RREdge prev = RRGraph::null_edge();
+							if (valid(rt_node_p.rt_edge_to_parent)) {
+								prev = get_edge_props(rt.graph, rt_node_p.rt_edge_to_parent).rr_edge;
+							}
+
+							zlog_level(delta_log, ROUTER_V3, "Adding %s back to heap [same %d ortho %d] [delay %g upstream_R %g] [kd: %g d: %g prev: %d]\n", buffer, same, ortho, rt_node_p.delay, rt_node_p.upstream_R, kd, d, get_source(_g, prev));
+
+							//sources.push_back({ node, kd, d, prev, { same, ortho, true, rt_node_p.upstream_R, rt_node_p.delay } });
+							sources.push({ node, kd, d, prev, { same, ortho, true, rt_node_p.upstream_R, rt_node_p.delay } });
+						}
+					} else {
+						zlog_level(delta_log, ROUTER_V3, "Not reexpanding %s\n", buffer);
+					}
+				}
+			}
 
 			dijkstra_stats_t before = _stats;
 
@@ -682,11 +714,15 @@ class SinkRouter {
 					after.num_neighbor_visits-before.num_neighbor_visits
 					);
 
-			backtrack(sink->rr_node, rt);
+			backtrack(sink->rr_node, rt, added_rr_nodes);
 
 			assert(get_vertex_props(rt.graph, route_tree_get_rt_node(rt, sink->rr_node)).delay == _state[sink->rr_node].delay);
 			//net_timing.delay[sink->id+1] = _state[sink->rr_node].delay;
 			delay = _state[sink->rr_node].delay;
+
+			if (stats) {
+				*stats = _stats;
+			}
 
 			for (const auto &n : _modified_nodes) {
 				_known_distance[n] = std::numeric_limits<float>::max();
@@ -746,6 +782,13 @@ class Manager {
 			return router;
 		}
 
+		void reserve(int size)
+		{
+			for (int i = 0; i < size-_free_routers.size(); ++i) {
+				_free_routers.push(new SinkRouter(_g, _congestion, _pres_fac));
+			}
+		}
+
 		void free(SinkRouter *router)
 		{
 			_lock.lock();
@@ -761,103 +804,105 @@ class Manager {
 		}
 };
 
+void merge(const vector<const sink_t *> &sinks, const vector<route_tree_t> &in, route_tree_t &out, vector<RRNode> *added_rr_nodes)
+{
+	for (const auto &sink : sinks) {
+		const auto &rt = in[sink->id];
+
+		zlog_level(delta_log, ROUTER_V3, "Route tree for sink %d\n", sink->id);
+
+		RouteTreeNode rt_node = route_tree_get_rt_node(rt, sink->rr_node);
+		assert(rt_node != RouteTree::null_vertex());
+
+		RouteTreeNode child_rt_node = RouteTree::null_vertex();
+		bool stop = false;
+
+		while (!stop) {
+			const auto &rt_node_p = get_vertex_props(rt.graph, rt_node);
+
+			auto new_rt_node = route_tree_add_rr_node(out, rt_node_p.rr_node);
+
+			if (new_rt_node != RouteTree::null_vertex()) {
+				if (added_rr_nodes) {
+					added_rr_nodes->push_back(rt_node_p.rr_node);
+				}
+
+				//update_first_order_congestion(_congestion, rt_node_p.rr_node, 1, get_vertex_props(_g, rt_node_p.rr_node).capacity, _pres_fac);
+
+				auto &new_rt_node_p = get_vertex_props(out.graph, new_rt_node);
+
+				if (get_vertex_props(*out.rrg, new_rt_node_p.rr_node).type == SOURCE) {
+					route_tree_add_root(out, new_rt_node_p.rr_node);
+				}
+
+				new_rt_node_p.delay = rt_node_p.delay;
+				new_rt_node_p.upstream_R = rt_node_p.upstream_R;
+			} else {
+				//new_rt_node = route_tree_get_rt_node(out, rt_node_p.rr_node);
+				stop = true;
+			}
+
+			if (child_rt_node != RouteTree::null_vertex()) {
+				const auto &child_rt_node_p = get_vertex_props(rt.graph, child_rt_node);
+
+				char s_from[256];
+				char s_to[256];
+				sprintf_rr_node(rt_node_p.rr_node, s_from);
+				sprintf_rr_node(child_rt_node_p.rr_node, s_to);
+				zlog_level(delta_log, ROUTER_V3, "\tAdding edge from %s to %s\n", s_from, s_to);
+
+				route_tree_add_edge_between_rr_node(out, rt_node_p.rr_node, child_rt_node_p.rr_node);
+			}
+
+			child_rt_node = rt_node;
+
+			if (valid(rt_node_p.rt_edge_to_parent)) {
+				rt_node = get_source(rt.graph, rt_node_p.rt_edge_to_parent);
+			} else {
+				stop = true;
+			}
+		}
+	}
+	//for (const auto &rt : sinks) {
+	//zlog_level(delta_log, ROUTER_V3, "Route tree\n");
+
+	//for (const auto &rt_node : route_tree_get_nodes(rt)) {
+	//const auto &rt_node_p = get_vertex_props(rt.graph, rt_node);
+
+	//auto new_rt_node = route_tree_add_rr_node(out, rt_node_p.rr_node);
+
+	//if (new_rt_node != RouteTree::null_vertex()) {
+	//auto &new_rt_node_p = get_vertex_props(out.graph, new_rt_node);
+
+	//new_rt_node_p.delay = rt_node_p.delay;
+	//new_rt_node_p.upstream_R = rt_node_p.upstream_R;
+	//}
+	//}
+
+	//for (const auto &rt_node : route_tree_get_nodes(rt)) {
+	//for (const auto &e : route_tree_get_branches(rt, rt_node)) {
+	//int from = get_vertex_props(rt.graph, get_source(rt.graph, e)).rr_node;
+	//int to = get_vertex_props(rt.graph, get_target(rt.graph, e)).rr_node;
+
+	//if (!route_tree_has_edge(out, from, to)) {
+	//char s_from[256];
+	//char s_to[256];
+	//sprintf_rr_node(from, s_from);
+	//sprintf_rr_node(to, s_to);
+	//zlog_level(delta_log, ROUTER_V3, "\tAdding edge from %s to %s\n", s_from, s_to);
+
+	//route_tree_add_edge_between_rr_node(out, from, to);
+	//}
+	//}
+	//}
+	//}
+}
+
 class MultiSinkParallelRouter {
 	private:
 		const RRGraph &_g;
 		congestion_t *_congestion;
 		const float &_pres_fac;
-
-		void merge(const vector<const sink_t *> &sinks, const vector<route_tree_t> &in, route_tree_t &out, vector<RRNode> &added_rr_nodes)
-		{
-			for (const auto &sink : sinks) {
-				const auto &rt = in[sink->id];
-
-				zlog_level(delta_log, ROUTER_V3, "Route tree for sink %d\n", sink->id);
-
-				RouteTreeNode rt_node = route_tree_get_rt_node(rt, sink->rr_node);
-				assert(rt_node != RouteTree::null_vertex());
-
-				RouteTreeNode child_rt_node = RouteTree::null_vertex();
-				bool stop = false;
-
-				while (!stop) {
-					const auto &rt_node_p = get_vertex_props(rt.graph, rt_node);
-
-					auto new_rt_node = route_tree_add_rr_node(out, rt_node_p.rr_node);
-
-					if (new_rt_node != RouteTree::null_vertex()) {
-						added_rr_nodes.push_back(rt_node_p.rr_node);
-
-						update_first_order_congestion(_congestion, rt_node_p.rr_node, 1, get_vertex_props(_g, rt_node_p.rr_node).capacity, _pres_fac);
-
-						auto &new_rt_node_p = get_vertex_props(out.graph, new_rt_node);
-
-						if (get_vertex_props(_g, new_rt_node_p.rr_node).type == SOURCE) {
-							route_tree_add_root(out, new_rt_node_p.rr_node);
-						}
-
-						new_rt_node_p.delay = rt_node_p.delay;
-						new_rt_node_p.upstream_R = rt_node_p.upstream_R;
-					} else {
-						//new_rt_node = route_tree_get_rt_node(out, rt_node_p.rr_node);
-						stop = true;
-					}
-
-					if (child_rt_node != RouteTree::null_vertex()) {
-						const auto &child_rt_node_p = get_vertex_props(rt.graph, child_rt_node);
-
-						char s_from[256];
-						char s_to[256];
-						sprintf_rr_node(rt_node_p.rr_node, s_from);
-						sprintf_rr_node(child_rt_node_p.rr_node, s_to);
-						zlog_level(delta_log, ROUTER_V3, "\tAdding edge from %s to %s\n", s_from, s_to);
-
-						route_tree_add_edge_between_rr_node(out, rt_node_p.rr_node, child_rt_node_p.rr_node);
-					}
-
-					child_rt_node = rt_node;
-
-					if (valid(rt_node_p.rt_edge_to_parent)) {
-						rt_node = get_source(rt.graph, rt_node_p.rt_edge_to_parent);
-					} else {
-						stop = true;
-					}
-				}
-			}
-			//for (const auto &rt : sinks) {
-				//zlog_level(delta_log, ROUTER_V3, "Route tree\n");
-
-				//for (const auto &rt_node : route_tree_get_nodes(rt)) {
-					//const auto &rt_node_p = get_vertex_props(rt.graph, rt_node);
-
-					//auto new_rt_node = route_tree_add_rr_node(out, rt_node_p.rr_node);
-
-					//if (new_rt_node != RouteTree::null_vertex()) {
-						//auto &new_rt_node_p = get_vertex_props(out.graph, new_rt_node);
-
-						//new_rt_node_p.delay = rt_node_p.delay;
-						//new_rt_node_p.upstream_R = rt_node_p.upstream_R;
-					//}
-				//}
-
-				//for (const auto &rt_node : route_tree_get_nodes(rt)) {
-					//for (const auto &e : route_tree_get_branches(rt, rt_node)) {
-						//int from = get_vertex_props(rt.graph, get_source(rt.graph, e)).rr_node;
-						//int to = get_vertex_props(rt.graph, get_target(rt.graph, e)).rr_node;
-
-						//if (!route_tree_has_edge(out, from, to)) {
-							//char s_from[256];
-							//char s_to[256];
-							//sprintf_rr_node(from, s_from);
-							//sprintf_rr_node(to, s_to);
-							//zlog_level(delta_log, ROUTER_V3, "\tAdding edge from %s to %s\n", s_from, s_to);
-
-							//route_tree_add_edge_between_rr_node(out, from, to);
-						//}
-					//}
-				//}
-			//}
-		}
 
 	public:
 		MultiSinkParallelRouter(const RRGraph &g, congestion_t *congestion, const float &pres_fac)
@@ -865,34 +910,75 @@ class MultiSinkParallelRouter {
 		{
 		}
 
-		void route(const source_t *source, const vector<const sink_t *> &sinks, float astar_fac, route_tree_t &rt, vector<RRNode> &added_rr_nodes, t_net_timing &net_timing)
+		void route(const source_t *source, const vector<const sink_t *> &sinks, const box &bounding_box, float astar_fac, route_tree_t &rt, vector<RRNode> &added_rr_nodes, t_net_timing &net_timing, dijkstra_stats_t &stats)
 		{
-			vector<route_tree_t> route_trees(sinks.size());
-			for (auto &tmp : route_trees) {
-				route_tree_init(tmp, &_g);
-			}
+#if 1
+			if (sinks.size() > 16) {
+				vector<route_tree_t> route_trees(sinks.size());
+				for (auto &tmp : route_trees) {
+					route_tree_init(tmp, &_g);
+				}
 
-#if 0
-			tbb::parallel_do(std::begin(sinks), std::end(sinks),
-					[&] (const sink_t *sink) -> void
-			{
-				SinkRouter *router = g_manager->get();
+				//tbb::parallel_do(std::begin(sinks), std::end(sinks),
+				//[&] (const sink_t *sink) -> void
+				//{
+				//SinkRouter *router = g_manager->get();
+				//vector<int> added_rr_nodes; 
 
-				router->route(source, sink, astar_fac, route_trees[sink->id], net_timing.delay[sink->id+1]);
+				//router->route(source, sink, astar_fac, route_trees[sink->id], added_rr_nodes, net_timing.delay[sink->id+1]);
 
-				g_manager->free(router);
-			});
-#else
-			SinkRouter *router = g_manager->get();
-			for (const auto &sink : sinks) {
-				router->route(source, sink, astar_fac, route_trees[sink->id], net_timing.delay[sink->id+1]);
-			}
-			g_manager->free(router);
+				//g_manager->free(router);
+				//});
+
+				tbb::parallel_for(tbb::blocked_range<int>(0, sinks.size()), 
+						[&source, &sinks, &bounding_box, &astar_fac, &route_trees, &net_timing, &stats]
+						(const tbb::blocked_range<int> &r) -> void
+						{
+						thread_local SinkRouter *router = nullptr;
+						if (!router) {
+						router = g_manager->get();
+						}
+
+						for (int i = r.begin(); i != r.end(); ++i) {
+						//SinkRouter *router = g_manager->get();
+						vector<int> added_rr_nodes; 
+						dijkstra_stats_t local_stats;
+
+						router->route(source, sinks[i], bounding_box, astar_fac, route_trees[sinks[i]->id], added_rr_nodes, net_timing.delay[sinks[i]->id+1], &local_stats);
+
+						stats.num_heap_pops += local_stats.num_heap_pops;
+						stats.num_heap_pushes += local_stats.num_heap_pushes;
+						stats.num_neighbor_visits += local_stats.num_neighbor_visits;
+
+						//g_manager->free(router);
+						}
+						}, tbb::auto_partitioner());
+
+				merge(sinks, route_trees, rt, &added_rr_nodes);
+			} else {
+				thread_local SinkRouter *router = nullptr;
+				if (!router) {
+					router = g_manager->get();
+				}
+
+				for (int i = 0; i < sinks.size(); ++i) {
+					dijkstra_stats_t local_stats;
+
+					router->route(i == 0 ? source : nullptr, sinks[i], bounding_box, astar_fac, rt, added_rr_nodes, net_timing.delay[sinks[i]->id+1], &local_stats);
+
+					stats.num_heap_pops += local_stats.num_heap_pops;
+					stats.num_heap_pushes += local_stats.num_heap_pushes;
+					stats.num_neighbor_visits += local_stats.num_neighbor_visits;
+				}
+
+				//g_manager->free(router);
 #endif
+				for (const auto &rr : added_rr_nodes) {
+					update_first_order_congestion(_congestion, rr, 1, get_vertex_props(_g, rr).capacity, _pres_fac);
+				}
 
-			merge(sinks, route_trees, rt, added_rr_nodes);
-
-			assert(rt.root_rt_nodes.size() == 1);
+				assert(rt.root_rt_nodes.size() == 1);
+			}
 		}
 };
 
@@ -1192,6 +1278,438 @@ static void do_work(router_t<net_t *> *router, MultiSinkParallelRouter &net_rout
 }
 */
 
+class SchedRouterTask : public tbb::task {
+	private:
+		router_t<net_t *> *_router;
+		fpga_tree_node_t *_node;
+		int _level;
+
+		void work(const new_virtual_net_t &vnet)
+		{
+			const net_t &net = *vnet.net;
+
+			zlog_level(delta_log, ROUTER_V3, "Routing vnet %d net %d BB %d %d, %d %d\n", vnet.global_index, net.local_id,
+					bg::get<bg::min_corner, 0>(vnet.bounding_box), bg::get<bg::max_corner, 0>(vnet.bounding_box),
+					bg::get<bg::min_corner, 1>(vnet.bounding_box), bg::get<bg::max_corner, 1>(vnet.bounding_box));
+
+			assert(bg::covered_by(vnet.bounding_box, _node->bb));
+
+			//last_inet = inet;
+
+			//router->sync.lock.lock();
+
+			//assert(!router->sync.global_pending_nets.empty());
+			//vnet = router->sync.global_pending_nets.front();
+			//router->sync.global_pending_nets.pop();
+
+			//router->sync.lock.unlock();
+
+			auto real_net_route_start = timer::now();
+
+			//if (router->iter > 0) {
+			//printf("Routing inet %d net %d num sinks %d\n", inet, net.local_id, net.sinks.size());
+			//}
+
+			if (_router->iter > 0) {
+				//for (const auto &rt_node : route_tree_get_nodes(router->state.back_route_trees[net.local_id])) {
+				//RRNode rr_node = get_vertex_props(router->state.back_route_trees[net.local_id].graph, rt_node).rr_node;
+				//const auto &rr_node_p = get_vertex_props(router->g, rr_node);
+
+				//if (rr_node_p.xhigh >= _current_sink->current_bounding_box.xmin
+				//&& rr_node_p.xlow <= _current_sink->current_bounding_box.xmax
+				//&& rr_node_p.yhigh >= _current_sink->current_bounding_box.ymin
+				//&& rr_node_p.ylow <= _current_sink->current_bounding_box.ymax) {
+				//update_one_cost_internal(rr_node, router->g, router->state.congestion, -1, router->pres_fac);
+				//}
+				//}
+
+				assert(!_router->state.back_added_rr_nodes[vnet.global_index].empty());
+
+				for (const auto &rr_node : _router->state.back_added_rr_nodes[vnet.global_index]) {
+					const auto &rr_node_p = get_vertex_props(_router->g, rr_node);
+					//assert(rr_node_p.xlow >= vnet->sinks[0]->current_bounding_box.xmin
+					//&& rr_node_p.xhigh <= vnet->sinks[0]->current_bounding_box.xmax
+					//&& rr_node_p.ylow >= vnet->sinks[0]->current_bounding_box.ymin
+					//&& rr_node_p.yhigh <= vnet->sinks[0]->current_bounding_box.ymax);
+					//assert(rr_node_p.xhigh >= vnet->sinks[0]->current_bounding_box.xmin
+					//&& rr_node_p.xlow <= vnet->sinks[0]->current_bounding_box.xmax
+					//&& rr_node_p.yhigh >= vnet->sinks[0]->current_bounding_box.ymin
+					//&& rr_node_p.ylow <= vnet->sinks[0]->current_bounding_box.ymax);
+					//assert(!outside_bb(rr_node_p, net->bounding_boxes));
+					update_first_order_congestion(_router->state.congestion, rr_node, -1, rr_node_p.capacity, _router->pres_fac);
+					//commit(router->regions[inet], router->g, rr_node, 1, tid);
+				}
+			}
+
+			//_net_router->reset_stats();
+			assert(_router->state.added_rr_nodes[vnet.global_index].empty());
+
+			dijkstra_stats_t lmao;
+
+			int num_tasks = (1 << _level);
+
+			if (vnet.sinks.size() > 16) {
+				zlog_level(delta_log, ROUTER_V3, "Parallel sink\n");
+
+				vector<route_tree_t> route_trees(vnet.sinks.size());
+				for (auto &tmp : route_trees) {
+					route_tree_init(tmp, &_router->g);
+				}
+				vector<vector<int>> added_rr_nodes(vnet.sinks.size());
+
+				tbb::parallel_for(tbb::blocked_range<int>(0, vnet.sinks.size()),
+						[&] (const tbb::blocked_range<int> &r) -> void
+						{
+						thread_local SinkRouter *sink_router = nullptr;
+						if (!sink_router) {
+						sink_router = g_manager->get();
+						}
+
+						for (int i = r.begin(); i != r.end(); ++i) {
+						const sink_t *sink = vnet.sinks[i];
+						sink_router->route(vnet.source, sink, vnet.bounding_box, _router->params.astar_fac, route_trees[i], added_rr_nodes[i], _router->state.net_timing[net.vpr_id].delay[sink->id+1], nullptr); 
+						}
+						}, tbb::auto_partitioner());
+
+				merge(vnet.sinks, route_trees, _router->state.route_trees[net.local_id], &_router->state.added_rr_nodes[vnet.global_index]);
+			} else {
+				zlog_level(delta_log, ROUTER_V3, "Serial sink\n");
+
+				thread_local SinkRouter *sink_router = nullptr;
+				if (!sink_router) {
+					sink_router = g_manager->get();
+				}
+
+				for (int i = 0; i < vnet.sinks.size(); ++i) {
+					const sink_t *sink = vnet.sinks[i];
+					sink_router->route(i == 0 ? vnet.source : nullptr, sink, vnet.bounding_box, _router->params.astar_fac, _router->state.route_trees[net.local_id], _router->state.added_rr_nodes[vnet.global_index], _router->state.net_timing[net.vpr_id].delay[sink->id+1], &lmao); 
+				}
+			}
+
+			for (const auto &node : _router->state.added_rr_nodes[vnet.global_index]) {
+				const auto &rr_node_p = get_vertex_props(_router->g, node);
+				update_first_order_congestion(_router->state.congestion, node, 1, rr_node_p.capacity, _router->pres_fac);
+			}
+
+			auto real_net_route_end = timer::now();
+
+			//net_route_time[net.local_id] = real_net_route_end-real_net_route_start;
+			//acc_net_route_time[net.local_id] = real_net_route_end-route_start;
+			//acc_num_locks[net.local_id] = get_wait_stats(level, tid).size();
+			//pure_route_time += net_route_time[net.local_id];
+
+			//net_stats[net.local_id] = _net_router->get_stats();
+
+			//net_level[net.local_id] = level;
+
+			//routed_nets[level].push_back(&net);
+		}
+
+	public:
+		SchedRouterTask(router_t<net_t *> *router, fpga_tree_node_t *node, int level)
+			: _router(router), _node(node), _level(level)
+		{
+		}
+
+
+		tbb::task *execute()
+		{
+			zlog_level(delta_log, ROUTER_V3, "Node BB %d %d, %d %d\n", 
+					bg::get<bg::min_corner, 0>(_node->bb), bg::get<bg::max_corner, 0>(_node->bb),
+					bg::get<bg::min_corner, 1>(_node->bb), bg::get<bg::max_corner, 1>(_node->bb));
+
+			auto pure_route_time = timer::duration::zero();
+			auto wait_time = timer::duration::zero();
+			auto get_net_wait_time = timer::duration::zero();
+
+			__itt_task_begin(domain, __itt_null, __itt_null, shMyTask);
+
+			//auto route_start = timer::now();
+
+			tbb::parallel_do(begin(_node->roots), end(_node->roots),
+					[&] (new_virtual_net_t *vnet, tbb::parallel_do_feeder<new_virtual_net_t *> &feeder) -> void
+					{
+						work(*vnet);
+
+						for (const auto &v : _node->net_g[vnet->local_index]) {
+							zlog_level(delta_log, ROUTER_V3, "Net %d neighbor %d incoming %d\n", vnet->local_index, v, _node->current_num_incoming_edges[v]->load());
+
+							assert(_node->vnets[v].local_index == v);
+
+							int after = --(*_node->current_num_incoming_edges[v]);
+							assert(after >= 0);
+							if (after == 0) {
+								feeder.add(&_node->vnets[v]);
+							}
+						}
+					});
+			
+			//time[level].route_time = timer::now()-route_start;
+			//time[level].wait_time = wait_time;
+			//time[level].get_net_wait_time = get_net_wait_time;
+			//time[level].pure_route_time = pure_route_time; 
+			
+			__itt_task_end(domain);
+
+			bool recycle_left = false;
+			bool recycle_right = false;
+			if (_node->left || _node->right) {
+				tbb::task &c = *new(allocate_continuation()) tbb::empty_task;
+
+				int num_refs = 0;
+				if (_node->left) {
+					/* cannot assign here because we are still accessing _node later */
+					//_node = _node->left;
+					recycle_as_child_of(c);
+					recycle_left = true;
+					++num_refs;
+					zlog_level(delta_log, ROUTER_V3, "Recycled left BB %d %d, %d %d\n", 
+							bg::get<bg::min_corner, 0>(_node->left->bb), bg::get<bg::max_corner, 0>(_node->left->bb),
+							bg::get<bg::min_corner, 1>(_node->left->bb), bg::get<bg::max_corner, 1>(_node->left->bb));
+				}
+
+				if (_node->right) {
+					if (!recycle_left) {
+						//_node = _node->right;
+						recycle_as_child_of(c);
+						recycle_right = true;
+						zlog_level(delta_log, ROUTER_V3, "Recycled right BB %d %d, %d %d\n", 
+								bg::get<bg::min_corner, 0>(_node->bb), bg::get<bg::max_corner, 0>(_node->bb),
+								bg::get<bg::min_corner, 1>(_node->bb), bg::get<bg::max_corner, 1>(_node->bb));
+					} else {
+						tbb::task &t = *new(c.allocate_child()) SchedRouterTask(_router, _node->right, _level+1);
+						spawn(t);
+						zlog_level(delta_log, ROUTER_V3, "Spawned right BB %d %d, %d %d\n", 
+								bg::get<bg::min_corner, 0>(_node->right->bb), bg::get<bg::max_corner, 0>(_node->right->bb),
+								bg::get<bg::min_corner, 1>(_node->right->bb), bg::get<bg::max_corner, 1>(_node->right->bb));
+					}
+					++num_refs;
+				}
+
+				c.set_ref_count(num_refs);
+
+				zlog_level(delta_log, ROUTER_V3, "Finished task\n");
+
+				assert(!(recycle_left && recycle_right));
+
+				if (recycle_left) {
+					_node = _node->left; 
+					++_level;
+				} else if (recycle_right) {
+					_node = _node->right;
+					++_level;
+				}
+			}
+
+			return (recycle_left || recycle_right) ? this : nullptr;
+		}
+};
+
+class VirtualRouterTask : public tbb::task {
+	private:
+		router_t<net_t *> *_router;
+		fpga_tree_node_t *_node;
+		int _level;
+
+		void work(int color, int low, int high)
+		{
+			thread_local SinkRouter *sink_router = nullptr;
+			if (!sink_router) {
+				sink_router = g_manager->get();
+			}
+
+			for (int inet = low; inet != high; ++inet) {
+				new_virtual_net_t &vnet = *_node->scheduled[color][inet];
+				const net_t &net = *vnet.net;
+
+				zlog_level(delta_log, ROUTER_V3, "Routing vnet %d net %d BB %d %d, %d %d\n", vnet.global_index, net.local_id,
+						bg::get<bg::min_corner, 0>(vnet.bounding_box), bg::get<bg::max_corner, 0>(vnet.bounding_box),
+						bg::get<bg::min_corner, 1>(vnet.bounding_box), bg::get<bg::max_corner, 1>(vnet.bounding_box));
+
+				assert(bg::covered_by(vnet.bounding_box, _node->bb));
+
+				//last_inet = inet;
+
+				//router->sync.lock.lock();
+
+				//assert(!router->sync.global_pending_nets.empty());
+				//vnet = router->sync.global_pending_nets.front();
+				//router->sync.global_pending_nets.pop();
+
+				//router->sync.lock.unlock();
+
+				auto real_net_route_start = timer::now();
+
+				//if (router->iter > 0) {
+				//printf("Routing inet %d net %d num sinks %d\n", inet, net.local_id, net.sinks.size());
+				//}
+
+				if (_router->iter > 0) {
+					//for (const auto &rt_node : route_tree_get_nodes(router->state.back_route_trees[net.local_id])) {
+					//RRNode rr_node = get_vertex_props(router->state.back_route_trees[net.local_id].graph, rt_node).rr_node;
+					//const auto &rr_node_p = get_vertex_props(router->g, rr_node);
+
+					//if (rr_node_p.xhigh >= _current_sink->current_bounding_box.xmin
+					//&& rr_node_p.xlow <= _current_sink->current_bounding_box.xmax
+					//&& rr_node_p.yhigh >= _current_sink->current_bounding_box.ymin
+					//&& rr_node_p.ylow <= _current_sink->current_bounding_box.ymax) {
+					//update_one_cost_internal(rr_node, router->g, router->state.congestion, -1, router->pres_fac);
+					//}
+					//}
+
+					assert(!_router->state.back_added_rr_nodes[vnet.global_index].empty());
+
+					for (const auto &rr_node : _router->state.back_added_rr_nodes[vnet.global_index]) {
+						const auto &rr_node_p = get_vertex_props(_router->g, rr_node);
+						//assert(rr_node_p.xlow >= vnet->sinks[0]->current_bounding_box.xmin
+						//&& rr_node_p.xhigh <= vnet->sinks[0]->current_bounding_box.xmax
+						//&& rr_node_p.ylow >= vnet->sinks[0]->current_bounding_box.ymin
+						//&& rr_node_p.yhigh <= vnet->sinks[0]->current_bounding_box.ymax);
+						//assert(rr_node_p.xhigh >= vnet->sinks[0]->current_bounding_box.xmin
+						//&& rr_node_p.xlow <= vnet->sinks[0]->current_bounding_box.xmax
+						//&& rr_node_p.yhigh >= vnet->sinks[0]->current_bounding_box.ymin
+						//&& rr_node_p.ylow <= vnet->sinks[0]->current_bounding_box.ymax);
+						//assert(!outside_bb(rr_node_p, net->bounding_boxes));
+						update_first_order_congestion(_router->state.congestion, rr_node, -1, rr_node_p.capacity, _router->pres_fac);
+						//commit(router->regions[inet], router->g, rr_node, 1, tid);
+					}
+				}
+
+				const source_t *source;
+				if (route_tree_empty(_router->state.route_trees[net.local_id])) {
+					source = vnet.source;
+				} else {
+					source = nullptr;
+				}
+
+				//_net_router->reset_stats();
+
+				dijkstra_stats_t lmao;
+
+				for (int i = 0; i < vnet.sinks.size(); ++i) {
+					const sink_t *sink = vnet.sinks[i];
+					sink_router->route(source, sink, vnet.bounding_box, _router->params.astar_fac, _router->state.route_trees[net.local_id], _router->state.added_rr_nodes[vnet.global_index], _router->state.net_timing[net.vpr_id].delay[sink->id+1], &lmao); 
+				}
+
+				for (const auto &node : _router->state.added_rr_nodes[vnet.global_index]) {
+					const auto &rr_node_p = get_vertex_props(_router->g, node);
+					update_first_order_congestion(_router->state.congestion, node, 1, rr_node_p.capacity, _router->pres_fac);
+				}
+
+				auto real_net_route_end = timer::now();
+
+				//net_route_time[net.local_id] = real_net_route_end-real_net_route_start;
+				//acc_net_route_time[net.local_id] = real_net_route_end-route_start;
+				//acc_num_locks[net.local_id] = get_wait_stats(level, tid).size();
+				//pure_route_time += net_route_time[net.local_id];
+
+				//net_stats[net.local_id] = _net_router->get_stats();
+
+				//net_level[net.local_id] = level;
+
+				//routed_nets[level].push_back(&net);
+			}
+		}
+
+	public:
+		VirtualRouterTask(router_t<net_t *> *router, fpga_tree_node_t *node, int level)
+			: _router(router), _node(node), _level(level)
+		{
+		}
+
+
+		tbb::task *execute()
+		{
+			int num_tasks = (2 << _level);
+
+			zlog_level(delta_log, ROUTER_V3, "Node BB %d %d, %d %d Num tasks %d\n", 
+					bg::get<bg::min_corner, 0>(_node->bb), bg::get<bg::max_corner, 0>(_node->bb),
+					bg::get<bg::min_corner, 1>(_node->bb), bg::get<bg::max_corner, 1>(_node->bb),
+					num_tasks);
+
+			auto pure_route_time = timer::duration::zero();
+			auto wait_time = timer::duration::zero();
+			auto get_net_wait_time = timer::duration::zero();
+
+			__itt_task_begin(domain, __itt_null, __itt_null, shMyTask);
+
+			auto route_start = timer::now();
+
+			for (int color = 0; color < _node->scheduled.size(); ++color) {
+				zlog_level(delta_log, ROUTER_V3, "Color %d\n", color);
+
+				if (_router->num_threads/num_tasks > 1 && _node->scheduled[color].size() > 16) {
+					tbb::parallel_for(tbb::blocked_range<int>(0, _node->scheduled[color].size()),
+							[&] (const tbb::blocked_range<int> &r) -> void
+							{
+								work(color, r.begin(), r.end());
+							});
+				} else {
+					work(color, 0, _node->scheduled[color].size());
+				}
+			}	
+			
+			__itt_task_end(domain);
+
+			//time[level].route_time = timer::now()-route_start;
+			//time[level].wait_time = wait_time;
+			//time[level].get_net_wait_time = get_net_wait_time;
+			//time[level].pure_route_time = pure_route_time; 
+
+			bool recycle_left = false;
+			bool recycle_right = false;
+			if (_node->left || _node->right) {
+				tbb::task &c = *new(allocate_continuation()) tbb::empty_task;
+
+				int num_refs = 0;
+				if (_node->left) {
+					/* cannot assign here because we are still accessing _node later */
+					//_node = _node->left;
+					recycle_as_child_of(c);
+					recycle_left = true;
+					++num_refs;
+					zlog_level(delta_log, ROUTER_V3, "Recycled left BB %d %d, %d %d\n", 
+							bg::get<bg::min_corner, 0>(_node->left->bb), bg::get<bg::max_corner, 0>(_node->left->bb),
+							bg::get<bg::min_corner, 1>(_node->left->bb), bg::get<bg::max_corner, 1>(_node->left->bb));
+				}
+
+				if (_node->right) {
+					if (!recycle_left) {
+						//_node = _node->right;
+						recycle_as_child_of(c);
+						recycle_right = true;
+						zlog_level(delta_log, ROUTER_V3, "Recycled right BB %d %d, %d %d\n", 
+								bg::get<bg::min_corner, 0>(_node->bb), bg::get<bg::max_corner, 0>(_node->bb),
+								bg::get<bg::min_corner, 1>(_node->bb), bg::get<bg::max_corner, 1>(_node->bb));
+					} else {
+						tbb::task &t = *new(c.allocate_child()) VirtualRouterTask(_router, _node->right, _level+1);
+						spawn(t);
+						zlog_level(delta_log, ROUTER_V3, "Spawned right BB %d %d, %d %d\n", 
+								bg::get<bg::min_corner, 0>(_node->right->bb), bg::get<bg::max_corner, 0>(_node->right->bb),
+								bg::get<bg::min_corner, 1>(_node->right->bb), bg::get<bg::max_corner, 1>(_node->right->bb));
+					}
+					++num_refs;
+				}
+
+				c.set_ref_count(num_refs);
+
+				zlog_level(delta_log, ROUTER_V3, "Finished task\n");
+
+				assert(!(recycle_left && recycle_right));
+
+				if (recycle_left) {
+					_node = _node->left; 
+					++_level;
+				} else if (recycle_right) {
+					_node = _node->right;
+					++_level;
+				}
+			}
+
+			return (recycle_left || recycle_right) ? this : nullptr;
+		}
+};
+
 class RouterTask : public tbb::task {
 	private:
 		router_t<net_t *> *_router;
@@ -1213,6 +1731,8 @@ class RouterTask : public tbb::task {
 			auto pure_route_time = timer::duration::zero();
 			auto wait_time = timer::duration::zero();
 			auto get_net_wait_time = timer::duration::zero();
+
+			__itt_task_begin(domain, __itt_null, __itt_null, shMyTask);
 
 			auto route_start = timer::now();
 
@@ -1280,7 +1800,8 @@ class RouterTask : public tbb::task {
 
 				//_net_router->reset_stats();
 
-				_net_router->route(source, sinks, _router->params.astar_fac, _router->state.route_trees[net.local_id], _router->state.added_rr_nodes[net.local_id], _router->state.net_timing[net.vpr_id]); 
+				dijkstra_stats_t lmao;
+				_net_router->route(source, sinks, net.bounding_box, _router->params.astar_fac, _router->state.route_trees[net.local_id], _router->state.added_rr_nodes[net.local_id], _router->state.net_timing[net.vpr_id], lmao); 
 
 				auto real_net_route_end = timer::now();
 
@@ -1297,59 +1818,59 @@ class RouterTask : public tbb::task {
 				//routed_nets[level].push_back(&net);
 			}
 
+			__itt_task_end(domain);
+
 			//time[level].route_time = timer::now()-route_start;
 			//time[level].wait_time = wait_time;
 			//time[level].get_net_wait_time = get_net_wait_time;
 			//time[level].pure_route_time = pure_route_time; 
 
-			if (!_node->left && !_node->right) {
-				return NULL;
-			}
-
-			tbb::task &c = *new(allocate_continuation()) tbb::empty_task;
-
-			int num_refs = 0;
 			bool recycle_left = false;
-			if (_node->left) {
-				/* cannot assign here because we are still accessing _node later */
-				//_node = _node->left;
-				recycle_as_child_of(c);
-				recycle_left = true;
-				++num_refs;
-				zlog_level(delta_log, ROUTER_V3, "Recycled left BB %d %d, %d %d\n", 
-						bg::get<bg::min_corner, 0>(_node->left->bb), bg::get<bg::max_corner, 0>(_node->left->bb),
-						bg::get<bg::min_corner, 1>(_node->left->bb), bg::get<bg::max_corner, 1>(_node->left->bb));
-			}
-
 			bool recycle_right = false;
-			if (_node->right) {
-				if (!recycle_left) {
-					//_node = _node->right;
+			if (_node->left || _node->right) {
+				tbb::task &c = *new(allocate_continuation()) tbb::empty_task;
+
+				int num_refs = 0;
+				if (_node->left) {
+					/* cannot assign here because we are still accessing _node later */
+					//_node = _node->left;
 					recycle_as_child_of(c);
-					recycle_right = true;
-					zlog_level(delta_log, ROUTER_V3, "Recycled right BB %d %d, %d %d\n", 
-							bg::get<bg::min_corner, 0>(_node->bb), bg::get<bg::max_corner, 0>(_node->bb),
-							bg::get<bg::min_corner, 1>(_node->bb), bg::get<bg::max_corner, 1>(_node->bb));
-				} else {
-					tbb::task &t = *new(c.allocate_child()) RouterTask(_router, _node->right);
-					spawn(t);
-					zlog_level(delta_log, ROUTER_V3, "Spawned right BB %d %d, %d %d\n", 
-							bg::get<bg::min_corner, 0>(_node->right->bb), bg::get<bg::max_corner, 0>(_node->right->bb),
-							bg::get<bg::min_corner, 1>(_node->right->bb), bg::get<bg::max_corner, 1>(_node->right->bb));
+					recycle_left = true;
+					++num_refs;
+					zlog_level(delta_log, ROUTER_V3, "Recycled left BB %d %d, %d %d\n", 
+							bg::get<bg::min_corner, 0>(_node->left->bb), bg::get<bg::max_corner, 0>(_node->left->bb),
+							bg::get<bg::min_corner, 1>(_node->left->bb), bg::get<bg::max_corner, 1>(_node->left->bb));
 				}
-				++num_refs;
-			}
 
-			c.set_ref_count(num_refs);
+				if (_node->right) {
+					if (!recycle_left) {
+						//_node = _node->right;
+						recycle_as_child_of(c);
+						recycle_right = true;
+						zlog_level(delta_log, ROUTER_V3, "Recycled right BB %d %d, %d %d\n", 
+								bg::get<bg::min_corner, 0>(_node->bb), bg::get<bg::max_corner, 0>(_node->bb),
+								bg::get<bg::min_corner, 1>(_node->bb), bg::get<bg::max_corner, 1>(_node->bb));
+					} else {
+						tbb::task &t = *new(c.allocate_child()) RouterTask(_router, _node->right);
+						spawn(t);
+						zlog_level(delta_log, ROUTER_V3, "Spawned right BB %d %d, %d %d\n", 
+								bg::get<bg::min_corner, 0>(_node->right->bb), bg::get<bg::max_corner, 0>(_node->right->bb),
+								bg::get<bg::min_corner, 1>(_node->right->bb), bg::get<bg::max_corner, 1>(_node->right->bb));
+					}
+					++num_refs;
+				}
 
-			zlog_level(delta_log, ROUTER_V3, "Finished task\n");
+				c.set_ref_count(num_refs);
 
-			assert(!(recycle_left && recycle_right));
+				zlog_level(delta_log, ROUTER_V3, "Finished task\n");
 
-			if (recycle_left) {
-				_node = _node->left; 
-			} else if (recycle_right) {
-				_node = _node->right;
+				assert(!(recycle_left && recycle_right));
+
+				if (recycle_left) {
+					_node = _node->left; 
+				} else if (recycle_right) {
+					_node = _node->right;
+				}
 			}
 
 			return (recycle_left || recycle_right) ? this : nullptr;
@@ -2445,7 +2966,7 @@ void write_inc_time(const char *filename, const vector<pair<inc_time_t, int>> &i
 }
 
 template<typename Load>
-void lmao2(router_t<net_t *> &router, const t_router_opts *opts, int num_all_nets, const Load &load)
+void build_net_tree(router_t<net_t *> &router, const t_router_opts *opts, int num_all_nets, const Load &load)
 {
 	router.num_levels = opts->num_net_cuts+1;
 
@@ -2474,8 +2995,676 @@ void lmao2(router_t<net_t *> &router, const t_router_opts *opts, int num_all_net
 	print_tree(&router.net_root, 0);
 }
 
+template <class OrderPA, class ColorMap>
+	typename boost::property_traits<ColorMap>::value_type
+custom_vertex_coloring(const vector<vector<int>> &G, OrderPA &order, 
+		ColorMap &color)
+{
+	typedef typename boost::property_traits<ColorMap>::value_type size_type;
+
+	size_type max_color = 0;
+	const size_type V = G.size();
+
+	// We need to keep track of which colors are used by
+	// adjacent vertices. We do this by marking the colors
+	// that are used. The mark array contains the mark
+	// for each color. The length of mark is the
+	// number of vertices since the maximum possible number of colors
+	// is the number of vertices.
+
+	//Initialize colors 
+	for (int v = 0; v < V; ++v)
+		put(color, v, V-1);
+
+	std::vector<size_type> mark(V, 
+			std::numeric_limits<size_type>::max BOOST_PREVENT_MACRO_SUBSTITUTION());
+	//Determine the color for every vertex one by one
+	for ( size_type i = 0; i < V; i++) {
+		int current = get(order,i);
+
+		/* we are done coloring this node */
+		if (get(color, current) != V-1) {
+			continue;
+		}
+
+		//Mark the colors of vertices adjacent to current.
+		//i can be the value for marking since i increases successively
+		for (int j = 0; j < G[current].size(); ++j) {
+			mark[get(color, G[current][j])] = i; 
+		}
+
+		//Next step is to assign the smallest un-marked color
+		//to the current vertex.
+		size_type j = 0;
+
+		//Scan through all useable colors, find the smallest possible
+		//color that is not used by neighbors.  Note that if mark[j]
+		//is equal to i, color j is used by one of the current vertex's
+		//neighbors.
+		while ( j < max_color && mark[j] == i ) 
+			++j;
+
+		assert(j <= max_color);
+		if (j == max_color) {
+			++max_color;
+		}
+		//while ( max_color <= j)  //All colors are used up. Add one more color
+		//++max_color;
+
+		//At this point, j is the smallest possible color
+		put(color, current, j);  //Save the color of vertex current
+	}
+
+	return max_color;
+}
+
+template <class Order, class Degree, 
+		 class Marker, class BucketSorter>
+void 
+custom_smallest_last_vertex_ordering(const vector<vector<int>> & G, Order order, 
+		Degree degree, Marker marker,
+		BucketSorter& degree_buckets) {
+	typedef std::size_t size_type;
+
+	const size_type num = G.size();
+
+	for (int v = 0; v < G.size(); ++v) {
+		put(marker, v, num);
+		put(degree, v, G[v].size());
+		degree_buckets.push(v);
+	}
+
+	size_type minimum_degree = 0;
+	size_type current_order = num - 1;
+
+	while ( 1 ) {
+		typedef typename BucketSorter::stack MDStack;
+		MDStack minimum_degree_stack = degree_buckets[minimum_degree];
+		while (minimum_degree_stack.empty())
+			minimum_degree_stack = degree_buckets[++minimum_degree];
+
+		int node = minimum_degree_stack.top();
+		put(order, current_order, node);
+
+		if ( current_order == 0 ) //find all vertices
+			break;
+
+		minimum_degree_stack.pop();
+		put(marker, node, 0); //node has been ordered.
+
+		for (int v = 0; v < G[node].size(); ++v) {
+			int vn = G[node][v];
+			if ( get(marker, vn) > current_order ) { //vn is unordered vertex
+				put(marker, vn, current_order);  //mark the columns adjacent to node
+
+				//delete vn from the bucket sorter         
+				degree_buckets.remove(vn);
+
+				//It is possible minimum degree goes down
+				//Here we keep tracking it.
+				put(degree, vn, get(degree, vn) - 1); 
+				minimum_degree = std::min(minimum_degree, get(degree, vn)); 
+
+				//reinsert vn in the bucket sorter with the new degree
+				degree_buckets.push(vn);
+			}
+		}
+
+		current_order--;
+	}
+
+	//at this point, order[i] = v_i;
+}
+
+template <class Order, class Degree, class Marker>
+void 
+custom_smallest_last_vertex_ordering(const vector<vector<int>> & G, Order order, 
+		Degree degree, Marker marker) {
+	typedef std::size_t size_type;
+
+	const size_type num = G.size();
+
+	typedef boost::bucket_sorter<size_type, int, Degree, boost::identity_property_map> BucketSorter;
+
+	BucketSorter degree_bucket_sorter(num, num, degree);
+
+	custom_smallest_last_vertex_ordering(G, order, degree, marker, degree_bucket_sorter);
+}
+
+template <class Order>
+void 
+custom_smallest_last_vertex_ordering(const vector<vector<int>> & G, Order order) {
+	custom_smallest_last_vertex_ordering(G, order,
+			make_shared_array_property_map(G.size(), std::size_t(0), boost::identity_property_map()),
+			make_shared_array_property_map(G.size(), 0, boost::identity_property_map()));
+}
+
+void create_virtual_nets(const vector<net_t *> &nets, vector<new_virtual_net_t> &vnets, int &total_num_vnets)
+{
+	for (const auto &net : nets) {
+		double total_area = 0;
+		box all_bb;
+		bg::assign_inverse(all_bb);
+		bg::expand(all_bb, point(net->source.x, net->source.y));
+
+		for (const auto &sink : net->sinks) {
+			box bb;
+
+			bg::assign_inverse(bb);
+			bg::expand(bb, point(net->source.x, net->source.y));
+			bg::expand(bb, point(sink.x, sink.y));
+
+			bg::expand(all_bb, point(sink.x, sink.y));
+
+			total_area += bg::area(bb);
+		}
+
+		if (total_area > bg::area(all_bb)) {
+			new_virtual_net_t vnet;
+
+			vnet.local_index = vnets.size();
+			vnet.global_index = total_num_vnets++;
+			vnet.net = net;
+			vnet.source = &net->source;
+			bg::assign_inverse(vnet.bounding_box);
+			bg::expand(vnet.bounding_box, point(vnet.source->x, vnet.source->y));
+
+			for (const auto &sink : net->sinks) {
+				vnet.sinks.push_back(&sink);
+
+				bg::expand(vnet.bounding_box, point(sink.x, sink.y));
+			}
+
+			bg::add_value(vnet.bounding_box.max_corner(), 1);
+			bg::subtract_value(vnet.bounding_box.min_corner(), 1+1);
+			box intersection;
+			extern int nx, ny;
+			bg::intersection(bg::make<box>(0, 0, nx+1, ny+1), vnet.bounding_box, intersection);
+			vnet.bounding_box = intersection;
+			assert(bg::equals(vnet.bounding_box, net->bounding_box));
+
+			vnets.push_back(vnet);
+		} else {
+			for (const auto &sink : net->sinks) {
+				new_virtual_net_t vnet;
+
+				vnet.local_index = vnets.size();
+				vnet.global_index = total_num_vnets++;
+				vnet.net = net;
+				vnet.source = &net->source;
+				vnet.sinks.push_back(&sink);
+
+				bg::assign_inverse(vnet.bounding_box);
+
+				bg::expand(vnet.bounding_box, point(vnet.source->x, vnet.source->y));
+				bg::expand(vnet.bounding_box, point(sink.x, sink.y));
+
+				bg::add_value(vnet.bounding_box.max_corner(), 1);
+				bg::subtract_value(vnet.bounding_box.min_corner(), 1+1);
+				box intersection;
+				extern int nx, ny;
+				bg::intersection(bg::make<box>(0, 0, nx+1, ny+1), vnet.bounding_box, intersection);
+				vnet.bounding_box = intersection;
+
+				vnets.push_back(vnet);
+			}
+		}
+	}
+}
+
+typedef boost::adjacency_list<boost::vecS, boost::vecS, boost::undirectedS> OverlapGraph;
+
+int build_overlap_graph(const vector<new_virtual_net_t> &vnets, OverlapGraph &overlap)
+{
+	for (int i = 0; i < vnets.size(); ++i) {
+		add_vertex(overlap);
+	}
+
+	int num_edges = 0;
+
+	for (int i = 0; i < vnets.size(); ++i) {
+		for (int j = i+1; j < vnets.size(); ++j) {
+			//if (vnets[i].net != vnets[j].net
+					//&& bg::intersects(vnets[i].bounding_box, vnets[j].bounding_box)) {
+			if (bg::intersects(vnets[i].bounding_box, vnets[j].bounding_box)) {
+				add_edge(i, j, overlap);
+			}
+		}
+	}
+
+	return num_edges;
+}
+
+int build_overlap_graph(const vector<new_virtual_net_t> &vnets, vector<vector<int>> &overlap)
+{
+	overlap.resize(vnets.size());
+	for (int i = 0; i < vnets.size(); ++i) {
+		assert(overlap[i].empty());
+	}
+
+	int num_edges = 0;
+
+	for (int i = 0; i < vnets.size(); ++i) {
+		for (int j = i+1; j < vnets.size(); ++j) {
+			//if (vnets[i].net != vnets[j].net
+					//&& bg::intersects(vnets[i].bounding_box, vnets[j].bounding_box)) {
+			if (bg::intersects(vnets[i].bounding_box, vnets[j].bounding_box)) {
+				overlap[i].push_back(j);
+				overlap[j].push_back(i);
+
+				num_edges += 2;
+			}
+		}
+	}
+
+	/* TODO: this is very pessimistic. we can remove some edges if we are sure that
+	 * the bounding box overlaps with the existing route tree sufficiently */
+	//for (auto &virtual_nets : all_virtual_nets) {
+		//for (int i = 0; i < virtual_nets.size(); ++i) {
+			//for (int j = 0; j < virtual_nets.size(); ++j) {
+				//if (i != j) {
+					//auto e = edge(virtual_nets[i].v, virtual_nets[j].v, g);
+					//if (!e.second) {
+						//add_edge(virtual_nets[i].v, virtual_nets[j].v, g);
+					//}
+				//}
+			//}
+		//}
+	//}
+
+	/* Don't need this here because we are checking the parent based on the virtual net index */
+	//for (auto &virtual_nets : all_virtual_nets) {
+		//for (int i = virtual_nets.size()-1; i > 0; --i) {
+			//auto e = edge(virtual_nets[i].v, virtual_nets[i-1].v, g);
+			//assert(!e.second);
+			//add_edge(virtual_nets[i].v, virtual_nets[i-1].v, g);
+		//}
+	//}
+	
+	//for (auto &virtual_nets : all_virtual_nets) {
+		//printf("virtual nets for net %d num sinks %d\n", virtual_nets[0].net->local_id, virtual_nets[0].net->sinks.size());
+
+		//for (int i = 0; i < virtual_nets.size(); ++i) {
+			//printf("vnet %d\n", i);
+
+			//if (i == 0) {
+				//virtual_nets[i].parent = -1;
+			//} else {
+				//int num_overlaps = 0;
+				//double max_overlap_area = std::numeric_limits<double>::lowest();
+				//int best = -1;
+				//for (int j = 0; j < i; ++j) {
+					//box intersection;
+					//bool intersects = bg::intersection(virtual_nets[i].bounding_box, virtual_nets[j].bounding_box, intersection);
+					//printf("bb0 %d,%d -> %d,%d bb1 %d,%d -> %d,%d\n", bg::get<0>(virtual_nets[i].bounding_box.min_corner()), bg::get<1>(virtual_nets[i].bounding_box.min_corner()),
+							//bg::get<0>(virtual_nets[i].bounding_box.max_corner()), bg::get<1>(virtual_nets[i].bounding_box.max_corner()),
+							//bg::get<0>(virtual_nets[j].bounding_box.min_corner()), bg::get<1>(virtual_nets[j].bounding_box.min_corner()),
+							//bg::get<0>(virtual_nets[j].bounding_box.max_corner()), bg::get<1>(virtual_nets[j].bounding_box.max_corner()));
+					//if (intersects) {
+						//assert(bg::intersects(virtual_nets[i].bounding_box, virtual_nets[j].bounding_box));
+						//++num_overlaps;
+						//double area = bg::area(intersection);
+						//printf("\toverlap between vnet %d and %d area %g max area %g\n", i, j, area, max_overlap_area);
+						//if (area > max_overlap_area) {
+							//max_overlap_area = area;
+							//best = virtual_nets[j].global_index;
+							//printf("\tsetting max area to %g and best vnet to %d\n", area, best);
+						//}
+					//} else {
+						//assert(!bg::intersects(virtual_nets[i].bounding_box, virtual_nets[j].bounding_box));
+						//printf("\tno overlap between vnet %d and %d\n", i, j);
+					//}
+				//}
+				//assert(num_overlaps > 0);
+				//assert(best != -1);
+				//virtual_nets[i].parent = best;
+				
+				//overlap[best].push_back(virtual_nets[i].global_index);
+			//}
+		//}
+	//}
+	//for (auto &virtual_nets : all_virtual_nets) {
+		//for (int i = 0; i < virtual_nets.size(); ++i) {
+			//if (i == 0) {
+				//virtual_nets[i].parent = -1;
+			//} else {
+				//virtual_nets[i].parent = virtual_nets[i-1].global_index;
+
+				//overlap[virtual_nets[i-1].global_index].push_back(virtual_nets[i].global_index);
+				//++num_edges;
+			//}
+		//}
+	//}
+	//int num_orig_directed_edges = 0;
+	//for (int i = 0; i < all_virtual_nets_ptr.size(); ++i) {
+		//assert(all_virtual_nets_ptr[i]->v == i);
+		//assert(all_virtual_nets_ptr[i]->global_index == i);
+
+		//if (all_virtual_nets_ptr[i]->index > 0) {
+			//overlap[all_virtual_nets_ptr[i]->parent].push_back(all_virtual_nets_ptr[i]->v);
+			//++num_orig_directed_edges;
+		//} 
+	//}
+
+	return num_edges;
+}
+
+void schedule_nets_ind(const vector<net_t *> &nets, vector<vector<const net_t *>> &net_scheduled_at_time)
+{
+	int max_local_id = 0;
+	for (const auto &net : nets) {
+		max_local_id = std::max(net->local_id, max_local_id);
+	}
+
+	vector<bool> scheduled(max_local_id+1, true);
+	for (const auto &net : nets) {
+		scheduled[net->local_id] = false;
+	}
+	net_scheduled_at_time.reserve(nets.size()); //worst case
+	int num_scheduled_nets = 0;
+	int time = 0;
+
+	using namespace boost::accumulators;
+	accumulator_set<decltype(vector<net_t **>().size()), stats<tag::mean, tag::max, tag::min, tag::variance>> acc;
+
+	while (num_scheduled_nets < nets.size()) {
+		vector<net_t *> unscheduled_nets;
+		for (int i = 0; i < nets.size(); ++i) {
+			if (!scheduled[nets[i]->local_id]) {
+				unscheduled_nets.push_back(nets[i]);
+			}
+		}
+
+		vector<net_t **> chosen;
+		max_independent_rectangles(unscheduled_nets,
+				[] (const net_t *net) -> box { return net->bounding_box; },
+				[] (const net_t *net) -> pair<int, int> { return make_pair(bg::get<bg::min_corner, 1>(net->bounding_box), bg::get<bg::max_corner, 1>(net->bounding_box)); },
+				chosen);
+
+		net_scheduled_at_time.push_back(vector<const net_t *>());
+		for (const auto &c : chosen) {
+			scheduled[(*c)->local_id] = true;
+			net_scheduled_at_time[time].push_back(*c);
+		}
+		num_scheduled_nets += chosen.size();
+		acc(chosen.size());
+		++time;
+	}
+
+	printf("NET: nets %lu num colors %lu min %lu max %lu mean %g std dev %g\n", nets.size(), net_scheduled_at_time.size(), boost::accumulators::min(acc), boost::accumulators::max(acc), mean(acc), std::sqrt(variance(acc)));
+
+	assert(all_of(scheduled.begin(), scheduled.end(), [] (const bool &item) -> bool { return item; }));
+
+	for (const auto &at_time : net_scheduled_at_time) {
+		verify_ind(at_time, [] (const net_t *net) -> box { return net->bounding_box; });
+	}
+}
+
+template<typename LoadFunc>
+void schedule_nets_greedy(const vector<vector<int>> &g, const vector<new_virtual_net_t> &vnets, const LoadFunc &load, int num_partitions, vector<vector<int>> &directed_g, vector<int> &num_incoming_edges)
+{
+	vector<int> sorted_nodes(g.size());
+	for (int i = 0; i < g.size(); ++i) {
+		sorted_nodes[i] = i;
+	}
+	std::sort(begin(sorted_nodes), end(sorted_nodes), [&g] (int a, int b) -> bool { return g[a].size() > g[b].size(); });
+
+	struct node_item_t {
+		int id;
+		float start_time;
+		unsigned long num_out_edges;
+
+		//bool operator<(const node_item_t &other) const {
+			//return start_time > other.start_time || (start_time == other.start_time && num_out_edges < other.num_out_edges);
+		//}
+		bool operator<(const node_item_t &other) const {
+			return start_time > other.start_time;
+		}
+	};
+
+	boost::heap::binomial_heap<node_item_t, boost::heap::stable<true>> min_node_heap;
+	using node_handle_t = typename boost::heap::binomial_heap<node_item_t, boost::heap::stable<true>>::handle_type;
+
+	vector<node_handle_t> node_handles(g.size());
+
+	vector<float> start_time(g.size());
+
+	for (const auto &n : sorted_nodes) {
+		start_time[n] = 0;
+		node_handles[n] = min_node_heap.push({ n, 0, g[n].size() });
+	}
+
+	struct partition_item_t {
+		int id;
+		float start_time;
+
+		bool operator<(const partition_item_t &other) const {
+			return start_time > other.start_time;
+		}
+	};
+	boost::heap::binomial_heap<partition_item_t, boost::heap::stable<true>> min_partition_heap;
+
+	for (int i = 0; i < num_partitions; ++i) {
+		min_partition_heap.push({ i, 0 });
+	}
+
+	vector<bool> scheduled(g.size(), false);
+
+	directed_g.resize(g.size());
+	for (auto &u : directed_g) {
+		u.clear();
+	}
+
+	num_incoming_edges.resize(g.size());
+	std::fill(begin(num_incoming_edges), end(num_incoming_edges), 0);
+
+	while (!min_node_heap.empty()) {
+		node_item_t min_node = min_node_heap.top();
+		min_node_heap.pop();
+
+		int u = min_node.id;
+
+		assert(!scheduled[u]);
+		scheduled[u] = true;
+
+		start_time[u] = min_node.start_time;
+
+		partition_item_t min_partition = min_partition_heap.top();
+		min_partition_heap.pop();
+
+		float uload = load(vnets[u]);
+		assert(uload > 0);
+		float new_start = std::max(min_node.start_time, min_partition.start_time) + uload;
+		//float new_start = min_node.start_time + uload;
+
+		min_partition_heap.push({ min_partition.id, new_start });
+
+		PRINT("Current %d [start time %g load %g] sent to partition %d with start time %g\n", u, min_node.start_time, uload, min_partition.id, min_partition.start_time);
+
+		PRINT("New start %g = max(item %g, part %g) + load %g\n", new_start, min_node.start_time, min_partition.start_time, uload);
+
+		/* it is possible that we have less amount of threads than the amount of parallelism available */
+		//assert(min_node.start_time >= min_partition.start_time);
+		
+		for (const auto &v : g[u]) {
+			if (scheduled[v]) {
+				assert(start_time[v] < start_time[u]);
+				continue;
+			}
+
+			assert((*node_handles[v]).id == v);
+			assert((*node_handles[v]).start_time == start_time[v]);
+
+			PRINT("\tNeighbor %d Current start %g\n", v, (*node_handles[v]).start_time);
+
+			directed_g[u].push_back(v);
+			++num_incoming_edges[v];
+
+			if ((*node_handles[v]).start_time == std::numeric_limits<float>::max() || new_start > (*node_handles[v]).start_time) {
+				PRINT("\t\tUpdating neighbor %d start time from %g to %g\n", v, (*node_handles[v]).start_time, new_start);
+
+				min_node_heap.update(node_handles[v], { v, new_start, g[v].size() });
+
+				start_time[v] = new_start;
+			} 
+		}
+	}
+
+	assert(std::all_of(begin(scheduled), end(scheduled), [] (const bool &s) -> bool { return s; }));
+
+	int num_edges = 0;
+	for (const auto &u : g) {
+		num_edges += u.size();
+	}
+
+	int num_directed_edges = 0;
+	for (const auto &u : directed_g) {
+		num_directed_edges += u.size();
+	}
+
+	assert((num_edges % 2) == 0);
+	assert(num_edges/2 == num_directed_edges);
+}
+
+template<typename LoadFunc>
+void schedule_nets(const vector<net_t *> &nets, const box &region_bb, const LoadFunc &load, int num_partitions, vector<vector<int>> &directed_g, vector<int> &num_incoming_edges, vector<new_virtual_net_t> &vnets, int &total_num_vnets, vector<new_virtual_net_t *> &roots)
+{
+	create_virtual_nets(nets, vnets, total_num_vnets);
+
+	vector<vector<int>> overlap;
+	build_overlap_graph(vnets, overlap);
+
+	schedule_nets_greedy(overlap, vnets, load, num_partitions, directed_g, num_incoming_edges);
+
+	for (int i = 0; i < num_incoming_edges.size(); ++i) {
+		if (num_incoming_edges[i] == 0) {
+			roots.push_back(&vnets[i]);
+		}
+	}
+	assert(!roots.empty());
+}
+
+void schedule_nets(const vector<net_t *> &nets, const box &region_bb, vector<new_virtual_net_t> &vnets, vector<vector<new_virtual_net_t *>> &scheduled, int &total_num_vnets)
+{
+	vnets.clear();
+	int num_non_decomposed_nets = 0;
+
+	//vector<vector<const net_t*>> blah;
+	//schedule_nets_ind(nets, blah);
+
+	create_virtual_nets(nets, vnets, total_num_vnets);
+
+	//printf("num non %d/%lu (%g)\n", num_non_decomposed_nets, nets.size(), 100.0*num_non_decomposed_nets/nets.size());
+
+	vector<vector<int>> overlap;
+	build_overlap_graph(vnets, overlap);
+
+	vector<int> order(overlap.size());
+	auto order_map = make_iterator_property_map(begin(order), boost::identity_property_map());
+
+	/* this gives better result than largest first order */
+	custom_smallest_last_vertex_ordering(overlap, order_map); 
+
+	boost::vector_property_map<int> color_map;
+
+	int num_colors = custom_vertex_coloring(overlap, order_map, color_map);
+
+	//OverlapGraph g;
+	//boost::vector_property_map<int> order_map_2, color_map_2;
+
+	//build_overlap_graph(vnets, g);
+	//smallest_last_vertex_ordering(g, order_map_2);
+	//sequential_vertex_coloring(g, order_map_2, color_map_2);
+
+	//int num_colors_2 = 0;
+	//for (int i = 0; i < vnets.size(); ++i) {
+		//num_colors_2 = std::max(num_colors_2, get(color_map_2, i));
+	//}
+	//++num_colors_2;
+
+	//for (int i = 0; i< overlap.size(); ++i) {
+		//assert(get(order_map, i) == get(order_map_2, i));
+		//assert(get(color_map_2, i) == get(color_map_2, i));
+	//}
+
+	scheduled.resize(num_colors);
+	for (int i = 0; i < vnets.size(); ++i) {
+		int c = get(color_map, i);
+		assert(c >= 0 && c < scheduled.size());
+		scheduled[c].push_back(&vnets[i]);
+	}
+
+	using namespace boost::accumulators;
+	accumulator_set<decltype(vector<int>().size()), stats<tag::mean, tag::max, tag::min, tag::variance > > acc;
+	for (const auto &color : scheduled) {
+		acc(color.size());
+	}
+	printf("VNET: num vnet %lu num colors %d min %lu max %lu mean %g std dev %g\n", vnets.size(), num_colors, boost::accumulators::min(acc), boost::accumulators::max(acc), mean(acc), std::sqrt(variance(acc)));
+
+	for (const auto &color : scheduled) {
+		for (int i = 0; i < color.size(); ++i) {
+			for (int j = i + 1; j < color.size(); ++j) {
+				//if (color[i]->net != color[j]->net) {
+					assert(bg::disjoint(color[i]->bounding_box, color[j]->bounding_box));
+				//}
+			}	
+		}
+	}
+}
+
+template<typename LoadFunc>
+void schedule_net_tree(fpga_tree_node_t *node, int level, int num_logical_threads, const LoadFunc &load, int &total_num_vnets)
+{
+	if (node) {
+		int num_tasks = (1 << level);
+		int num_partitions = num_logical_threads/num_tasks;
+
+		schedule_nets(node->nets, node->bb, load, num_partitions,
+				node->net_g, node->num_incoming_edges, node->vnets, total_num_vnets, node->roots);
+
+		assert(node->net_g.size() == node->num_incoming_edges.size());
+		assert(node->net_g.size() == node->vnets.size());
+
+		node->current_num_incoming_edges.resize(node->num_incoming_edges.size());
+		for (int i = 0; i < node->current_num_incoming_edges.size(); ++i) {
+			node->current_num_incoming_edges[i] = new std::atomic<int>;
+		}
+
+		total_num_vnets += node->vnets.size();
+
+		schedule_net_tree(node->left, level+1, num_logical_threads, load, total_num_vnets);
+		schedule_net_tree(node->right, level+1, num_logical_threads, load, total_num_vnets);
+	}
+}
+
+void schedule_net_tree(fpga_tree_node_t *node, int &total_num_vnets)
+{
+	if (node) {
+		schedule_nets(node->nets, node->bb, node->vnets, node->scheduled, total_num_vnets);
+
+		schedule_net_tree(node->left, total_num_vnets);
+		schedule_net_tree(node->right, total_num_vnets);
+	}
+}
+
+void reset_incoming_edges(fpga_tree_node_t *node)
+{
+	if (node) {
+		for (int i = 0; i < node->num_incoming_edges.size(); ++i) {
+			*node->current_num_incoming_edges[i] = node->num_incoming_edges[i];
+		}
+		//std::copy(begin(node->num_incoming_edges), end(node->num_incoming_edges), begin(node->current_num_incoming_edges));
+		reset_incoming_edges(node->left);
+		reset_incoming_edges(node->right);
+	}
+}
+
 bool partitioning_multi_sink_delta_stepping_route(const t_router_opts *opts)
 {
+#if TBB_USE_DEBUG == 1
+#error Using debug version of TBB
+#endif
+
 	tbb::task_scheduler_init init(opts->num_threads);
 
 	char buffer[256];
@@ -2631,7 +3820,11 @@ bool partitioning_multi_sink_delta_stepping_route(const t_router_opts *opts)
 	router.net_root.left = nullptr;
 	router.net_root.right = nullptr;
 
-	lmao2(router, opts, nets.size(), [] (const net_t *net) -> float { return net->sinks.size(); });
+	build_net_tree(router, opts, nets.size(), [] (const net_t *net) -> float { return net->sinks.size(); });
+
+	int total_num_vnets = 0;
+	//schedule_net_tree(&router.net_root, total_num_vnets);
+	schedule_net_tree(&router.net_root, 0, pow(2, opts->num_net_cuts), [] (const new_virtual_net_t &net) ->float { return net.sinks.size(); }, total_num_vnets);
 
 	//init_fpga_regions(4, router.e_state, opts->num_threads, fpga_regions);
 
@@ -2749,8 +3942,8 @@ bool partitioning_multi_sink_delta_stepping_route(const t_router_opts *opts)
 		//route_tree_init(router.state.back_route_trees[i]);
 	}
 
-	router.state.added_rr_nodes = new vector<RRNode>[nets.size()];
-	router.state.back_added_rr_nodes = new vector<RRNode>[nets.size()];
+	router.state.added_rr_nodes = new vector<RRNode>[total_num_vnets];
+	router.state.back_added_rr_nodes = new vector<RRNode>[total_num_vnets];
 
     router.state.net_timing = new t_net_timing[nets.size()+global_nets.size()];
     init_net_timing(nets, global_nets, router.state.net_timing);
@@ -2814,6 +4007,7 @@ bool partitioning_multi_sink_delta_stepping_route(const t_router_opts *opts)
 	}
 
 	g_manager = new Manager(router.g, router.state.congestion, router.pres_fac);
+	g_manager->reserve(8);
 
 	timer::duration total_total_time = timer::duration::zero();
 	timer::duration total_wait_time = timer::duration::zero();
@@ -2826,8 +4020,16 @@ bool partitioning_multi_sink_delta_stepping_route(const t_router_opts *opts)
 	bool routed = false;
 	unsigned long prev_num_overused_nodes = std::numeric_limits<unsigned long>::max();
 	for (; router.iter < opts->max_router_iterations && !routed; ++router.iter) {
-		sprintf(buffer, "%d", router.iter.load());
-		zlog_put_mdc("iter", buffer);
+		/* hack */
+		tbb::parallel_for(tbb::blocked_range<int>(0, opts->num_threads, 1),
+				[&] (const tbb::blocked_range<int> &r) -> void {
+				sprintf(buffer, "%d", router.iter.load());
+				zlog_put_mdc("iter", buffer);
+				sprintf(buffer, "%d", 0);
+				zlog_put_mdc("tid", buffer);
+				zlog_put_mdc("log_dir", g_dirname);
+				},
+				tbb::simple_partitioner());
 
 		printf("Routing iteration: %d Num repartitions: %d\n", router.iter.load(), num_repartitions);
 
@@ -2888,13 +4090,18 @@ bool partitioning_multi_sink_delta_stepping_route(const t_router_opts *opts)
 		clear_wait_stats();
 		clear_inc_time();
 
+		reset_incoming_edges(&router.net_root);
+
 		//do_virtual_work(&router, *net_router);
-		tbb::task &root = *new(tbb::task::allocate_root()) RouterTask(&router, &router.net_root);
+		tbb::task &root = *new(tbb::task::allocate_root()) SchedRouterTask(&router, &router.net_root, 0);
 		auto route_start = timer::now();
 		tbb::task::spawn_root_and_wait(root);
+		
 		router.total_time[0] = timer::now()-route_start;
 
 		//printf("Resched time [has_resched %d]: %g\n", has_resched ? 1 : 0, duration_cast<nanoseconds>(resched_time).count()/1e9);
+		
+		__itt_task_begin(domain, __itt_null, __itt_null, shAnalysisTask);
 
 		printf("Pool size: %d\n", g_manager->get_pool_size());
 		
@@ -3138,6 +4345,9 @@ bool partitioning_multi_sink_delta_stepping_route(const t_router_opts *opts)
 
 		for (const auto &net : nets) {
 			check_route_tree(router.state.route_trees[net.local_id], net, router.g);
+		}
+
+		for (const auto &net : nets) {
 			recalculate_occ(router.state.route_trees[net.local_id], router.g, router.state.congestion);
 		}
 
@@ -3185,7 +4395,7 @@ bool partitioning_multi_sink_delta_stepping_route(const t_router_opts *opts)
 
 				router.nets = std::move(congested_nets);
 
-				lmao2(router, opts, nets.size(), [&router] (const net_t *net) -> float { return router.net_stats[net->local_id].num_heap_pops; });
+				build_net_tree(router, opts, nets.size(), [&router] (const net_t *net) -> float { return router.net_stats[net->local_id].num_heap_pops; });
 
 				router.phase_two = true;
 
@@ -3227,15 +4437,16 @@ bool partitioning_multi_sink_delta_stepping_route(const t_router_opts *opts)
 			//route_tree_clear(router.state.back_route_trees[i]);
 		//}
 		//std::swap(router.state.route_trees, router.state.back_route_trees);
-		for (int i = 0; i < router.nets.size(); ++i) {
-			int id = router.nets[i]->local_id;
-			router.state.back_added_rr_nodes[id].clear();
+		for (int i = 0; i < total_num_vnets; ++i) {
+			router.state.back_added_rr_nodes[i].clear();
 		}
 		std::swap(router.state.added_rr_nodes, router.state.back_added_rr_nodes);
 		for (int i = 0; i < router.nets.size(); ++i) {
 			int id = router.nets[i]->local_id;
 			route_tree_clear(router.state.route_trees[id]);
 		}
+
+		__itt_task_end(domain);
 	}
 
 	if (routed) {

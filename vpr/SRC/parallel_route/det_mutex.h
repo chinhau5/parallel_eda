@@ -13,7 +13,7 @@
 
 #define PROFILE_WAIT_LEVEL 2
 #define SET_CONTEXT
-#define TRACE_WAIT
+//#define TRACE_WAIT
 //#define PMC
 #define TSC
 #define INC_THRESHOLD 1000000
