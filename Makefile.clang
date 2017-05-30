@@ -6,6 +6,7 @@ SUB_DIRS = vpr libarchfpga printhandler pcre
 LIB_DIR = /usr/local/lib /usr/lib/openmpi /home/chinhau5/zlog/lib /home/chinhau5/Downloads/metis-5.1.0/build/Linux-x86_64/libmetis
 #LIB_DIR += /home/chinhau5/Downloads/tbb2017_20161128oss/lib/intel64/gcc4.7
 LIB_DIR += /home/chinhau5/Downloads/tbb-2017_U6/build/linux_intel64_gcc_cc6.3.1_libc2.25_kernel4.9.28_release
+#LIB_DIR += /home/chinhau5/Downloads/tbb-2017_U6/build/linux_intel64_gcc_cc6.3.1_libc2.25_kernel4.9.28_debug
 
 LIB_CMD = $(addprefix -L,$(LIB_DIR))
 
