@@ -35,14 +35,7 @@ using std::chrono::duration_cast;
 using std::chrono::nanoseconds;
 
 //#define PRINT_BBS
-#define INC_COUNT 1
-//#define SHORT_CRIT
-#define OVERFLOW_THRESHOLD 5000
 //#define TEST
-#define WRITE_NO_WAIT
-//#define PROFILE_CLOCK
-//#define PARTITIONER 1
-#define EVENT PAPI_TOT_INS
 
 #if 0
 #define PRINT(msg, ...) printf((msg), __VA_ARGS__)
@@ -163,39 +156,8 @@ struct /*alignas(64)*/ router_t {
 	vector<dijkstra_stats_t> net_stats;
 };
 
-#if defined(PROFILE_CLOCK)
-
-struct add_to_heap_clock_stat {
-	unsigned long num_clocks;
-	int net;
-	int level;
-	timer::duration time;
-};
-
-struct dijkstra_clock_stat {
-	unsigned long num_clocks;
-	int net;
-	int level;
-	timer::duration time;
-};
-
-struct backtrack_clock_stat {
-	unsigned long num_clocks;
-	int net;
-	int level;
-	timer::duration time;
-};
-
-#endif
-
 //static congestion_t **g_congestion;
 //static tbb::spin_mutex g_lock;
-
-#if defined(PROFILE_CLOCK)
-static vector<vector<add_to_heap_clock_stat>> g_add_to_heap;
-static vector<vector<dijkstra_clock_stat>> g_dijkstra;
-static vector<vector<backtrack_clock_stat>> g_backtrack;
-#endif
 
 static char g_dirname[256];
 
@@ -507,7 +469,7 @@ class SinkRouter {
 
 			float congestion_cost = rr_indexed_data[v_p.cost_index].base_cost * get_acc_cost(_congestion, v) * get_pres_cost(_congestion, v);
 
-			known_distance = _current_sink->criticality_fac * delay + (1 - _current_sink->criticality_fac) * congestion_cost;
+			known_distance = _current_sink->criticality_fac * delay + (1. - _current_sink->criticality_fac) * congestion_cost;
 
 			float expected_cost = _astar_fac * get_timing_driven_expected_cost(v_p, get_vertex_props(_g, _current_sink->rr_node), _current_sink->criticality_fac, extra.upstream_R, &extra.same, &extra.ortho);
 
@@ -2342,28 +2304,32 @@ int longest_path_length(const Graph &g)
 	return max_length;
 }
 
-void write_nets(const char *dirname, fpga_tree_node_t *node, const router_t *router, int level, int index)
+void write_nets(const char *dirname, fpga_tree_node_t *node, const router_t *router, int level, int index, int layer)
 {
 	if (node) {
-		char buffer[256];
-		sprintf(buffer, "%s/net_size_iter_%d_level_%d_node_%d.txt", dirname, router->iter.load(), level, index);
-		FILE *file = fopen(buffer, "w");
+		if (node->next) {
+			write_nets(dirname, node->next, router, level, index, layer+1);
+		} else {
+			char buffer[256];
+			sprintf(buffer, "%s/net_size_iter_%d_level_%d_node_%d.txt", dirname, router->iter.load(), level, index);
+			FILE *file = fopen(buffer, "w");
 
-		for (const auto &vnet : node->vnets) {
-			const dijkstra_stats_t &stats = router->net_stats[vnet.global_index];
+			for (const auto &vnet : node->vnets) {
+				const dijkstra_stats_t &stats = router->net_stats[vnet.global_index];
 
 			double bb_area = boxes_area(vnet.bounding_boxes);
 
-			fprintf(file, "%d %d %g %g %g %d %d %d\n",
-					vnet.global_index, vnet.sinks.size(), bb_area, bb_area/bg::area(node->bb),
-					duration_cast<nanoseconds>(router->route_time[vnet.global_index]).count()/1e9,
-					stats.num_heap_pops, stats.num_neighbor_visits, stats.num_heap_pushes);
+				fprintf(file, "%d %d %g %g %g %d %d %d\n",
+						vnet.global_index, vnet.sinks.size(), bb_area, bb_area/bg::area(node->bb),
+						duration_cast<nanoseconds>(router->route_time[vnet.global_index]).count()/1e9,
+						stats.num_heap_pops, stats.num_neighbor_visits, stats.num_heap_pushes);
+			}
+
+			fclose(file);
 		}
 
-		fclose(file);
-
-		write_nets(dirname, node->left, router, level+1, index*2);
-		write_nets(dirname, node->right, router, level+1, index*2+1);
+		write_nets(dirname, node->left, router, layer > 0 ? level : level+1, layer > 0 ? -1 : index*2, layer);
+		write_nets(dirname, node->right, router, layer > 0 ? level : level+1, layer > 0 ? -2 : index*2+1, layer);
 	}
 }
 
@@ -3283,8 +3249,8 @@ void print_tree(fpga_tree_node_t *node, int level, int index, int layer)
 					node->nets.size(), node->vnets.size(), longest_path_length(node->net_g_2));
 		}
 
-		print_tree(node->left, layer > 0 ? level : level+1, index*2, layer);
-		print_tree(node->right, layer > 0 ? level : level+1, index*2+1, layer);
+		print_tree(node->left, layer > 0 ? level : level+1, layer > 0 ? -1 : index*2, layer);
+		print_tree(node->right, layer > 0 ? level : level+1, layer > 0 ? -2 : index*2+1, layer);
 	}
 }
 
@@ -4669,7 +4635,7 @@ bool partitioning_multi_sink_delta_stepping_route(const t_router_opts *opts)
 
 	schedule_net_tree_by_convert(&router.net_root, 0, pow(2, opts->num_net_cuts), [] (const new_virtual_net_t &net) ->float { return net.sinks.size(); });
 
-	write_net_g(g_dirname, &router.net_root, 0, 0);
+	//write_net_g(g_dirname, &router.net_root, 0, 0);
 
 	printf("Net tree\n");
 	print_tree(&router.net_root, 0, 0, 0);
@@ -4819,12 +4785,6 @@ bool partitioning_multi_sink_delta_stepping_route(const t_router_opts *opts)
 	router.net_stats.resize(total_num_vnets);
 
 	router.iter = 0;
-
-#if defined(PROFILE_CLOCK)
-	g_add_to_heap.resize(opts->num_threads);
-	g_dijkstra.resize(opts->num_threads);
-	g_backtrack.resize(opts->num_threads);
-#endif
 
 	g_manager = new Manager(router.g, router.state.congestion, router.pres_fac);
 	g_manager->reserve(opts->num_threads * 4);
@@ -5019,7 +4979,7 @@ bool partitioning_multi_sink_delta_stepping_route(const t_router_opts *opts)
 		}
 		write_congestion_state(buffer, router.state.congestion, num_vertices(router.g));
 
-		write_nets(g_dirname, &router.net_root, &router, 0, 0);
+		write_nets(g_dirname, &router.net_root, &router, 0, 0, 0);
 
 		//write_mutex_stats(g_dirname, router.iter, router.num_levels, opts->num_threads);
 
@@ -5027,39 +4987,6 @@ bool partitioning_multi_sink_delta_stepping_route(const t_router_opts *opts)
 			//sprintf(buffer, "%s/inc_iter_%d_tid_%d.txt", g_dirname, router.iter.load(), i);
 			//write_inc_time(buffer, get_inc_time(i));
 		//}
-
-#if defined(PROFILE_CLOCK)
-		for (int level = 0; level < router.num_levels; ++level) {
-			for (int i = 0; i < g_add_to_heap.size(); ++i) {
-				sprintf(buffer, "%s/add_to_heap_cs_iter_%d_tid_%d.txt", g_dirname, router.iter.load(), i);
-				FILE *cs_out = fopen(buffer, "w");
-				for (const auto &cs : g_add_to_heap[i]) {
-					fprintf(cs_out, "%lu %ld %d %d\n", cs.num_clocks, duration_cast<nanoseconds>(cs.time).count(), cs.level, cs.net);
-				}
-				fclose(cs_out);
-			}
-		}
-
-		for (int level = 0; level < router.num_levels; ++level) {
-			for (int i = 0; i < g_backtrack.size(); ++i) {
-				sprintf(buffer, "%s/backtrack_cs_iter_%d_tid_%d.txt", g_dirname, router.iter.load(), i);
-				FILE *cs_out = fopen(buffer, "w");
-				for (const auto &cs : g_backtrack[i]) {
-					fprintf(cs_out, "%lu %ld %d %d\n", cs.num_clocks, duration_cast<nanoseconds>(cs.time).count(), cs.level, cs.net);
-				}
-				fclose(cs_out);
-			}
-		}
-
-		for (int i = 0; i < g_dijkstra.size(); ++i) {
-			sprintf(buffer, "%s/dijkstra_cs_iter_%d_tid_%d.txt", g_dirname, router.iter.load(), i);
-			FILE *cs_out = fopen(buffer, "w");
-			for (const auto &cs : g_dijkstra[i]) {
-				fprintf(cs_out, "%lu %ld %d %d\n", cs.num_clocks, duration_cast<nanoseconds>(cs.time).count(), cs.level, cs.net);
-			}
-			fclose(cs_out);
-		}
-#endif
 
 		/* checking */
 		all_of(begin(router.routed), end(router.routed), [] (const bool &v) -> bool { return v; });
