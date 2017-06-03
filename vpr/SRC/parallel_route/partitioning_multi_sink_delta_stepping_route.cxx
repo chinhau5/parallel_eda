@@ -34,6 +34,7 @@ using timer = myclock;
 using std::chrono::duration_cast;
 using std::chrono::nanoseconds;
 
+//#define PRINT_BBS
 #define INC_COUNT 1
 //#define SHORT_CRIT
 #define OVERFLOW_THRESHOLD 5000
@@ -42,6 +43,12 @@ using std::chrono::nanoseconds;
 //#define PROFILE_CLOCK
 //#define PARTITIONER 1
 #define EVENT PAPI_TOT_INS
+
+#if 0
+#define PRINT(msg, ...) printf((msg), __VA_ARGS__)
+#else
+#define PRINT(msg, ...) 
+#endif
 
 //#define PTHREAD_BARRIER
 
@@ -90,7 +97,8 @@ struct new_virtual_net_t {
 	const net_t *net;
 	const source_t *source;
 	vector<const sink_t *> sinks;
-	box bounding_box;
+	//box bounding_box;
+	vector<box> bounding_boxes;
 };
 
 struct fpga_tree_node_t {
@@ -100,8 +108,10 @@ struct fpga_tree_node_t {
 
 	vector<new_virtual_net_t> vnets;
 
+	/* coloring */
 	vector<vector<new_virtual_net_t *>> scheduled;
 
+	/* undirected to directed */
 	vector<new_virtual_net_t *> roots;
 	vector<vector<int>> net_g;
 	DirectedGraph net_g_2;
@@ -109,6 +119,8 @@ struct fpga_tree_node_t {
 	vector<std::atomic<int> *> current_num_incoming_edges;
 
 	timer::duration route_time;
+
+	fpga_tree_node_t *next;
 
 	fpga_tree_node_t *left;
 	fpga_tree_node_t *right;
@@ -193,6 +205,25 @@ static int g_add_to_heap_inc = 1;
 
 static class Manager *g_manager = nullptr;
 
+double boxes_area(const vector<box> &boxes)
+{
+	double intersect_area = 0;
+	for (int i = 0; i < boxes.size(); ++i) {
+		for (int j = 0; j < boxes.size(); ++j) {
+			if (bg::intersects(boxes[i], boxes[j])) {
+				box intersection;
+				bg::intersection(boxes[i], boxes[j], intersection);
+				intersect_area += bg::area(intersection);
+			}
+		}
+	}
+	double area = 0;
+	for (int i = 0; i < boxes.size(); ++i) {
+		area += bg::area(boxes[i]);
+	}
+	return area-intersect_area;
+}
+
 static bool inside_bb(const rr_node_property_t &node, const box &bb)
 {
 	//int xlow, xhigh, ylow, yhigh;
@@ -245,6 +276,15 @@ static bool inside_bb(const rr_node_property_t &node, const box &bb)
 		inside = true;
 	}
 
+	return inside;
+}
+
+static bool inside_bbs(const rr_node_property_t &node, const vector<box> &boxes)
+{
+	bool inside = false;
+	for (int i = 0; i < boxes.size() && !inside; ++i) {
+		inside = inside_bb(node, boxes[i]);
+	}
 	return inside;
 }
 
@@ -304,7 +344,7 @@ class SinkRouter {
 		RRNode _existing_opin;
 
 		const sink_t *_current_sink;
-		box _bounding_box;
+		const vector<box> *m_bounding_boxes;
 
 		dijkstra_stats_t _stats;
 
@@ -424,7 +464,7 @@ class SinkRouter {
 				return false;
 			}
 
-			if (!inside_bb(prop, _bounding_box)) {
+			if (!inside_bbs(prop, *m_bounding_boxes)) {
 				zlog_level(delta_log, ROUTER_V3, "outside of bounding box\n");
 				return false;
 			}
@@ -547,7 +587,7 @@ class SinkRouter {
 
 				RouteTreeNode rt_node = route_tree_add_rr_node(rt, rr_node);
 				if (rt_node != RouteTree::null_vertex()) {
-					assert(inside_bb(rr_node_p, _bounding_box));
+					assert(inside_bbs(rr_node_p, *m_bounding_boxes));
 
 					assert(_state[rr_node].upstream_R != std::numeric_limits<float>::max() && _state[rr_node].delay != std::numeric_limits<float>::max());
 					route_tree_set_node_properties(rt, rt_node, rr_node_p.type != IPIN && rr_node_p.type != SINK, _state[rr_node].upstream_R, _state[rr_node].delay);
@@ -629,10 +669,10 @@ class SinkRouter {
 			reset_stats();
 		}
 
-		void route(const source_t *source, const sink_t *sink, const box &bounding_box, float astar_fac, route_tree_t &rt, vector<RRNode> &added_rr_nodes, float &delay, dijkstra_stats_t *stats)
+		void route(const source_t *source, const sink_t *sink, const vector<box> &bounding_boxes, float astar_fac, route_tree_t &rt, vector<RRNode> &added_rr_nodes, float &delay, dijkstra_stats_t *stats)
 		{
 			_current_sink = sink;
-			_bounding_box = bounding_box;
+			m_bounding_boxes = &bounding_boxes;
 			_astar_fac = astar_fac;
 
 			/* TODO: we should not reset the exisiting OPIN here */
@@ -645,9 +685,16 @@ class SinkRouter {
 			//zlog_level(delta_log, ROUTER_V3, "Current sink: %s BB %d->%d, %d->%d\n", buffer, sink->current_bounding_box.xmin, sink->current_bounding_box.xmax, sink->current_bounding_box.ymin, sink->current_bounding_box.ymax);
 			const auto &sink_p = get_vertex_props(_g, sink->rr_node);
 			//assert(sink_p.real_xlow == sink_p.real_xhigh && sink_p.real_ylow == sink_p.real_yhigh);
-			zlog_level(delta_log, ROUTER_V3, "Current sink: %s [real %d %d] BB %d->%d,%d->%d\n",
-					buffer, sink_p.real_xlow, sink_p.real_ylow,
-					bg::get<bg::min_corner, 0>(sink->bounding_box), bg::get<bg::max_corner, 0>(sink->bounding_box), bg::get<bg::min_corner, 1>(sink->bounding_box), bg::get<bg::max_corner, 1>(sink->bounding_box));
+			zlog_level(delta_log, ROUTER_V3, "Current sink: %s [real %d %d] BBs ",
+					buffer, sink_p.real_xlow, sink_p.real_ylow);
+#ifdef PRINT_BBS 
+			for (int i = 0; i < bounding_boxes.size(); ++i) {
+				zlog_level(delta_log, ROUTER_V3, "%d %d, %d %d ",
+						bg::get<bg::min_corner, 0>(bounding_boxes[i]), bg::get<bg::max_corner, 0>(bounding_boxes[i]),
+						bg::get<bg::min_corner, 1>(bounding_boxes[i]), bg::get<bg::max_corner, 1>(bounding_boxes[i]));
+			}
+			zlog_level(delta_log, ROUTER_V3, "\n");
+#endif
 
 			std::priority_queue<heap_node_t<RREdge, extra_route_state_t>> sources;
 
@@ -668,7 +715,7 @@ class SinkRouter {
 					sprintf_rr_node(node, buffer);
 
 					if (rt_node_p.reexpand) {
-						if (!inside_bb(node_p, _bounding_box)) {
+						if (!inside_bbs(node_p, *m_bounding_boxes)) {
 							zlog_level(delta_log, ROUTER_V3, "Existing %s out of bounding box\n", buffer);
 						} else {
 							int same, ortho;
@@ -900,7 +947,7 @@ class MultiSinkParallelRouter {
 		{
 		}
 
-		void route(const source_t *source, const vector<const sink_t *> &sinks, const box &bounding_box, float astar_fac, route_tree_t &rt, vector<RRNode> &added_rr_nodes, t_net_timing &net_timing, dijkstra_stats_t &stats)
+		void route(const source_t *source, const vector<const sink_t *> &sinks, const vector<box> &bounding_boxes, float astar_fac, route_tree_t &rt, vector<RRNode> &added_rr_nodes, t_net_timing &net_timing, dijkstra_stats_t &stats)
 		{
 #if 1
 			if (sinks.size() > 16) {
@@ -921,7 +968,7 @@ class MultiSinkParallelRouter {
 				//});
 
 				tbb::parallel_for(tbb::blocked_range<int>(0, sinks.size()), 
-						[&source, &sinks, &bounding_box, &astar_fac, &route_trees, &net_timing, &stats]
+						[&source, &sinks, &bounding_boxes, &astar_fac, &route_trees, &net_timing, &stats]
 						(const tbb::blocked_range<int> &r) -> void
 						{
 						thread_local SinkRouter *router = nullptr;
@@ -934,7 +981,7 @@ class MultiSinkParallelRouter {
 						vector<int> added_rr_nodes; 
 						dijkstra_stats_t local_stats;
 
-						router->route(source, sinks[i], bounding_box, astar_fac, route_trees[sinks[i]->id], added_rr_nodes, net_timing.delay[sinks[i]->id+1], &local_stats);
+						router->route(source, sinks[i], bounding_boxes, astar_fac, route_trees[sinks[i]->id], added_rr_nodes, net_timing.delay[sinks[i]->id+1], &local_stats);
 
 						stats.num_heap_pops += local_stats.num_heap_pops;
 						stats.num_heap_pushes += local_stats.num_heap_pushes;
@@ -954,7 +1001,7 @@ class MultiSinkParallelRouter {
 				for (int i = 0; i < sinks.size(); ++i) {
 					dijkstra_stats_t local_stats;
 
-					router->route(i == 0 ? source : nullptr, sinks[i], bounding_box, astar_fac, rt, added_rr_nodes, net_timing.delay[sinks[i]->id+1], &local_stats);
+					router->route(i == 0 ? source : nullptr, sinks[i], bounding_boxes, astar_fac, rt, added_rr_nodes, net_timing.delay[sinks[i]->id+1], &local_stats);
 
 					stats.num_heap_pops += local_stats.num_heap_pops;
 					stats.num_heap_pushes += local_stats.num_heap_pushes;
@@ -1164,11 +1211,19 @@ class GreedySchedRouterTask : public tbb::task {
 		{
 			const net_t &net = *vnet.net;
 
-			zlog_level(delta_log, ROUTER_V3, "Routing vnet %d net %d BB %d %d, %d %d\n", vnet.global_index, net.local_id,
-					bg::get<bg::min_corner, 0>(vnet.bounding_box), bg::get<bg::max_corner, 0>(vnet.bounding_box),
-					bg::get<bg::min_corner, 1>(vnet.bounding_box), bg::get<bg::max_corner, 1>(vnet.bounding_box));
+			zlog_level(delta_log, ROUTER_V3, "Routing vnet %d net %d BB ", vnet.global_index, net.local_id);
+#ifdef PRINT_BBS 
+			for (int i = 0; i < vnet.bounding_boxes.size(); ++i) {
+				zlog_level(delta_log, ROUTER_V3, "%d %d, %d %d ",
+						bg::get<bg::min_corner, 0>(vnet.bounding_boxes[i]), bg::get<bg::max_corner, 0>(vnet.bounding_boxes[i]),
+						bg::get<bg::min_corner, 1>(vnet.bounding_boxes[i]), bg::get<bg::max_corner, 1>(vnet.bounding_boxes[i]));
+			}
+			zlog_level(delta_log, ROUTER_V3, "\n");
+#endif
 
-			assert(bg::covered_by(vnet.bounding_box, _node->bb));
+			for (int i = 0; i < vnet.bounding_boxes.size(); ++i) {
+				assert(bg::covered_by(vnet.bounding_boxes[i], _node->bb));
+			}
 
 			//last_inet = inet;
 
@@ -1248,7 +1303,7 @@ class GreedySchedRouterTask : public tbb::task {
 						const sink_t *sink = vnet.sinks[i];
 						dijkstra_stats_t dstats;
 
-						sink_router->route(vnet.source, sink, vnet.bounding_box, m_router->params.astar_fac, route_trees[i], added_rr_nodes[i], m_router->state.net_timing[net.vpr_id].delay[sink->id+1], &dstats); 
+						sink_router->route(vnet.source, sink, vnet.bounding_boxes, m_router->params.astar_fac, route_trees[i], added_rr_nodes[i], m_router->state.net_timing[net.vpr_id].delay[sink->id+1], &dstats); 
 
 						num_heap_pushes += dstats.num_heap_pushes;
 						num_heap_pops += dstats.num_heap_pops;
@@ -1282,7 +1337,7 @@ class GreedySchedRouterTask : public tbb::task {
 					const sink_t *sink = vnet.sinks[i];
 					dijkstra_stats_t dstats;
 
-					sink_router->route(i == 0 ? source : nullptr, sink, vnet.bounding_box, m_router->params.astar_fac, m_router->state.route_trees[net.local_id], m_router->state.added_rr_nodes[vnet.global_index], m_router->state.net_timing[net.vpr_id].delay[sink->id+1], &dstats); 
+					sink_router->route(i == 0 ? source : nullptr, sink, vnet.bounding_boxes, m_router->params.astar_fac, m_router->state.route_trees[net.local_id], m_router->state.added_rr_nodes[vnet.global_index], m_router->state.net_timing[net.vpr_id].delay[sink->id+1], &dstats); 
 
 					m_router->net_stats[vnet.global_index].num_heap_pushes += dstats.num_heap_pushes;
 					m_router->net_stats[vnet.global_index].num_heap_pops += dstats.num_heap_pops;
@@ -1449,11 +1504,19 @@ class SchedRouterTask : public tbb::task {
 		{
 			const net_t &net = *vnet.net;
 
-			zlog_level(delta_log, ROUTER_V3, "Routing vnet %d net %d BB %d %d, %d %d\n", vnet.global_index, net.local_id,
-					bg::get<bg::min_corner, 0>(vnet.bounding_box), bg::get<bg::max_corner, 0>(vnet.bounding_box),
-					bg::get<bg::min_corner, 1>(vnet.bounding_box), bg::get<bg::max_corner, 1>(vnet.bounding_box));
+			zlog_level(delta_log, ROUTER_V3, "Routing vnet %d net %d BB ", vnet.global_index, net.local_id);
+#ifdef PRINT_BBS 
+			for (int i = 0; i < vnet.bounding_boxes.size(); ++i) {
+				zlog_level(delta_log, ROUTER_V3, "%d %d, %d %d ",
+						bg::get<bg::min_corner, 0>(vnet.bounding_boxes[i]), bg::get<bg::max_corner, 0>(vnet.bounding_boxes[i]),
+						bg::get<bg::min_corner, 1>(vnet.bounding_boxes[i]), bg::get<bg::max_corner, 1>(vnet.bounding_boxes[i]));
+			}
+			zlog_level(delta_log, ROUTER_V3, "\n");
+#endif
 
-			assert(bg::covered_by(vnet.bounding_box, _node->bb));
+			for (int i = 0; i < vnet.bounding_boxes.size(); ++i) {
+				assert(bg::covered_by(vnet.bounding_boxes[i], _node->bb));
+			}
 
 			//last_inet = inet;
 
@@ -1508,7 +1571,7 @@ class SchedRouterTask : public tbb::task {
 
 			int num_tasks = (1 << _level);
 
-			if (vnet.sinks.size() > 4 /* && m_router->num_threads / num_tasks > 1*/) {
+			if (vnet.sinks.size() > m_router->num_threads /* && m_router->num_threads / num_tasks > 1*/) {
 				zlog_level(delta_log, ROUTER_V3, "Parallel sink\n");
 
 				vector<route_tree_t> route_trees(vnet.sinks.size());
@@ -1533,7 +1596,7 @@ class SchedRouterTask : public tbb::task {
 						const sink_t *sink = vnet.sinks[i];
 						dijkstra_stats_t dstats;
 
-						sink_router->route(vnet.source, sink, vnet.bounding_box, m_router->params.astar_fac, route_trees[i], added_rr_nodes[i], m_router->state.net_timing[net.vpr_id].delay[sink->id+1], &dstats); 
+						sink_router->route(vnet.source, sink, vnet.bounding_boxes, m_router->params.astar_fac, route_trees[i], added_rr_nodes[i], m_router->state.net_timing[net.vpr_id].delay[sink->id+1], &dstats); 
 
 						num_heap_pushes += dstats.num_heap_pushes;
 						num_heap_pops += dstats.num_heap_pops;
@@ -1567,7 +1630,7 @@ class SchedRouterTask : public tbb::task {
 					const sink_t *sink = vnet.sinks[i];
 					dijkstra_stats_t dstats;
 
-					sink_router->route(i == 0 ? source : nullptr, sink, vnet.bounding_box, m_router->params.astar_fac, m_router->state.route_trees[net.local_id], m_router->state.added_rr_nodes[vnet.global_index], m_router->state.net_timing[net.vpr_id].delay[sink->id+1], &dstats); 
+					sink_router->route(i == 0 ? source : nullptr, sink, vnet.bounding_boxes, m_router->params.astar_fac, m_router->state.route_trees[net.local_id], m_router->state.added_rr_nodes[vnet.global_index], m_router->state.net_timing[net.vpr_id].delay[sink->id+1], &dstats); 
 
 					m_router->net_stats[vnet.global_index].num_heap_pushes += dstats.num_heap_pushes;
 					m_router->net_stats[vnet.global_index].num_heap_pops += dstats.num_heap_pops;
@@ -1600,20 +1663,8 @@ class SchedRouterTask : public tbb::task {
 		{
 		}
 
-
-		tbb::task *execute()
+		void route_nets()
 		{
-			zlog_level(delta_log, ROUTER_V3, "Node BB %d %d, %d %d\n", 
-					bg::get<bg::min_corner, 0>(_node->bb), bg::get<bg::max_corner, 0>(_node->bb),
-					bg::get<bg::min_corner, 1>(_node->bb), bg::get<bg::max_corner, 1>(_node->bb));
-
-
-			__itt_task_begin(domain, __itt_null, __itt_null, shMyTask);
-
-			auto route_start = timer::now();
-
-			//auto route_start = timer::now();
-
 			int num_tasks = (1 << _level);
 
 #if 0
@@ -1655,6 +1706,22 @@ class SchedRouterTask : public tbb::task {
 				//}
 			//}
 #endif
+		}
+
+		tbb::task *execute()
+		{
+			zlog_level(delta_log, ROUTER_V3, "Node BB %d %d, %d %d\n", 
+					bg::get<bg::min_corner, 0>(_node->bb), bg::get<bg::max_corner, 0>(_node->bb),
+					bg::get<bg::min_corner, 1>(_node->bb), bg::get<bg::max_corner, 1>(_node->bb));
+
+
+			__itt_task_begin(domain, __itt_null, __itt_null, shMyTask);
+
+			auto route_start = timer::now();
+
+			//auto route_start = timer::now();
+
+			route_nets();
 			
 			//time[level].route_time = timer::now()-route_start;
 			//time[level].wait_time = wait_time;
@@ -1722,6 +1789,109 @@ class SchedRouterTask : public tbb::task {
 		}
 };
 
+class MultiLayerSchedRouterTask : public tbb::task {
+	private:
+		router_t *m_router;
+		fpga_tree_node_t *m_node;
+		int m_level;
+
+	public:
+		MultiLayerSchedRouterTask(router_t *router, fpga_tree_node_t *node, int level)
+			: m_router(router), m_node(node), m_level(level)
+		{
+		}
+
+
+		tbb::task *execute()
+		{
+			zlog_level(delta_log, ROUTER_V3, "Node BB %d %d, %d %d\n", 
+					bg::get<bg::min_corner, 0>(m_node->bb), bg::get<bg::max_corner, 0>(m_node->bb),
+					bg::get<bg::min_corner, 1>(m_node->bb), bg::get<bg::max_corner, 1>(m_node->bb));
+
+
+			__itt_task_begin(domain, __itt_null, __itt_null, shMyTask);
+
+			auto route_start = timer::now();
+
+			//auto route_start = timer::now();
+
+			int num_tasks = (1 << m_level);
+
+			if (m_node->next) {
+				tbb::task &root = *new(tbb::task::allocate_root()) SchedRouterTask(m_router, m_node->next, m_level);
+
+				tbb::task::spawn_root_and_wait(root);
+			} else {
+				SchedRouterTask task(m_router, m_node, m_level);
+				task.route_nets();
+			}
+			
+			//time[level].route_time = timer::now()-route_start;
+			//time[level].wait_time = wait_time;
+			//time[level].get_net_wait_time = get_net_wait_time;
+			//time[level].pure_route_time = pure_route_time; 
+			m_node->route_time = timer::now() - route_start;
+			
+			__itt_task_end(domain);
+
+			bool recycle_left = false;
+			bool recycle_right = false;
+			if (m_node->left || m_node->right) {
+				tbb::task &c = *new(allocate_continuation()) tbb::empty_task;
+
+				int num_refs = 0;
+				if (m_node->left) {
+					/* cannot assign here because we are still accessing m_node later */
+					//m_node = m_node->left;
+					recycle_as_child_of(c);
+					recycle_left = true;
+					++num_refs;
+					zlog_level(delta_log, ROUTER_V3, "Recycled left BB %d %d, %d %d\n", 
+							bg::get<bg::min_corner, 0>(m_node->left->bb), bg::get<bg::max_corner, 0>(m_node->left->bb),
+							bg::get<bg::min_corner, 1>(m_node->left->bb), bg::get<bg::max_corner, 1>(m_node->left->bb));
+				}
+
+				tbb::task *t = nullptr;
+				if (m_node->right) {
+					if (!recycle_left) {
+						//m_node = m_node->right;
+						recycle_as_child_of(c);
+						recycle_right = true;
+						zlog_level(delta_log, ROUTER_V3, "Recycled right BB %d %d, %d %d\n", 
+								bg::get<bg::min_corner, 0>(m_node->bb), bg::get<bg::max_corner, 0>(m_node->bb),
+								bg::get<bg::min_corner, 1>(m_node->bb), bg::get<bg::max_corner, 1>(m_node->bb));
+					} else {
+						t = new(c.allocate_child()) MultiLayerSchedRouterTask(m_router, m_node->right, m_level+1);
+						zlog_level(delta_log, ROUTER_V3, "Spawned right BB %d %d, %d %d\n", 
+								bg::get<bg::min_corner, 0>(m_node->right->bb), bg::get<bg::max_corner, 0>(m_node->right->bb),
+								bg::get<bg::min_corner, 1>(m_node->right->bb), bg::get<bg::max_corner, 1>(m_node->right->bb));
+					}
+					++num_refs;
+				}
+
+				c.set_ref_count(num_refs);
+
+				if (t) {
+					spawn(*t);
+				}
+
+				zlog_level(delta_log, ROUTER_V3, "Finished task\n");
+
+				assert(!(recycle_left && recycle_right));
+
+				if (recycle_left) {
+					m_node = m_node->left; 
+					++m_level;
+				} else if (recycle_right) {
+					m_node = m_node->right;
+					++m_level;
+				}
+			}
+
+			return (recycle_left || recycle_right) ? this : nullptr;
+		}
+};
+
 class VirtualRouterTask : public tbb::task {
 	private:
 		router_t *_router;
@@ -1739,11 +1909,19 @@ class VirtualRouterTask : public tbb::task {
 				new_virtual_net_t &vnet = *_node->scheduled[color][inet];
 				const net_t &net = *vnet.net;
 
-				zlog_level(delta_log, ROUTER_V3, "Routing vnet %d net %d BB %d %d, %d %d\n", vnet.global_index, net.local_id,
-						bg::get<bg::min_corner, 0>(vnet.bounding_box), bg::get<bg::max_corner, 0>(vnet.bounding_box),
-						bg::get<bg::min_corner, 1>(vnet.bounding_box), bg::get<bg::max_corner, 1>(vnet.bounding_box));
+				zlog_level(delta_log, ROUTER_V3, "Routing vnet %d net %d BB ", vnet.global_index, net.local_id);
+#ifdef PRINT_BBS 
+				for (int i = 0; i < vnet.bounding_boxes.size(); ++i) {
+					zlog_level(delta_log, ROUTER_V3, "%d %d, %d %d ",
+							bg::get<bg::min_corner, 0>(vnet.bounding_boxes[i]), bg::get<bg::max_corner, 0>(vnet.bounding_boxes[i]),
+							bg::get<bg::min_corner, 1>(vnet.bounding_boxes[i]), bg::get<bg::max_corner, 1>(vnet.bounding_boxes[i]));
+				}
+				zlog_level(delta_log, ROUTER_V3, "\n");
+#endif
 
-				assert(bg::covered_by(vnet.bounding_box, _node->bb));
+				for (int i = 0; i < vnet.bounding_boxes.size(); ++i) {
+					assert(bg::covered_by(vnet.bounding_boxes[i], _node->bb));
+				}
 
 				//last_inet = inet;
 
@@ -1805,7 +1983,7 @@ class VirtualRouterTask : public tbb::task {
 
 				for (int i = 0; i < vnet.sinks.size(); ++i) {
 					const sink_t *sink = vnet.sinks[i];
-					sink_router->route(source, sink, vnet.bounding_box, _router->params.astar_fac, _router->state.route_trees[net.local_id], _router->state.added_rr_nodes[vnet.global_index], _router->state.net_timing[net.vpr_id].delay[sink->id+1], &lmao); 
+					sink_router->route(source, sink, vnet.bounding_boxes, _router->params.astar_fac, _router->state.route_trees[net.local_id], _router->state.added_rr_nodes[vnet.global_index], _router->state.net_timing[net.vpr_id].delay[sink->id+1], &lmao); 
 				}
 
 				for (const auto &node : _router->state.added_rr_nodes[vnet.global_index]) {
@@ -2017,8 +2195,9 @@ class RouterTask : public tbb::task {
 
 				//_net_router->reset_stats();
 
+				vector<box> boxes { net.bounding_box };
 				dijkstra_stats_t lmao;
-				_net_router->route(source, sinks, net.bounding_box, _router->params.astar_fac, _router->state.route_trees[net.local_id], _router->state.added_rr_nodes[net.local_id], _router->state.net_timing[net.vpr_id], lmao); 
+				_net_router->route(source, sinks, boxes, _router->params.astar_fac, _router->state.route_trees[net.local_id], _router->state.added_rr_nodes[net.local_id], _router->state.net_timing[net.vpr_id], lmao); 
 
 				auto real_net_route_end = timer::now();
 
@@ -2173,8 +2352,10 @@ void write_nets(const char *dirname, fpga_tree_node_t *node, const router_t *rou
 		for (const auto &vnet : node->vnets) {
 			const dijkstra_stats_t &stats = router->net_stats[vnet.global_index];
 
+			double bb_area = boxes_area(vnet.bounding_boxes);
+
 			fprintf(file, "%d %d %g %g %g %d %d %d\n",
-					vnet.global_index, vnet.sinks.size(), bg::area(vnet.bounding_box), bg::area(vnet.bounding_box)/bg::area(node->bb),
+					vnet.global_index, vnet.sinks.size(), bb_area, bb_area/bg::area(node->bb),
 					duration_cast<nanoseconds>(router->route_time[vnet.global_index]).count()/1e9,
 					stats.num_heap_pops, stats.num_neighbor_visits, stats.num_heap_pushes);
 		}
@@ -2305,7 +2486,7 @@ void acc_right(vector<T> &items)
 }
 
 template<int Axis, typename Load>
-void foo2(const std::vector<net_t *> &nets, const Load &load,
+void split_nets(const std::vector<net_t *> &nets, const Load &load,
 		int num_all_nets, const pair<int, int> &bounds,
 		int &opt_cut, float &min_diff,
 		vector<net_t *> &left_nets, vector<net_t *> &right_nets, vector<net_t *> &middle_nets)
@@ -2325,16 +2506,16 @@ void foo2(const std::vector<net_t *> &nets, const Load &load,
 
 	assert(num_left_nets.back() == nets.size());
 
-	printf("bounds: %d %d\n", bounds.first, bounds.second);
+	//printf("bounds: %d %d\n", bounds.first, bounds.second);
 
-	printf("all left: ");
-	for (int i = bounds.first; i <= bounds.second; ++i) {
-		if (i % 8 == 0) {
-			printf("\n");
-		}
-		printf("%d ", num_left_nets[i]);
-	}
-	printf("\n");
+	//printf("all left: ");
+	//for (int i = bounds.first; i <= bounds.second; ++i) {
+		//if (i % 8 == 0) {
+			//printf("\n");
+		//}
+		//printf("%d ", num_left_nets[i]);
+	//}
+	//printf("\n");
 
 	vector<vector<net_t *>> sorted_start(bounds.second+1);
 	vector<int> num_right_nets(bounds.second+1, 0);
@@ -2355,14 +2536,14 @@ void foo2(const std::vector<net_t *> &nets, const Load &load,
 		//}
 	//}
 
-	printf("all right: ");
-	for (int i = bounds.first; i <= bounds.second; ++i) {
-		if (i % 8 == 0) {
-			printf("\n");
-		}
-		printf("%d ", num_right_nets[i]);
-	}
-	printf("\n");
+	//printf("all right: ");
+	//for (int i = bounds.first; i <= bounds.second; ++i) {
+		//if (i % 8 == 0) {
+			//printf("\n");
+		//}
+		//printf("%d ", num_right_nets[i]);
+	//}
+	//printf("\n");
 
 	/* checking */
 	for (int cut = bounds.first; cut <= bounds.second; ++cut) {
@@ -2426,12 +2607,12 @@ void foo2(const std::vector<net_t *> &nets, const Load &load,
 			}
 		}
 
-		printf("cut %d num left/right/cross/total nets: %d/%d/%d/%lu\n",
-				cut,
-				num_left, num_right, num_cross_nets, nets.size());
+		//printf("cut %d num left/right/cross/total nets: %d/%d/%d/%lu\n",
+				//cut,
+				//num_left, num_right, num_cross_nets, nets.size());
+		//printf("\tleft/right loads %g/%g\n",
+				//left_loads[cut], cut+1 <= bounds.second ? right_loads[cut+1] : 0);
 		assert(num_left + num_right + num_cross_nets == nets.size());
-		printf("\tleft/right loads %g/%g\n",
-				left_loads[cut], cut+1 <= bounds.second ? right_loads[cut+1] : 0);
 	}
 
 
@@ -2600,7 +2781,7 @@ void foo(const std::vector<std::pair<int, net_t *>> &sorted_start, const std::ve
 }
 
 template<typename Load>
-void max_independent_rectangles_internal_lb(
+void split_nets_recursive(
 		const std::vector<net_t *> &nets, const Load &load,
 		int num_all_nets, const box &bb, int level, bool horizontal,
 		fpga_tree_node_t *node)
@@ -2637,12 +2818,12 @@ void max_independent_rectangles_internal_lb(
 		vector<net_t *> right_nets;
 
 		if (horizontal) {
-			foo2<1>(nets, load,
+			split_nets<1>(nets, load,
 					num_all_nets, make_pair(bg::get<bg::min_corner, 1>(bb), bg::get<bg::max_corner, 1>(bb)),
 					opt_cut, min_diff,
 					left_nets, right_nets, node->nets);
 		} else {
-			foo2<0>(nets, load,
+			split_nets<0>(nets, load,
 					num_all_nets, make_pair(bg::get<bg::min_corner, 0>(bb), bg::get<bg::max_corner, 0>(bb)),
 					opt_cut, min_diff,
 					left_nets, right_nets, node->nets);
@@ -2733,7 +2914,7 @@ void max_independent_rectangles_internal_lb(
 		if (!left_nets.empty()) {
 			node->left = new fpga_tree_node_t;
 
-			max_independent_rectangles_internal_lb(left_nets, load, 
+			split_nets_recursive(left_nets, load, 
 					num_all_nets, left_box, level-1, !horizontal,
 					node->left);
 		} else {
@@ -2743,7 +2924,7 @@ void max_independent_rectangles_internal_lb(
 		if (!right_nets.empty()) {
 			node->right = new fpga_tree_node_t;
 
-			max_independent_rectangles_internal_lb(right_nets, load,
+			split_nets_recursive(right_nets, load,
 					num_all_nets, right_box, level-1, !horizontal,
 					node->right);
 		} else { 
@@ -2763,116 +2944,66 @@ void max_independent_rectangles_internal_lb(
 }
 
 template<typename Load>
-void max_independent_rectangles_lb(std::vector<net_t> &items, const Load &load, int level, fpga_tree_node_t *net_root)
+void split_nets_recursive_multi_layer(
+		const std::vector<net_t *> &nets, const Load &load, int num_all_nets, int num_levels,
+		const box &bb, int level, int index, int layer, bool horizontal,
+		fpga_tree_node_t *node)
 {
-	//std::vector<std::pair<int, net_t *>> ver_start;
-	//std::vector<std::pair<int, net_t *>> ver_end;
+	printf("level %d index %d layer %d\n", level, index, layer);
 
-	//std::vector<std::pair<int, net_t *>> hor_start;
-	//std::vector<std::pair<int, net_t *>> hor_end;
+ 	printf("\tnum nets %lu box %d %d, %d %d hor %d\n",
+			nets.size(),
+			bg::get<bg::min_corner, 0>(bb), bg::get<bg::max_corner, 0>(bb),
+			bg::get<bg::min_corner, 1>(bb), bg::get<bg::max_corner, 1>(bb),
+			horizontal);
 
-	//for (int i = 0; i < items.size(); ++i) {
-		//const auto &box = items[i].bounding_box;
+	assert(!nets.empty());
 
-		//ver_start.push_back(std::make_pair(bg::get<bg::min_corner, 0>(box), &items[i]));
-		//ver_end.push_back(std::make_pair(bg::get<bg::max_corner, 0>(box), &items[i]));
-
-		//hor_start.push_back(std::make_pair(bg::get<bg::min_corner, 1>(box), &items[i]));
-		//hor_end.push_back(std::make_pair(bg::get<bg::max_corner, 1>(box), &items[i]));
-	//}
-
-	//std::sort(begin(ver_start), end(ver_start));
-	//std::sort(begin(ver_end), end(ver_end));
-
-	//std::sort(begin(hor_start), end(hor_start));
-	//std::sort(begin(hor_end), end(hor_end));
-
-	//extern int nx, ny;
-	//bool horizontal = ny > nx;
-
-	////foo2(ver_start, ver_end, load, items.size(), nx+2);
-
-	//max_independent_rectangles_internal_lb(items, load, num_all_nets, bg::make<box>(0, 0, nx+1, ny+1), level, horizontal, net_root);
-}
-
-void split_edges(const std::vector<std::pair<int, net_t *>> &edges,
-		int median, bool horizontal,
-		std::vector<std::pair<int, net_t *>> &left, std::vector<std::pair<int, net_t *>> &right,
-		std::vector<net_t *> *middle, vector<bool> &added)
-{
-	for (const auto &edge : edges) {
-		const auto &box = edge.second->bounding_box;
-
-		int low;
-		int high;
-
-		if (horizontal) {
-			low = bg::get<bg::min_corner, 1>(box);
-			high = bg::get<bg::max_corner, 1>(box);
-		} else {
-			low = bg::get<bg::min_corner, 0>(box);
-			high = bg::get<bg::max_corner, 0>(box);
-		}
-
-		assert(low < high);
-
-		//printf("horizontal %d edge %d low %d high %d\n", horizontal, edge.first, low, high);
-		//assert((edge.first == low && edge.first != high) || (edge.first != low && edge.first == high));
-
-		if (high < median) {
-			left.push_back(edge);
-		} else if (low > median) {
-			right.push_back(edge);
-		} else {
-			assert((low < median && high >= median) || (low <= median && high > median));
-			if (middle) {
-				if (!added[edge.second->local_id]) {
-					middle->push_back(edge.second);
-					added[edge.second->local_id] = true;
-				}
-			}
-		}
-	}
-}
-
-void max_independent_rectangles_internal(const std::vector<std::pair<int, net_t *>> &ver_edges, const std::vector<std::pair<int, net_t *>> &hor_edges, const box &bb, int level, bool horizontal, vector<bool> &added, fpga_tree_node_t *node)
-{
-	if (level > 0) {
-		assert((ver_edges.size() % 2) == 0);
-		assert(ver_edges.size() == hor_edges.size());
-
-		int prev = -1;
-		for (const auto &e : ver_edges) {
-			assert(e.first >= prev);
-			prev = e.first;
-		}
-		prev = -1;
-		for (const auto &e : hor_edges) {
-			assert(e.first >= prev);
-			prev = e.first;
-		}
+	if (level < num_levels-1) {
+		//int prev = -1;
+		//for (const auto &e : ver_start) {
+			//assert(e.first >= prev);
+			//prev = e.first;
+		//}
+		//prev = -1;
+		//for (const auto &e : ver) {
+			//assert(e.first >= prev);
+			//prev = e.first;
+		//}
 
 		//for (const auto &ver_e : ver_edges) {
 			//PRINT("ver edge %d box %X\n", ver_e.first, ver_e.second);
 		//}
+		
+		int opt_cut;
+		float min_diff;
 
-		float median;
+		vector<net_t *> left_nets;
+		vector<net_t *> right_nets;
 
 		if (horizontal) {
-			median = (float)(hor_edges[hor_edges.size()/2 - 1].first + hor_edges[hor_edges.size()/2].first) / 2;
+			split_nets<1>(nets, load,
+					num_all_nets, make_pair(bg::get<bg::min_corner, 1>(bb), bg::get<bg::max_corner, 1>(bb)),
+					opt_cut, min_diff,
+					left_nets, right_nets, node->nets);
 		} else {
-			median = (float)(ver_edges[ver_edges.size()/2 - 1].first + ver_edges[ver_edges.size()/2].first) / 2;
+			split_nets<0>(nets, load,
+					num_all_nets, make_pair(bg::get<bg::min_corner, 0>(bb), bg::get<bg::max_corner, 0>(bb)),
+					opt_cut, min_diff,
+					left_nets, right_nets, node->nets);
 		}
 
-		int imedian = median;
+		printf("\tleft %lu right %lu middle %lu\n", left_nets.size(), right_nets.size(), node->nets.size());
+		printf("\topt_cut %d\n", opt_cut);
+		
 		box left_box, right_box;
 		if (horizontal) {
-			assert((imedian > bg::get<bg::min_corner, 1>(bb) && imedian < bg::get<bg::max_corner, 1>(bb)));
+			assert((opt_cut >= bg::get<bg::min_corner, 1>(bb) && opt_cut <= bg::get<bg::max_corner, 1>(bb)));
 
 			bg::set<bg::min_corner, 0>(left_box, bg::get<bg::min_corner, 0>(bb));
 			bg::set<bg::max_corner, 0>(left_box, bg::get<bg::max_corner, 0>(bb));
 			bg::set<bg::min_corner, 1>(left_box, bg::get<bg::min_corner, 1>(bb));
-			bg::set<bg::max_corner, 1>(left_box, imedian);
+			bg::set<bg::max_corner, 1>(left_box, opt_cut);
 
 			bg::set<bg::min_corner, 0>(right_box, bg::get<bg::min_corner, 0>(bb));
 			bg::set<bg::max_corner, 0>(right_box, bg::get<bg::max_corner, 0>(bb));
@@ -2885,15 +3016,15 @@ void max_independent_rectangles_internal(const std::vector<std::pair<int, net_t 
 			//bg::get<bg::min_corner, 0>(split_1), bg::get<bg::max_corner, 0>(split_1),
 			//bg::get<bg::min_corner, 1>(split_1), bg::get<bg::max_corner, 1>(split_1));
 
-			assert((bg::get<bg::min_corner, 1>(left_box) < bg::get<bg::max_corner, 1>(left_box)));
-			assert((bg::get<bg::min_corner, 1>(right_box) < bg::get<bg::max_corner, 1>(right_box)));
+			assert((bg::get<bg::min_corner, 1>(left_box) <= bg::get<bg::max_corner, 1>(left_box)));
+			assert((bg::get<bg::min_corner, 1>(right_box) <= bg::get<bg::max_corner, 1>(right_box)));
 		} else {
-			assert((imedian > bg::get<bg::min_corner, 0>(bb) && imedian < bg::get<bg::max_corner, 0>(bb)));
+			assert((opt_cut >= bg::get<bg::min_corner, 0>(bb) && opt_cut <= bg::get<bg::max_corner, 0>(bb)));
 
 			bg::set<bg::min_corner, 1>(left_box, bg::get<bg::min_corner, 1>(bb));
 			bg::set<bg::max_corner, 1>(left_box, bg::get<bg::max_corner, 1>(bb));
 			bg::set<bg::min_corner, 0>(left_box, bg::get<bg::min_corner, 0>(bb));
-			bg::set<bg::max_corner, 0>(left_box, imedian);
+			bg::set<bg::max_corner, 0>(left_box, opt_cut);
 
 			bg::set<bg::min_corner, 1>(right_box, bg::get<bg::min_corner, 1>(bb));
 			bg::set<bg::max_corner, 1>(right_box, bg::get<bg::max_corner, 1>(bb));
@@ -2906,83 +3037,85 @@ void max_independent_rectangles_internal(const std::vector<std::pair<int, net_t 
 			//bg::get<bg::min_corner, 0>(split_1), bg::get<bg::max_corner, 0>(split_1),
 			//bg::get<bg::min_corner, 1>(split_1), bg::get<bg::max_corner, 1>(split_1));
 
-			assert((bg::get<bg::min_corner, 0>(left_box) < bg::get<bg::max_corner, 0>(left_box)));
-			assert((bg::get<bg::min_corner, 0>(right_box) < bg::get<bg::max_corner, 0>(right_box)));
+			assert((bg::get<bg::min_corner, 0>(left_box) <= bg::get<bg::max_corner, 0>(left_box)));
+			assert((bg::get<bg::min_corner, 0>(right_box) <= bg::get<bg::max_corner, 0>(right_box)));
 		}
 
-		print_tabs(level); printf("box %d %d %d %d hor %d median %g imedian %d\n",
-				bg::get<bg::min_corner, 0>(bb), bg::get<bg::max_corner, 0>(bb),
-				bg::get<bg::min_corner, 1>(bb), bg::get<bg::max_corner, 1>(bb),
-				horizontal, median, imedian);
+		printf("\tleft %d %d, %d %d\n",
+				bg::get<bg::min_corner, 0>(left_box), bg::get<bg::max_corner, 0>(left_box),
+				bg::get<bg::min_corner, 1>(left_box), bg::get<bg::max_corner, 1>(left_box));
+
+		printf("\tright %d %d, %d %d\n",
+				bg::get<bg::min_corner, 0>(right_box), bg::get<bg::max_corner, 0>(right_box),
+				bg::get<bg::min_corner, 1>(right_box), bg::get<bg::max_corner, 1>(right_box));
 
 		//#ifdef DEBUG_MISR
 		//#endif
 		
 		node->bb = bb;
 
-		std::vector<std::pair<int, net_t *>> left_ver;
-		std::vector<std::pair<int, net_t *>> right_ver;
-		split_edges(ver_edges, 
-				imedian, horizontal,
-				left_ver, right_ver,
-				&node->nets, added);
+		//std::vector<std::pair<int, net_t *>> left_ver_start;
+		//std::vector<std::pair<int, net_t *>> left_ver_end;
+		//std::vector<std::pair<int, net_t *>> right_ver_start;
+		//std::vector<std::pair<int, net_t *>> right_ver_end;
+		//split_edges_lb(ver_start, 
+				//opt_cut, horizontal,
+				//left_ver_start, right_ver_start);
+		//split_edges_lb(ver_end, 
+				//opt_cut, horizontal,
+				//left_ver_end, right_ver_end);
 
-		std::vector<std::pair<int, net_t *>> left_hor;
-		std::vector<std::pair<int, net_t *>> right_hor;
-		split_edges(hor_edges, 
-				imedian, horizontal,
-				left_hor, right_hor,
-				nullptr, added);
+		//std::vector<std::pair<int, net_t *>> left_hor_start;
+		//std::vector<std::pair<int, net_t *>> left_hor_end;
+		//std::vector<std::pair<int, net_t *>> right_hor_start;
+		//std::vector<std::pair<int, net_t *>> right_hor_end;
+		//split_edges_lb(hor_start, 
+				//opt_cut, horizontal,
+				//left_hor_start, right_hor_start);
+		//split_edges_lb(hor_end, 
+				//opt_cut, horizontal,
+				//left_hor_end, right_hor_end);
 
-		node->left = new fpga_tree_node_t;
-		node->right = new fpga_tree_node_t;
-
-		assert(!left_ver.empty() && !right_ver.empty());
-
-		max_independent_rectangles_internal(left_ver, left_hor,
-				left_box,
-				level-1, !horizontal, added, node->left);
-		max_independent_rectangles_internal(right_ver, right_hor,
-				right_box,	
-				level-1, !horizontal, added, node->right);
-	} else {
-		node->bb = bb;
-		for (const auto &item : ver_edges) {
-			assert(bg::covered_by(item.second->bounding_box, bb));
-			if (!added[item.second->local_id]) {
-				node->nets.push_back(item.second);
-				added[item.second->local_id] = true;
-			}
+		if (layer < 1) {
+			node->next = new fpga_tree_node_t;
+			split_nets_recursive_multi_layer(node->nets, load, num_all_nets, num_levels,
+					bb, level, index, layer+1, !horizontal,
+					node->next);
+		} else {
+			node->next = nullptr;
 		}
+
+		if (!left_nets.empty()) {
+			node->left = new fpga_tree_node_t;
+
+			split_nets_recursive_multi_layer(left_nets, load, num_all_nets, num_levels,
+					left_box, level+1, index*2, layer, !horizontal,
+					node->left);
+		} else {
+			node->left = nullptr;
+		}
+
+		if (!right_nets.empty()) {
+			node->right = new fpga_tree_node_t;
+
+			split_nets_recursive_multi_layer(right_nets, load, num_all_nets, num_levels,
+					right_box, level+1, index*2+1, layer, !horizontal,
+					node->right);
+		} else { 
+			node->right = nullptr;
+		}
+	} else {
+		printf("\tlast level\n");
+
+		node->bb = bb;
+		for (const auto &item : nets) {
+			assert(bg::covered_by(item->bounding_box, bb));
+			node->nets.push_back(item);
+		}
+		node->next = nullptr;
 		node->left = nullptr;
 		node->right = nullptr;
 	}
-}
-
-void max_independent_rectangles(std::vector<net_t> &items, int level, fpga_tree_node_t *net_root)
-{
-	std::vector<std::pair<int, net_t *>> ver_edges;
-	std::vector<std::pair<int, net_t *>> hor_edges;
-
-	for (int i = 0; i < items.size(); ++i) {
-		const auto &box = items[i].bounding_box;
-
-		ver_edges.push_back(std::make_pair(bg::get<bg::min_corner, 0>(box), &items[i]));
-		ver_edges.push_back(std::make_pair(bg::get<bg::max_corner, 0>(box), &items[i]));
-
-		hor_edges.push_back(std::make_pair(bg::get<bg::min_corner, 1>(box), &items[i]));
-		hor_edges.push_back(std::make_pair(bg::get<bg::max_corner, 1>(box), &items[i]));
-	}
-
-	std::sort(begin(ver_edges), end(ver_edges));
-	std::sort(begin(hor_edges), end(hor_edges));
-
-	extern int nx, ny;
-	bool horizontal = ny > nx;
-
-	vector<bool> added(items.size(), false);
-
-	max_independent_rectangles_internal(ver_edges, hor_edges, bg::make<box>(0, 0, nx+1, ny+1), level, horizontal, added, net_root);
 }
 
 void clear_tree(fpga_tree_node_t *node)
@@ -3137,47 +3270,81 @@ void fill_fpga_tree(fpga_tree_node_t *root, vector<net_t *> &nets)
 	}
 }
 
-void print_tree(fpga_tree_node_t *node, int level)
+void print_tree(fpga_tree_node_t *node, int level, int index, int layer)
 {
 	if (node) {
-		print_tabs(level); printf("%d %d %d %d num nets %lu num vnets %lu max length %d\n",
-				bg::get<bg::min_corner, 0>(node->bb), bg::get<bg::max_corner, 0>(node->bb),
-				bg::get<bg::min_corner, 1>(node->bb), bg::get<bg::max_corner, 1>(node->bb),
-				node->nets.size(), node->vnets.size(), longest_path_length(node->net_g_2));
+		if (node->next) {
+			print_tree(node->next, level, index, layer+1);
+		} else {
+			print_tabs(level); printf("level %d index %d layer %d BB %d %d %d %d num nets %lu num vnets %lu max length %d\n",
+					level, index, layer,
+					bg::get<bg::min_corner, 0>(node->bb), bg::get<bg::max_corner, 0>(node->bb),
+					bg::get<bg::min_corner, 1>(node->bb), bg::get<bg::max_corner, 1>(node->bb),
+					node->nets.size(), node->vnets.size(), longest_path_length(node->net_g_2));
+		}
 
-		print_tree(node->left, level+1);
-		print_tree(node->right, level+1);
+		print_tree(node->left, layer > 0 ? level : level+1, index*2, layer);
+		print_tree(node->right, layer > 0 ? level : level+1, index*2+1, layer);
 	}
 }
 
-void print_tree_stats(fpga_tree_node_t *node, router_t *router, int level)
+void print_tree_stats(fpga_tree_node_t *node, router_t *router, int level, int layer)
 {
 	if (node) {
-		dijkstra_stats_t node_net_stats;
-		timer::duration total_update_time = timer::duration::zero();
-		timer::duration total_real_route_time = timer::duration::zero();
+		if (node->next) {
+			print_tree_stats(node->next, router, level, layer+1);
+		} else {
+			dijkstra_stats_t node_net_stats;
+			timer::duration total_update_time = timer::duration::zero();
+			timer::duration total_real_route_time = timer::duration::zero();
 
-		node_net_stats.num_heap_pushes = 0;
-		node_net_stats.num_heap_pops = 0;
-		node_net_stats.num_neighbor_visits = 0;
+			node_net_stats.num_heap_pushes = 0;
+			node_net_stats.num_heap_pops = 0;
+			node_net_stats.num_neighbor_visits = 0;
 
-		for (const auto vnet : node->vnets) {
-			node_net_stats.num_heap_pushes += router->net_stats[vnet.global_index].num_heap_pushes;
-			node_net_stats.num_heap_pops += router->net_stats[vnet.global_index].num_heap_pops;
-			node_net_stats.num_neighbor_visits += router->net_stats[vnet.global_index].num_neighbor_visits;
+			for (const auto vnet : node->vnets) {
+				node_net_stats.num_heap_pushes += router->net_stats[vnet.global_index].num_heap_pushes;
+				node_net_stats.num_heap_pops += router->net_stats[vnet.global_index].num_heap_pops;
+				node_net_stats.num_neighbor_visits += router->net_stats[vnet.global_index].num_neighbor_visits;
 
-			total_update_time += router->update_time[vnet.global_index];
-			total_real_route_time += router->route_time[vnet.global_index];
+				total_update_time += router->update_time[vnet.global_index];
+				total_real_route_time += router->route_time[vnet.global_index];
+			}
+
+			print_tabs(level); printf("num vnets %lu route time %g real route time %g (%g) update time %g (%g) pops/visits/pushes %d %d %d\n",
+					node->vnets.size(),
+					duration_cast<nanoseconds>(node->route_time).count()/1e9,
+					duration_cast<nanoseconds>(total_real_route_time).count()/1e9, 100.0*duration_cast<nanoseconds>(total_real_route_time).count()/duration_cast<nanoseconds>(node->route_time).count(),
+					duration_cast<nanoseconds>(total_update_time).count()/1e9, 100.0*duration_cast<nanoseconds>(total_update_time).count()/duration_cast<nanoseconds>(node->route_time).count(),
+					node_net_stats.num_heap_pops, node_net_stats.num_neighbor_visits, node_net_stats.num_heap_pushes);
 		}
 
-		print_tabs(level); printf("route time %g real route time %g (%g) update time %g (%g) pops/visits/pushes %d %d %d\n",
-				duration_cast<nanoseconds>(node->route_time).count()/1e9,
-				duration_cast<nanoseconds>(total_real_route_time).count()/1e9, 100.0*duration_cast<nanoseconds>(total_real_route_time).count()/duration_cast<nanoseconds>(node->route_time).count(),
-				duration_cast<nanoseconds>(total_update_time).count()/1e9, 100.0*duration_cast<nanoseconds>(total_update_time).count()/duration_cast<nanoseconds>(node->route_time).count(),
-				node_net_stats.num_heap_pops, node_net_stats.num_neighbor_visits, node_net_stats.num_heap_pushes);
+		print_tree_stats(node->left, router, layer > 0 ? level : level+1, layer);
+		print_tree_stats(node->right, router, layer > 0 ? level : level+1, layer);
+	}
+}
 
-		print_tree_stats(node->left, router, level+1);
-		print_tree_stats(node->right, router, level+1);
+void sum_dijkstra_stats(fpga_tree_node_t *node, router_t *router, dijkstra_stats_t &stats)
+{
+	//if (node) {
+		//if (node->next) {
+			//sum_dijkstra_stats(node->next, router, stats);
+		//} else {
+			//for (const auto &vnet : node->vnets) {
+				//stats.num_heap_pushes += router->net_stats[vnet.global_index].num_heap_pushes;
+				//stats.num_heap_pops += router->net_stats[vnet.global_index].num_heap_pops;
+				//stats.num_neighbor_visits += router->net_stats[vnet.global_index].num_neighbor_visits;
+			//}
+		//}
+
+		//sum_dijkstra_stats(node->left, router, stats);
+		//sum_dijkstra_stats(node->right, router, stats);
+	//}
+	
+	for (const auto &net_stats : router->net_stats) {
+		stats.num_heap_pushes += net_stats.num_heap_pushes;
+		stats.num_heap_pops += net_stats.num_heap_pops;
+		stats.num_neighbor_visits += net_stats.num_neighbor_visits;
 	}
 }
 
@@ -3186,7 +3353,7 @@ void test_fpga_bipartition()
 	fpga_tree_node_t root;
 	bg::assign_values(root.bb, 1, 2, 10, 13);
 	fpga_bipartition(&root, 2, false);
-	print_tree(&root, 0);
+	print_tree(&root, 0, 0, 0);
 
 	net_t net;
 	bg::assign_values(net.bounding_box, 1, 2, 10, 13);
@@ -3262,7 +3429,9 @@ void build_net_tree(router_t &router, const t_router_opts *opts, const Load &loa
 		extern int nx, ny;
 		bool horizontal = ny > nx;
 
-		max_independent_rectangles_internal_lb(router.current_nets, load, router.all_nets.size(), bg::make<box>(0, 0, nx+1, ny+1), opts->num_net_cuts, horizontal, &router.net_root);
+		split_nets_recursive_multi_layer(router.current_nets, load, router.all_nets.size(), router.num_levels,
+				bg::make<box>(0, 0, nx+1, ny+1), 0, 0, 0, horizontal,
+				&router.net_root);
 	}
 
 	verify_tree(&router.net_root, router.current_nets);
@@ -3432,30 +3601,33 @@ void create_virtual_nets(const vector<net_t *> &nets, vector<new_virtual_net_t> 
 			total_area += bg::area(bb);
 		}
 
-		if (true) {
-		//if (total_area > bg::area(all_bb)) {
+		//if (true) {
+		if (total_area > bg::area(all_bb)) {
 			new_virtual_net_t vnet;
 
 			vnet.local_index = vnets.size();
 			vnet.global_index = total_num_vnets++;
 			vnet.net = net;
 			vnet.source = &net->source;
-			bg::assign_inverse(vnet.bounding_box);
-			bg::expand(vnet.bounding_box, point(vnet.source->x, vnet.source->y));
+			box bb;
+			bg::assign_inverse(bb);
+			bg::expand(bb, point(vnet.source->x, vnet.source->y));
 
 			for (const auto &sink : net->sinks) {
 				vnet.sinks.push_back(&sink);
 
-				bg::expand(vnet.bounding_box, point(sink.x, sink.y));
+				bg::expand(bb, point(sink.x, sink.y));
 			}
 
-			bg::add_value(vnet.bounding_box.max_corner(), 1);
-			bg::subtract_value(vnet.bounding_box.min_corner(), 1+1);
-			box intersection;
+			bg::add_value(bb.max_corner(), 1);
+			bg::subtract_value(bb.min_corner(), 1+1);
+			box clipped;
 			extern int nx, ny;
-			bg::intersection(bg::make<box>(0, 0, nx+1, ny+1), vnet.bounding_box, intersection);
-			vnet.bounding_box = intersection;
-			assert(bg::equals(vnet.bounding_box, net->bounding_box));
+			bg::intersection(bg::make<box>(0, 0, nx+1, ny+1), bb, clipped);
+			bb = clipped;
+			assert(bg::equals(bb, net->bounding_box));
+
+			vnet.bounding_boxes.push_back(bb);
 
 			vnets.push_back(vnet);
 		} else {
@@ -3468,17 +3640,21 @@ void create_virtual_nets(const vector<net_t *> &nets, vector<new_virtual_net_t> 
 				vnet.source = &net->source;
 				vnet.sinks.push_back(&sink);
 
-				bg::assign_inverse(vnet.bounding_box);
+				box bb;
+				bg::assign_inverse(bb);
 
-				bg::expand(vnet.bounding_box, point(vnet.source->x, vnet.source->y));
-				bg::expand(vnet.bounding_box, point(sink.x, sink.y));
+				bg::expand(bb, point(vnet.source->x, vnet.source->y));
+				bg::expand(bb, point(sink.x, sink.y));
 
-				bg::add_value(vnet.bounding_box.max_corner(), 1);
-				bg::subtract_value(vnet.bounding_box.min_corner(), 1+1);
-				box intersection;
+				bg::add_value(bb.max_corner(), 1);
+				bg::subtract_value(bb.min_corner(), 1+1);
+				box clipped;
 				extern int nx, ny;
-				bg::intersection(bg::make<box>(0, 0, nx+1, ny+1), vnet.bounding_box, intersection);
-				vnet.bounding_box = intersection;
+				bg::intersection(bg::make<box>(0, 0, nx+1, ny+1), bb, clipped);
+
+				make_l_segment(point(net->source.x, net->source.y), point(sink.x, sink.y), true, make_pair(2, 1), make_pair(2, 1), make_pair(nx+1, ny+1), vnet.bounding_boxes);
+
+				assert(boxes_area(vnet.bounding_boxes) <= bg::area(clipped));
 
 				vnets.push_back(vnet);
 			}
@@ -3498,7 +3674,16 @@ int build_overlap_graph(const vector<new_virtual_net_t> &vnets, UndirectedGraph 
 		for (int j = i+1; j < vnets.size(); ++j) {
 			//if (vnets[i].net != vnets[j].net
 					//&& bg::intersects(vnets[i].bounding_box, vnets[j].bounding_box)) {
-			if (bg::intersects(vnets[i].bounding_box, vnets[j].bounding_box)) {
+			bool inters = false;
+			for (int k = 0; k < vnets[i].bounding_boxes.size() && !inters; ++k) {
+				const auto &box_a = vnets[i].bounding_boxes[k];
+				for (int l = 0; l < vnets[j].bounding_boxes.size() && !inters; ++l) {
+					const auto &box_b = vnets[j].bounding_boxes[l];
+					inters = bg::intersects(box_a, box_b);
+				}
+			}
+			if (inters) {
+			//if (bg::intersects(vnets[i].bounding_box, vnets[j].bounding_box)) {
 				add_edge(i, j, overlap);
 			}
 		}
@@ -3514,15 +3699,29 @@ int build_overlap_graph(const vector<new_virtual_net_t> &vnets, vector<vector<in
 		assert(overlap[i].empty());
 	}
 
+	//printf("building overlap graph\n");
+
 	int num_edges = 0;
 
 	for (int i = 0; i < vnets.size(); ++i) {
 		for (int j = i+1; j < vnets.size(); ++j) {
 			//if (vnets[i].net != vnets[j].net
 					//&& bg::intersects(vnets[i].bounding_box, vnets[j].bounding_box)) {
-			if (bg::intersects(vnets[i].bounding_box, vnets[j].bounding_box)) {
+			bool inters = false;
+			for (int k = 0; k < vnets[i].bounding_boxes.size() && !inters; ++k) {
+				const auto &box_a = vnets[i].bounding_boxes[k];
+				for (int l = 0; l < vnets[j].bounding_boxes.size() && !inters; ++l) {
+					const auto &box_b = vnets[j].bounding_boxes[l];
+					inters = bg::intersects(box_a, box_b);
+				}
+			}
+
+			if (inters) {
+			//if (bg::intersects(vnets[i].bounding_box, vnets[j].bounding_box)) {
 				overlap[i].push_back(j);
 				overlap[j].push_back(i);
+
+				//printf("adding edge between %d %d\n", i, j);
 
 				num_edges += 2;
 			}
@@ -3673,7 +3872,7 @@ void schedule_nets_ind(const vector<net_t *> &nets, vector<vector<const net_t *>
 }
 
 template<typename LoadFunc>
-void schedule_nets_greedy(const vector<vector<int>> &g, const vector<new_virtual_net_t> &vnets, const LoadFunc &load, int num_partitions, vector<vector<int>> &directed_g, vector<int> &num_incoming_edges)
+void undirected_to_directed(const vector<vector<int>> &g, const vector<new_virtual_net_t> &vnets, const LoadFunc &load, int num_partitions, vector<vector<int>> &directed_g, vector<int> &num_incoming_edges)
 {
 	vector<int> sorted_nodes(g.size());
 	for (int i = 0; i < g.size(); ++i) {
@@ -3798,13 +3997,251 @@ void schedule_nets_greedy(const vector<vector<int>> &g, const vector<new_virtual
 	assert(num_edges/2 == num_directed_edges);
 }
 
+void undirected_to_directed_by_ordering(const vector<vector<int>> &g, vector<vector<int>> &directed_g, vector<int> &num_incoming_edges)
+{
+	boost::vector_property_map<int> order_map; 
+
+	/* this gives better result than largest first order */
+	custom_smallest_last_vertex_ordering(g, order_map); 
+
+	vector<int> order(g.size(), -1);
+	for (int i = 0; i < g.size(); ++i) {
+		int u = get(order_map, i);
+		assert(u >= 0 && u < order.size());
+		assert(order[u] == -1);
+		order[u] = i;
+	}
+
+	//for (int i = 0; i < order.size(); ++i) {
+		//printf("order of %d = %d\n", i, order[i]);
+	//}
+
+	assert(all_of(begin(order), end(order), [] (const int &val) -> bool { return val != -1; }));
+
+	directed_g.resize(g.size());
+	for (auto &u : directed_g) {
+		u.clear();
+	}
+	num_incoming_edges.resize(g.size());
+	std::fill(begin(num_incoming_edges), end(num_incoming_edges), 0);
+
+	for (int i = 0; i < g.size(); ++i) {
+		int u = get(order_map, i);
+		for (int j = 0; j < g[u].size(); ++j) {
+			int v = g[u][j];
+
+			//printf("u %d uo %d v %d vo %d\n", u, order[u], v, order[v]);
+
+			assert(order[v] != order[u]);
+			if (order[v] > order[u]) {
+				directed_g[u].push_back(v);
+				++num_incoming_edges[v];
+			}
+		}
+	}
+
+	int num_edges = 0;
+	for (const auto &u : g) {
+		num_edges += u.size();
+	}
+
+	int num_directed_edges = 0;
+	for (const auto &u : directed_g) {
+		num_directed_edges += u.size();
+	}
+
+	assert((num_edges % 2) == 0);
+	assert(num_edges/2 == num_directed_edges);
+}
+
+#if 1
+void undirected_to_directed_by_coloring(const vector<vector<int>> &g, vector<vector<int>> &directed_g, vector<int> &num_incoming_edges)
+{
+	boost::vector_property_map<int> order_map;
+
+	/* this gives better result than largest first order */
+	custom_smallest_last_vertex_ordering(g, order_map); 
+
+	boost::vector_property_map<int> color_map;
+
+	int num_colors = custom_vertex_coloring(g, order_map, color_map);
+
+	directed_g.resize(g.size());
+	for (auto &u : directed_g) {
+		u.clear();
+	}
+	num_incoming_edges.resize(g.size());
+	std::fill(begin(num_incoming_edges), end(num_incoming_edges), 0);
+
+	for (int u = 0; u < g.size(); ++u) {
+		int uc = get(color_map, u);
+
+		for (int j = 0; j < g[u].size(); ++j) {
+			int v = g[u][j];
+			int vc = get(color_map, v);
+
+			if (vc > uc) {
+				directed_g[u].push_back(v);
+				++num_incoming_edges[v];
+			}
+		}
+	}
+
+	int num_edges = 0;
+	for (const auto &u : g) {
+		num_edges += u.size();
+	}
+
+	int num_directed_edges = 0;
+	for (const auto &u : directed_g) {
+		num_directed_edges += u.size();
+	}
+
+	assert((num_edges % 2) == 0);
+	assert(num_edges/2 == num_directed_edges);
+}
+#endif
+
 template<typename LoadFunc>
-void schedule_nets(fpga_tree_node_t *node, const LoadFunc &load, int num_partitions)
+void undirected_to_directed_4(const vector<vector<int>> &g, const vector<new_virtual_net_t> &vnets, const LoadFunc &load, int num_partitions, vector<vector<int>> &directed_g, vector<int> &num_incoming_edges)
+{
+	PRINT("Converting g of size %d\n", g.size());
+
+	boost::vector_property_map<int> order_map;
+
+	custom_smallest_last_vertex_ordering(g, order_map); 
+
+	struct node_item_t {
+		int id;
+		float start_time;
+		unsigned long num_out_edges;
+
+		//bool operator<(const node_item_t &other) const {
+			//return start_time > other.start_time || (start_time == other.start_time && num_out_edges < other.num_out_edges);
+		//}
+		bool operator<(const node_item_t &other) const {
+			return start_time > other.start_time;
+		}
+	};
+
+	boost::heap::binomial_heap<node_item_t, boost::heap::stable<true>> min_node_heap;
+	using node_handle_t = typename boost::heap::binomial_heap<node_item_t, boost::heap::stable<true>>::handle_type;
+
+	vector<node_handle_t> node_handles(g.size());
+
+	vector<float> start_time(g.size());
+
+	for (int i = 0; i < g.size(); ++i) {
+		int n = get(order_map, i);
+
+		PRINT("Pushing %d with degree %lu\n", n, g[n].size());
+
+		start_time[n] = 0;
+		node_handles[n] = min_node_heap.push({ n, 0, g[n].size() });
+	}
+
+	struct partition_item_t {
+		int id;
+		float start_time;
+
+		bool operator<(const partition_item_t &other) const {
+			return start_time > other.start_time;
+		}
+	};
+	boost::heap::binomial_heap<partition_item_t, boost::heap::stable<true>> min_partition_heap;
+
+	for (int i = 0; i < num_partitions; ++i) {
+		min_partition_heap.push({ i, 0 });
+	}
+
+	vector<bool> scheduled(g.size(), false);
+
+	directed_g.resize(g.size());
+	for (auto &u : directed_g) {
+		u.clear();
+	}
+
+	num_incoming_edges.resize(g.size());
+	std::fill(begin(num_incoming_edges), end(num_incoming_edges), 0);
+
+	while (!min_node_heap.empty()) {
+		node_item_t min_node = min_node_heap.top();
+		min_node_heap.pop();
+
+		int u = min_node.id;
+
+		assert(!scheduled[u]);
+		scheduled[u] = true;
+
+		start_time[u] = min_node.start_time;
+
+		partition_item_t min_partition = min_partition_heap.top();
+		min_partition_heap.pop();
+
+		float uload = load(vnets[u]);
+		assert(uload > 0);
+		//float new_start = std::max(min_node.start_time, min_partition.start_time) + uload;
+		float new_start = min_node.start_time + uload;
+
+		min_partition_heap.push({ min_partition.id, new_start });
+
+		PRINT("Current %d [start time %g load %g] sent to partition %d with start time %g\n", u, min_node.start_time, uload, min_partition.id, min_partition.start_time);
+
+		PRINT("New start %g = max(item %g, part %g) + load %g\n", new_start, min_node.start_time, min_partition.start_time, uload);
+
+		/* it is possible that we have less amount of threads than the amount of parallelism available */
+		//assert(min_node.start_time >= min_partition.start_time);
+		
+		for (const auto &v : g[u]) {
+			if (scheduled[v]) {
+				assert(start_time[v] < start_time[u]);
+				continue;
+			}
+
+			assert((*node_handles[v]).id == v);
+			assert((*node_handles[v]).start_time == start_time[v]);
+
+			PRINT("\tNeighbor %d Current start %g\n", v, (*node_handles[v]).start_time);
+
+			directed_g[u].push_back(v);
+			++num_incoming_edges[v];
+
+			if ((*node_handles[v]).start_time == std::numeric_limits<float>::max() || new_start > (*node_handles[v]).start_time) {
+				PRINT("\t\tUpdating neighbor %d start time from %g to %g\n", v, (*node_handles[v]).start_time, new_start);
+
+				min_node_heap.update(node_handles[v], { v, new_start, g[v].size() });
+
+				start_time[v] = new_start;
+			} 
+		}
+	}
+
+	assert(std::all_of(begin(scheduled), end(scheduled), [] (const bool &s) -> bool { return s; }));
+
+	int num_edges = 0;
+	for (const auto &u : g) {
+		num_edges += u.size();
+	}
+
+	int num_directed_edges = 0;
+	for (const auto &u : directed_g) {
+		num_directed_edges += u.size();
+	}
+
+	assert((num_edges % 2) == 0);
+	assert(num_edges/2 == num_directed_edges);
+}
+
+template<typename LoadFunc>
+void schedule_nets_by_convert(fpga_tree_node_t *node, const LoadFunc &load, int num_partitions)
 {
 	vector<vector<int>> overlap;
 	build_overlap_graph(node->vnets, overlap);
 
-	schedule_nets_greedy(overlap, node->vnets, load, num_partitions, node->net_g, node->num_incoming_edges);
+	//undirected_to_directed(overlap, node->vnets, load, num_partitions, node->net_g, node->num_incoming_edges);
+	//undirected_to_directed_4(overlap, node->vnets, load, num_partitions, node->net_g, node->num_incoming_edges);
+	//undirected_to_directed_by_ordering(overlap, node->net_g, node->num_incoming_edges);
+	undirected_to_directed_by_coloring(overlap, node->net_g, node->num_incoming_edges);
 
 	for (int i = 0; i < node->net_g.size(); ++i) {
 		add_vertex(node->net_g_2);
@@ -3824,7 +4261,7 @@ void schedule_nets(fpga_tree_node_t *node, const LoadFunc &load, int num_partiti
 	assert(!node->roots.empty());
 }
 
-void schedule_nets(fpga_tree_node_t *node)
+void schedule_nets_by_coloring(fpga_tree_node_t *node)
 {
 	//int num_non_decomposed_nets = 0;
 
@@ -3876,13 +4313,22 @@ void schedule_nets(fpga_tree_node_t *node)
 	for (const auto &color : node->scheduled) {
 		acc(color.size());
 	}
-	printf("VNET: num vnet %lu num colors %d min %lu max %lu mean %g std dev %g\n", node->vnets.size(), num_colors, boost::accumulators::min(acc), boost::accumulators::max(acc), mean(acc), std::sqrt(variance(acc)));
+	printf("num nets %lu num vnets %lu num colors %d min %lu max %lu mean %g std dev %g\n", node->nets.size(), node->vnets.size(), num_colors, boost::accumulators::min(acc), boost::accumulators::max(acc), mean(acc), std::sqrt(variance(acc)));
 
 	for (const auto &color : node->scheduled) {
 		for (int i = 0; i < color.size(); ++i) {
 			for (int j = i + 1; j < color.size(); ++j) {
 				//if (color[i]->net != color[j]->net) {
-					assert(bg::disjoint(color[i]->bounding_box, color[j]->bounding_box));
+				bool dis = true;
+				for (int k = 0; k < color[i]->bounding_boxes.size() && dis; ++k) {
+					const auto &box_a = color[i]->bounding_boxes[k];
+					for (int l = 0; l < color[j]->bounding_boxes.size() && dis; ++l) {
+						const auto &box_b = color[j]->bounding_boxes[l];
+						dis = bg::disjoint(box_a, box_b);
+					}
+				}
+				assert(dis);
+					//assert(bg::disjoint(color[i]->bounding_box, color[j]->bounding_box));
 				//}
 			}	
 		}
@@ -3897,13 +4343,17 @@ void schedule_nets(fpga_tree_node_t *node)
 }
 
 template<typename LoadFunc>
-void schedule_net_tree(fpga_tree_node_t *node, int level, int num_logical_threads, const LoadFunc &load)
+void schedule_net_tree_by_convert(fpga_tree_node_t *node, int level, int num_logical_threads, const LoadFunc &load)
 {
 	if (node) {
 		int num_tasks = (1 << level);
 		int num_partitions = num_logical_threads/num_tasks;
 
-		schedule_nets(node, load, num_partitions);
+		if (node->next) {
+			schedule_net_tree_by_convert(node->next, level, num_logical_threads, load);
+		} else {
+			schedule_nets_by_convert(node, load, num_partitions);
+		}
 
 		assert(node->net_g.size() == node->num_incoming_edges.size());
 		assert(node->net_g.size() == node->vnets.size());
@@ -3913,38 +4363,53 @@ void schedule_net_tree(fpga_tree_node_t *node, int level, int num_logical_thread
 			node->current_num_incoming_edges[i] = new std::atomic<int>;
 		}
 
-		schedule_net_tree(node->left, level+1, num_logical_threads, load);
-		schedule_net_tree(node->right, level+1, num_logical_threads, load);
+		schedule_net_tree_by_convert(node->left, level+1, num_logical_threads, load);
+		schedule_net_tree_by_convert(node->right, level+1, num_logical_threads, load);
 	}
 }
 
-void schedule_net_tree(fpga_tree_node_t *node)
+void schedule_net_tree_by_coloring(fpga_tree_node_t *node)
 {
 	if (node) {
-		schedule_nets(node);
+		if (node->next) {
+			schedule_net_tree_by_coloring(node->next);
+		} else {
+			schedule_nets_by_coloring(node);
+		}
 
-		schedule_net_tree(node->left);
-		schedule_net_tree(node->right);
+		schedule_net_tree_by_coloring(node->left);
+		schedule_net_tree_by_coloring(node->right);
 	}
 }
 
-void create_virtual_net_tree(fpga_tree_node_t *node, int &total_num_vnets)
+void create_virtual_net_tree(fpga_tree_node_t *node, int level, int index, int layer, int &total_num_vnets)
 {
 	if (node) {
-		create_virtual_nets(node->nets, node->vnets, total_num_vnets);
+		if (node->next) {
+			create_virtual_net_tree(node->next, level, index, layer+1, total_num_vnets);
+		} else {
+			printf("Creating virtual nets for level %d index %d layer %d\n", level, index, layer);
 
-		create_virtual_net_tree(node->left, total_num_vnets);
-		create_virtual_net_tree(node->right, total_num_vnets);
+			create_virtual_nets(node->nets, node->vnets, total_num_vnets);
+		}
+
+		create_virtual_net_tree(node->left, level+1, index*2, layer, total_num_vnets);
+		create_virtual_net_tree(node->right, level+1, index*2+1, layer, total_num_vnets);
 	}
 }
 
 void reset_incoming_edges(fpga_tree_node_t *node)
 {
 	if (node) {
-		for (int i = 0; i < node->num_incoming_edges.size(); ++i) {
-			*node->current_num_incoming_edges[i] = node->num_incoming_edges[i];
+		if (node->next) {
+			reset_incoming_edges(node->next);
+		} else {
+			for (int i = 0; i < node->num_incoming_edges.size(); ++i) {
+				*node->current_num_incoming_edges[i] = node->num_incoming_edges[i];
+			}
 		}
 		//std::copy(begin(node->num_incoming_edges), end(node->num_incoming_edges), begin(node->current_num_incoming_edges));
+
 		reset_incoming_edges(node->left);
 		reset_incoming_edges(node->right);
 	}
@@ -4016,8 +4481,12 @@ class my_observer : public tbb::task_scheduler_observer {
 void fill_all_vnets(fpga_tree_node_t *node, vector<new_virtual_net_t *> &all_vnets)
 {
 	if (node) {
-		for (auto &vnet : node->vnets) {
-			all_vnets.push_back(&vnet);
+		if (node->next) {
+			fill_all_vnets(node->next, all_vnets);
+		} else {
+			for (auto &vnet : node->vnets) {
+				all_vnets.push_back(&vnet);
+			}
 		}
 
 		fill_all_vnets(node->left, all_vnets);
@@ -4182,16 +4651,28 @@ bool partitioning_multi_sink_delta_stepping_route(const t_router_opts *opts)
 	print_tree(&test_region_root, 0);
 #endif
 
+	//extern int nx, ny;
+	//split_nets_recursive(router.current_nets, [] (const net_t *net) -> float { return net->sinks.size(); }, router.all_nets.size(), bg::make<box>(0, 0, nx+1, ny+1), opts->num_net_cuts, 1, true, &router.net_root);
+
+	//exit(0);
+
 	build_net_tree(router, opts, [] (const net_t *net) -> float { return net->sinks.size(); });
 
 	int total_num_vnets = 0;
-	create_virtual_net_tree(&router.net_root, total_num_vnets);
+	create_virtual_net_tree(&router.net_root, 0, 0, 0, total_num_vnets);
 
-	schedule_net_tree(&router.net_root);
-	schedule_net_tree(&router.net_root, 0, pow(2, opts->num_net_cuts), [] (const new_virtual_net_t &net) ->float { return net.sinks.size(); });
+	printf("Scheduling by coloring\n");
+
+	schedule_net_tree_by_coloring(&router.net_root);
+
+	printf("Scheduling by convert\n");
+
+	schedule_net_tree_by_convert(&router.net_root, 0, pow(2, opts->num_net_cuts), [] (const new_virtual_net_t &net) ->float { return net.sinks.size(); });
+
+	write_net_g(g_dirname, &router.net_root, 0, 0);
 
 	printf("Net tree\n");
-	print_tree(&router.net_root, 0);
+	print_tree(&router.net_root, 0, 0, 0);
 
 	fill_all_vnets(&router.net_root, router.all_vnets);
 
@@ -4410,7 +4891,7 @@ bool partitioning_multi_sink_delta_stepping_route(const t_router_opts *opts)
 		//reset_tree_net_stats(&router.net_root);
 
 		//do_virtual_work(&router, *net_router);
-		tbb::task &root = *new(tbb::task::allocate_root()) SchedRouterTask(&router, &router.net_root, 0);
+		tbb::task &root = *new(tbb::task::allocate_root()) MultiLayerSchedRouterTask(&router, &router.net_root, 0);
 
 		auto route_start = timer::now();
 
@@ -4427,7 +4908,14 @@ bool partitioning_multi_sink_delta_stepping_route(const t_router_opts *opts)
 		
 		printf("Route time: %g\n", duration_cast<nanoseconds>(route_time).count()/1e9);
 
-		print_tree_stats(&router.net_root, &router, 0);
+		print_tree_stats(&router.net_root, &router, 0, 0);
+
+		dijkstra_stats_t total_stats { 0, 0, 0 };
+		sum_dijkstra_stats(&router.net_root, &router, total_stats);
+
+		printf("Total num heap pops: %lu\n", total_stats.num_heap_pops);
+		printf("Total num neighbor visits: %lu\n", total_stats.num_neighbor_visits);
+		printf("Total num heap pushes: %lu\n", total_stats.num_heap_pushes);
 
 		total_time += route_time;
 
@@ -4497,17 +4985,6 @@ bool partitioning_multi_sink_delta_stepping_route(const t_router_opts *opts)
 			//}
 			//printf("\n");
 		//}
-
-		unsigned long total_num_heap_pops = 0;
-		printf("Num heap pops:\n");
-		printf("Total num heap pops: %lu\n", total_num_heap_pops);
-
-		unsigned long total_num_neighbor_visits = 0;
-		printf("Total num neighbor visits: %lu\n", total_num_neighbor_visits);
-
-		unsigned long total_num_heap_pushes = 0;
-		printf("Num heap pushes:\n");
-		printf("Total num heap pushes: %lu\n", total_num_heap_pushes);
 
 		//sprintf(buffer, "%s/net_route_time_%d.txt", dirname, router.iter);
 		//FILE *nrt = fopen(buffer, "w");
