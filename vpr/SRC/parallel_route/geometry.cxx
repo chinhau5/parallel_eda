@@ -2,15 +2,37 @@
 
 using namespace std;
 
-void expand_and_clip(box &b, const pair<int, int> &xexpand, const pair<int, int> &yexpand, const pair<int, int> &max)
+void box_to_polygon(const box &b, polygon &p)
 {
-	bg::set<bg::min_corner, 0>(b, std::max(0, bg::get<bg::min_corner, 0>(b) - xexpand.first));
-	bg::set<bg::max_corner, 0>(b, std::min(max.first, bg::get<bg::max_corner, 0>(b) + xexpand.second));
-	bg::set<bg::min_corner, 1>(b, std::max(0, bg::get<bg::min_corner, 1>(b) - yexpand.first));
-	bg::set<bg::max_corner, 1>(b, std::min(max.second, bg::get<bg::max_corner, 1>(b) + yexpand.second));
+	assert(p.outer().empty());
+	assert(p.inners().empty());
+
+	bg::append(p, b.min_corner());
+	bg::append(p, point(bg::get<0>(b.min_corner()), bg::get<1>(b.max_corner())));
+	bg::append(p, b.max_corner());
+	bg::append(p, point(bg::get<0>(b.max_corner()), bg::get<1>(b.min_corner())));
+	bg::append(p, b.min_corner());
+
+	assert(bg::is_valid(p));
+	assert(bg::area(b) == bg::area(p));
 }
 
-void make_l_segment(const point &source, const point &sink, bool xfirst, const pair<int, int> &xexpand, const pair<int, int> &yexpand, const pair<int, int> &max, vector<box> &boxes)
+void clip(box &bb, const pair<int, int> &max)
+{
+	box clipped;
+	bg::intersection(bg::make<box>(0, 0, max.first, max.second), bb, clipped);
+	bb = clipped;
+}
+
+void expand(box &b, const pair<int, int> &xexpand, const pair<int, int> &yexpand)
+{
+	bg::set<bg::min_corner, 0>(b, bg::get<bg::min_corner, 0>(b) - xexpand.first);
+	bg::set<bg::max_corner, 0>(b, bg::get<bg::max_corner, 0>(b) + xexpand.second);
+	bg::set<bg::min_corner, 1>(b, bg::get<bg::min_corner, 1>(b) - yexpand.first);
+	bg::set<bg::max_corner, 1>(b, bg::get<bg::max_corner, 1>(b) + yexpand.second);
+}
+
+void make_l_segment(const point &source, const point &sink, bool xfirst, const pair<int, int> &xexpand, const pair<int, int> &yexpand, const pair<int, int> &max, bool c, vector<box> &boxes)
 {
 	box hb;
 	box vb;
@@ -27,14 +49,16 @@ void make_l_segment(const point &source, const point &sink, bool xfirst, const p
 	//cout << "hseg before correct " << bg::dsv(hb) << endl;
 	bg::correct(hb);
 	//cout << "hseg after correct " << bg::dsv(hb) << endl;
-	expand_and_clip(hb, xexpand, yexpand, max);
+	expand(hb, xexpand, yexpand);
+	if (c) clip(hb, max);
 	//cout << "hseg after expand " << bg::dsv(hb) << endl << endl;
 	boxes.push_back(hb);
 
 	//cout << "vseg before correct " << bg::dsv(vb) << endl;
 	bg::correct(vb);
 	//cout << "vseg after correct " << bg::dsv(vb) << endl;
-	expand_and_clip(vb, xexpand, yexpand, max);
+	expand(vb, xexpand, yexpand);
+	if (c) clip(vb, max);
 	//cout << "vseg after expand " << bg::dsv(vb) << endl << endl;
 	boxes.push_back(vb);
 }

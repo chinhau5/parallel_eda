@@ -445,8 +445,8 @@ void update_first_order_congestion(congestion_t *congestion, RRNode rr_node, int
 	assert(congestion[rr_node].occ >= 0);
 
 	if (congestion[rr_node].occ < capacity) {
-		congestion[rr_node].pres_cost = 1;
+		congestion[rr_node].pres_cost = 1.;
 	} else {
-		congestion[rr_node].pres_cost = 1 + (congestion[rr_node].occ + 1 - capacity) * pres_fac;
+		congestion[rr_node].pres_cost = 1. + (congestion[rr_node].occ + 1 - capacity) * pres_fac;
 	}
 }
