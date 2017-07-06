@@ -51,7 +51,7 @@ $(BUILD_DIRS):
 
 $(OBJS): | $(BUILD_DIRS)
 
-$(BUILD_ROOT)/$(TARGET): $(OBJS)
+$(BUILD_ROOT)/$(TARGET): $(OBJS) | $(BUILD_DIRS)
 	ar rcs $@ $(OBJS)
 
 .PHONY: all clean

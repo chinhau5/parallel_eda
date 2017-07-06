@@ -1239,8 +1239,12 @@ class SchedRouterTask : public tbb::task {
 		fpga_tree_node_t *m_node;
 		int m_level;
 
-		void route_vnet(const new_virtual_net_t &vnet)
+		void route_vnet(const new_virtual_net_t &vnet, timer::duration &vnet_time)
 		{
+			auto vnet_route_start = timer::now();
+
+			vnet_time = timer::duration::zero();
+
 			const net_t &net = *vnet.net;
 
 			zlog_level(delta_log, ROUTER_V3, "Routing vnet [local %d global %d] net [%d]\n", vnet.local_index, vnet.global_index, net.local_id);
@@ -1314,9 +1318,14 @@ class SchedRouterTask : public tbb::task {
 				/* this assertion is no longer true */
 				//assert(route_tree_empty(m_router->state.route_trees[net.local_id]));
 
+				vnet_time += timer::now() - vnet_route_start;
+				std::atomic<timer::duration::rep> local_time(0);
+
 				tbb::parallel_for(tbb::blocked_range<int>(0, vnet.sinks.size()),
 						[&] (const tbb::blocked_range<int> &r) -> void
 						{
+						auto sink_start = timer::now();
+
 						thread_local SinkRouter *sink_router = nullptr;
 						if (!sink_router) {
 						sink_router = g_manager->get();
@@ -1348,12 +1357,17 @@ class SchedRouterTask : public tbb::task {
 						m_router->sink_stats[vnet.global_index][i] = dstats;
 						}
 
+						local_time += (timer::now()-sink_start).count();
+
 						}, tbb::auto_partitioner());
+
+				vnet_time += timer::duration(local_time);
 
 				//m_router->net_stats[vnet.global_index].num_heap_pushes += num_heap_pushes;
 				//m_router->net_stats[vnet.global_index].num_heap_pops += num_heap_pops;
 				//m_router->net_stats[vnet.global_index].num_neighbor_visits += num_neighbor_visits;
 
+				vnet_route_start = timer::now();
 				//assert(m_router->locks[net.local_id].try_lock());
 				merge(vnet.sinks, route_trees, m_router->state.route_trees[net.local_id], &m_router->state.added_rr_nodes[vnet.global_index]);
 				//m_router->locks[net.local_id].unlock();
@@ -1386,6 +1400,7 @@ class SchedRouterTask : public tbb::task {
 					sink_router->route(i == 0 ? source : nullptr, sink, vnet.bounding_boxes[i], m_router->params.astar_fac, m_router->state.route_trees[net.local_id], m_router->state.added_rr_nodes[vnet.global_index], m_router->state.net_timing[net.vpr_id].delay[sink->id+1], &dstats); 
 					//m_router->locks[net.local_id].unlock();
 
+
 					m_router->sink_stats[vnet.global_index][i] = dstats;
 
 					//m_router->net_stats[vnet.global_index].num_heap_pushes += dstats.num_heap_pushes;
@@ -1398,6 +1413,8 @@ class SchedRouterTask : public tbb::task {
 				const auto &rr_node_p = get_vertex_props(m_router->g, node);
 				update_first_order_congestion(m_router->state.congestion, node, 1, rr_node_p.capacity, m_router->pres_fac);
 			}
+
+			vnet_time += timer::now() - vnet_route_start;
 
 			//auto real_net_route_end = timer::now();
 
@@ -1423,7 +1440,7 @@ class SchedRouterTask : public tbb::task {
 		{
 			if (false) {
 				for (const auto &vnet : m_node->vnets) {
-					route_vnet(vnet);
+					//route_vnet(vnet, m_router->route_time[vnet->global_index]);
 				}
 			} else {
 			//int num_tasks = (1 << m_level);
@@ -1434,12 +1451,9 @@ class SchedRouterTask : public tbb::task {
 							assert(!m_router->routed[vnet->global_index]);
 							m_router->routed[vnet->global_index] = true;
 
-							auto vnet_route_start = timer::now();	
-
-							route_vnet(*vnet);
+							route_vnet(*vnet, m_router->route_time[vnet->global_index]);
 
 							auto update_start = timer::now();
-							m_router->route_time[vnet->global_index] = update_start - vnet_route_start;
 
 							for (const auto &v : m_node->net_g[vnet->local_index]) {
 								//zlog_level(delta_log, ROUTER_V3, "Net %d neighbor %d incoming %d\n", vnet->local_index, v, m_node->current_num_incoming_edges[v]->load());
@@ -1567,8 +1581,6 @@ class MultiLayerSchedRouterTask : public tbb::task {
 			__itt_task_begin(domain, __itt_null, __itt_null, shMyTask);
 
 			auto route_start = timer::now();
-
-			//auto route_start = timer::now();
 
 			int num_tasks = (1 << m_level);
 
@@ -5497,7 +5509,7 @@ bool partitioning_multi_sink_delta_stepping_route(const t_router_opts *opts)
 	build_net_tree(router, opts, [] (const net_t *net) -> float { return net->sinks.size(); });
 
 	int total_num_vnets = 0;
-	create_virtual_net_tree(&router.net_root, opts->bb_factor, false, 0, 0, 0, total_num_vnets);
+	create_virtual_net_tree(&router.net_root, opts->bb_factor, true, 0, 0, 0, total_num_vnets);
 
 	printf("total num nets %lu total num vnets %d\n", router.all_nets.size(), total_num_vnets);
 
@@ -5715,6 +5727,8 @@ bool partitioning_multi_sink_delta_stepping_route(const t_router_opts *opts)
 
 	dijkstra_stats_t total_stats { 0, 0, 0 };
 	timer::duration total_time = timer::duration::zero();
+	timer::duration total_real_route_time = timer::duration::zero();
+	timer::duration total_update_time = timer::duration::zero();
 
 	init_wait_stats(router.num_levels, opts->num_threads);
 	init_inc_time(opts->num_threads);
@@ -5763,8 +5777,8 @@ bool partitioning_multi_sink_delta_stepping_route(const t_router_opts *opts)
 			update_sink_criticalities(*net, router.state.net_timing[net->vpr_id], router.params);
 		}
 
-		clear_wait_stats();
-		clear_inc_time();
+		//clear_wait_stats();
+		//clear_inc_time();
 
 		reset_incoming_edges(&router.net_root);
 		//reset_tree_net_stats(&router.net_root);
@@ -5796,8 +5810,24 @@ bool partitioning_multi_sink_delta_stepping_route(const t_router_opts *opts)
 
 		printf("Free sink routers: %d Num allocs %d\n", g_manager->get_num_free(), g_manager->get_num_allocs());
 		assert(g_manager->get_num_free() > 0);
-		
+
 		printf("Iteration route time: %g\n", duration_cast<nanoseconds>(route_time).count()/1e9);
+
+		timer::duration iteration_real_route_time = timer::duration::zero();
+		for (int i = 0; i < total_num_vnets; ++i) {
+			iteration_real_route_time += router.route_time[i];
+		}
+		total_real_route_time += iteration_real_route_time;
+		printf("Iteration real route time: %g (%g)\n", duration_cast<nanoseconds>(iteration_real_route_time).count()/1e9,
+				iteration_real_route_time.count()*100.0/route_time.count());
+
+		timer::duration iteration_update_time = timer::duration::zero();
+		for (int i = 0; i < total_num_vnets; ++i) {
+			iteration_update_time += router.update_time[i];
+		}
+		printf("Iteration update time: %g (%g)\n", duration_cast<nanoseconds>(iteration_update_time).count()/1e9,
+				iteration_update_time.count()*100.0/route_time.count());
+		total_update_time += iteration_update_time;
 
 		dijkstra_stats_t iteration_stats { 0, 0, 0 };
 		sum_dijkstra_stats(&router.net_root, &router, iteration_stats);
@@ -6046,6 +6076,8 @@ bool partitioning_multi_sink_delta_stepping_route(const t_router_opts *opts)
 	printf("Total num neighbor visits: %lu\n", total_stats.num_neighbor_visits);
 	printf("Total num heap pushes: %lu\n", total_stats.num_heap_pushes);
 	printf("Total route time: %g\n", duration_cast<nanoseconds>(total_time).count() / 1e9);
+	printf("Total real route time: %g\n", duration_cast<nanoseconds>(total_real_route_time).count() / 1e9);
+	printf("Total update time: %g\n", duration_cast<nanoseconds>(total_update_time).count() / 1e9);
 
 	return false;
 }
