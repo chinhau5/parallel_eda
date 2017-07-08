@@ -511,6 +511,10 @@ ProcessOption(INP char **Args, INOUTP t_options * Options) {
 		return ReadInt(Args, &Options->num_net_cuts);
 	case OT_NUM_EXTRA_CUTS:
 		return ReadInt(Args, &Options->num_extra_cuts);
+    case OT_SEQUENTIAL_NET:
+        return ReadOnOff(Args, &Options->seq_net);
+    case OT_SEQUENTIAL_SINK:
+        return ReadOnOff(Args, &Options->seq_sink);
 			
 		/* Routing options valid only for timing-driven routing */
 	case OT_ASTAR_FAC:

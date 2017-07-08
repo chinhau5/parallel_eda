@@ -288,6 +288,8 @@ static void ShowRouterOpts(INP struct s_router_opts RouterOpts) {
 
 		vpr_printf(TIO_MESSAGE_INFO, "RouterOpts.num_net_cuts: %d\n", RouterOpts.num_net_cuts);
 		vpr_printf(TIO_MESSAGE_INFO, "RouterOpts.num_extra_cuts: %d\n", RouterOpts.num_extra_cuts);
+        vpr_printf(TIO_MESSAGE_INFO, "RouterOpts.seq_net: %s\n", RouterOpts.seq_net ? "on" : "off");
+        vpr_printf(TIO_MESSAGE_INFO, "RouterOpts.seq_sink: %s\n", RouterOpts.seq_sink ? "on" : "off");
 
 		vpr_printf(TIO_MESSAGE_INFO, "RouterOpts.scheduler: ");
 		switch (RouterOpts.scheduler) {

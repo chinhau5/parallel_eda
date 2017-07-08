@@ -65,7 +65,7 @@ struct s_TokenPair OptionBaseTokenList[] = {
 	{ "sync_only_once", OT_SYNC_ONLY_ONCE }, { "progress_freq", OT_PROGRESS_FREQ }, { "log_dir", OT_LOG_DIR }, { "bb_area_threshold_scale", OT_BB_AREA_THRESHOLD_SCALE },
 	{ "delayed_sync", OT_DELAYED_SYNC }, { "pure_rr", OT_PURE_RR }, { "mpi_buffer_size", OT_MPI_BUFFER_SIZE }, { "part_sort", OT_PART_SORT },
 	{ "new_load_balance", OT_NEW_LOAD_BALANCE }, { "pmc_overflow", OT_PMC_OVERFLOW }, { "net_partioner", OT_NET_PARTITIONER },
-	 { "num_net_cuts", OT_NUM_NET_CUTS },  { "num_extra_cuts", OT_NUM_EXTRA_CUTS },
+     { "num_net_cuts", OT_NUM_NET_CUTS },  { "num_extra_cuts", OT_NUM_EXTRA_CUTS }, { "seq_net", OT_SEQUENTIAL_NET }, { "seq_sink", OT_SEQUENTIAL_SINK },
 		{ NULL, OT_BASE_UNKNOWN } /* End of list marker */
 };
 

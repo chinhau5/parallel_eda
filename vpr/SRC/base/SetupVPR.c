@@ -586,6 +586,16 @@ static void SetupRouterOpts(INP t_options Options, INP boolean TimingEnabled,
 	if (Options.Count[OT_NUM_EXTRA_CUTS]) {
 		RouterOpts->num_extra_cuts = Options.num_extra_cuts;
 	}
+
+    RouterOpts->seq_net = FALSE;
+    if (Options.Count[OT_SEQUENTIAL_NET]) {
+        RouterOpts->seq_net = Options.seq_net;
+    }
+
+    RouterOpts->seq_sink = FALSE;
+    if (Options.Count[OT_SEQUENTIAL_SINK]) {
+        RouterOpts->seq_sink = Options.seq_sink;
+    }
 }
 
 static void SetupAnnealSched(INP t_options Options,

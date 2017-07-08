@@ -765,6 +765,8 @@ struct s_router_opts {
 	NetPartitioner net_partitioner;
 	int num_net_cuts;
 	int num_extra_cuts;
+    boolean seq_net;
+    boolean seq_sink;
 };
 
 /* All the parameters controlling the router's operation are in this        *

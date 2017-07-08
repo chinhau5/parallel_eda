@@ -100,6 +100,8 @@ enum e_OptionBaseToken {
 	OT_NET_PARTITIONER,
 	OT_NUM_NET_CUTS,
 	OT_NUM_EXTRA_CUTS,
+    OT_SEQUENTIAL_NET,
+    OT_SEQUENTIAL_SINK,
 	OT_BASE_UNKNOWN /* Must be last since used for counting enum items */
 };
 
