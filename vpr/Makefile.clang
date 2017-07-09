@@ -22,16 +22,26 @@ OPT_LLS = $(OBJS:.o=_opt.ll)
 
 DEPS = $(OBJS:.o=.d)
 
-INCLUDES = $(foreach dir, $(SRC_DIRS), $(addprefix -I, $(dir)))
+INCLUDES = $(SRC_DIRS)
+INCLUDES += ../libarchfpga/include
+INCLUDES += ../printhandler/SRC/TIO_InputOutputHandlers
 
-INCLUDES += -I/usr/local/include
-INCLUDES += -I../libarchfpga/include -I../printhandler/SRC/TIO_InputOutputHandlers
-INCLUDES += -I/home/chinhau5/zlog/include
-INCLUDES += -I/home/chinhau5/Downloads/metis-5.1.0/include
-#INCLUDES += -I/home/chinhau5/Downloads/tbb2017_20161128oss/include
-INCLUDES += -I/home/chinhau5/Downloads/tbb-2017_U6/include
-#INCLUDES += -I/home/chinhau5/Downloads/boost_1_60_0
-INCLUDES += -I/opt/intel/vtune_amplifier_xe/include
+INCLUDES += /usr/local/include
+INCLUDES += /home/chinhau5/zlog/include
+INCLUDES += /home/chinhau5/Downloads/metis-5.1.0/include
+#INCLUDES += /home/chinhau5/Downloads/tbb2017_20161128oss/include
+INCLUDES += /home/chinhau5/Downloads/tbb-2017_U6/include
+#INCLUDES += /home/chinhau5/Downloads/boost_1_60_0
+INCLUDES += /opt/intel/vtune_amplifier_xe/include
+
+INCLUDES += /home/akkumar/mvapich2-2.2-fast/include
+INCLUDES += /home/akkumar/zlog/include
+INCLUDES += /home/akkumar/Downloads/metis-5.1.0/include
+INCLUDES += /home/akkumar/Downloads/tbb-2017_U6/include
+INCLUDES += /home/akkumar/Downloads/boost_1_64_0
+INCLUDES += /home/akkumar/libs/include
+
+INCLUDES := $(foreach dir, $(INCLUDES), $(addprefix -I, $(dir)))
 
 HIDE =
 

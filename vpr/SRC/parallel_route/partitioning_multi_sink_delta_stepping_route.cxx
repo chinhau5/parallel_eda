@@ -3,8 +3,10 @@
 #include <thread>
 #include <condition_variable>
 #include <sys/stat.h>
-#include <papi.h>
+//#include <papi.h>
+#if defined(VTUNE_TRACE)
 #include <ittnotify.h>
+#endif
 #include <sys/syscall.h>
 #include <boost/graph/topological_sort.hpp>
 
@@ -45,9 +47,11 @@ using std::chrono::nanoseconds;
 
 //#define PTHREAD_BARRIER
 
+#if defined(VTUNE_TRACE)
 __itt_domain* domain = __itt_domain_create("MyTraces.MyDomain");
 __itt_string_handle* shMyTask = __itt_string_handle_create("Route Task");
 __itt_string_handle* shAnalysisTask = __itt_string_handle_create("Analysis Task");
+#endif
 
 typedef boost::adjacency_list<boost::vecS, boost::vecS, boost::undirectedS> UndirectedGraph;
 typedef boost::adjacency_list<boost::vecS, boost::vecS, boost::directedS> DirectedGraph;
@@ -1523,7 +1527,9 @@ class SchedRouterTask : public tbb::task {
 					bg::get<bg::min_corner, 1>(m_node->bb), bg::get<bg::max_corner, 1>(m_node->bb));
 
 
+#if defined(VTUNE_TRACE)
 			__itt_task_begin(domain, __itt_null, __itt_null, shMyTask);
+#endif
 
 			auto route_start = timer::now();
 
@@ -1537,7 +1543,9 @@ class SchedRouterTask : public tbb::task {
 			//time[level].pure_route_time = pure_route_time; 
 			m_node->route_time = timer::now() - route_start;
 			
+#if defined(VTUNE_TRACE)
 			__itt_task_end(domain);
+#endif
 
 			bool recycle_left = false;
 			bool recycle_right = false;
@@ -1619,7 +1627,9 @@ class MultiLayerSchedRouterTask : public tbb::task {
 					bg::get<bg::min_corner, 1>(m_node->bb), bg::get<bg::max_corner, 1>(m_node->bb));
 
 
+#if defined(VTUNE_TRACE)
 			__itt_task_begin(domain, __itt_null, __itt_null, shMyTask);
+#endif
 
 			auto route_start = timer::now();
 
@@ -1640,7 +1650,9 @@ class MultiLayerSchedRouterTask : public tbb::task {
 			//time[level].pure_route_time = pure_route_time; 
 			m_node->route_time = timer::now() - route_start;
 			
+#if defined(VTUNE_TRACE)
 			__itt_task_end(domain);
+#endif
 
 			bool recycle_left = false;
 			bool recycle_right = false;
@@ -1835,7 +1847,9 @@ class VirtualRouterTask : public tbb::task {
 			auto wait_time = timer::duration::zero();
 			auto get_net_wait_time = timer::duration::zero();
 
+#if defined(VTUNE_TRACE)
 			__itt_task_begin(domain, __itt_null, __itt_null, shMyTask);
+#endif
 
 			auto route_start = timer::now();
 
@@ -1853,7 +1867,9 @@ class VirtualRouterTask : public tbb::task {
 				}
 			}	
 			
+#if defined(VTUNE_TRACE)
 			__itt_task_end(domain);
+#endif
 
 			//time[level].route_time = timer::now()-route_start;
 			//time[level].wait_time = wait_time;
@@ -1936,7 +1952,9 @@ class RouterTask : public tbb::task {
 			auto wait_time = timer::duration::zero();
 			auto get_net_wait_time = timer::duration::zero();
 
+#if defined(VTUNE_TRACE)
 			__itt_task_begin(domain, __itt_null, __itt_null, shMyTask);
+#endif
 
 			auto route_start = timer::now();
 
@@ -2023,7 +2041,9 @@ class RouterTask : public tbb::task {
 				//routed_nets[level].push_back(&net);
 			}
 
+#if defined(VTUNE_TRACE)
 			__itt_task_end(domain);
+#endif
 
 			//time[level].route_time = timer::now()-route_start;
 			//time[level].wait_time = wait_time;
@@ -4735,10 +4755,10 @@ void schedule_nets_by_merge_and_convert(fpga_tree_node_t *node, int &total_num_v
 			return make_pair(color_map_map[get(new_color_map, a.local_index)], a.net->local_id) < make_pair(color_map_map[get(new_color_map, b.local_index)], b.net->local_id);
 			});
 
-	printf("mvnet sorted start\n");
-	for (int i = 0; i < sorted_vnets.size(); ++i) {
-		printf("mvnet color %d num sinks %lu\n", color_map_map[get(new_color_map, sorted_vnets[i].local_index)], sorted_vnets[i].net->sinks.size());
-	}
+	//printf("mvnet sorted start\n");
+	//for (int i = 0; i < sorted_vnets.size(); ++i) {
+		//printf("mvnet color %d num sinks %lu\n", color_map_map[get(new_color_map, sorted_vnets[i].local_index)], sorted_vnets[i].net->sinks.size());
+	//}
 
 	node->topo.clear();
 	topological_sort(node->net_g_2, back_inserter(node->topo));
@@ -5295,16 +5315,21 @@ class my_observer : public tbb::task_scheduler_observer {
 		my_observer()
 			: current_core(0)
 		{
+			printf("setting thread affinity\n");
 		}
 
 		virtual void on_scheduler_entry( bool is_worker )
 		{
+			//printf("sched entry \n");
+
 			cpu_set_t cpuset;
 			CPU_ZERO(&cpuset);
-			for (int i = 0; i < 4; ++i) {
+			const int base = 12;
+			const int num_threads = 12;
+			for (int i = base; i < base+num_threads; ++i) {
 				CPU_SET(i, &cpuset);
 			}
-			assert(CPU_COUNT(&cpuset) == 4);
+			assert(CPU_COUNT(&cpuset) == num_threads);
 			assert(sched_setaffinity(0, sizeof(cpu_set_t), &cpuset) == 0);
 		}
 
@@ -5386,6 +5411,8 @@ void congestion_map(const vector<new_virtual_net_t *> &vnets)
 	printf("congestion map size %dx%d min %d max %d mean %g std dev %g\n", nx+2, ny+2, boost::accumulators::min(acc), boost::accumulators::max(acc), mean(acc), std::sqrt(variance(acc)));
 }
 
+void print_context(int pid, int rank);
+
 bool partitioning_multi_sink_delta_stepping_route(const t_router_opts *opts)
 {
 #if TBB_USE_DEBUG == 1
@@ -5394,7 +5421,21 @@ bool partitioning_multi_sink_delta_stepping_route(const t_router_opts *opts)
 	my_observer obs;
 	obs.observe();
 
+	print_context(getpid(), -1);
+
 	tbb::task_scheduler_init init(opts->num_threads);
+
+	/* force set affinity by observer */
+	tbb::parallel_for(tbb::blocked_range<int>(0, 1024, 1),
+			[] (const tbb::blocked_range<int> &r) -> void {
+			int sum = 0;
+			for (int i = r.begin(); i != r.end(); ++i) {
+			++sum;
+			}
+			},
+			tbb::simple_partitioner());
+
+	print_context(getpid(), -1);
 
 	char buffer[256];
 
@@ -5552,6 +5593,8 @@ bool partitioning_multi_sink_delta_stepping_route(const t_router_opts *opts)
 
 	int total_num_vnets = 0;
 	create_virtual_net_tree(&router.net_root, opts->bb_factor, true, 0, 0, 0, total_num_vnets);
+
+	int total_num_vnets_before_merging = total_num_vnets;
 
 	printf("total num nets %lu total num vnets %d\n", router.all_nets.size(), total_num_vnets);
 
@@ -5846,7 +5889,9 @@ bool partitioning_multi_sink_delta_stepping_route(const t_router_opts *opts)
 
 		//printf("Resched time [has_resched %d]: %g\n", has_resched ? 1 : 0, duration_cast<nanoseconds>(resched_time).count()/1e9);
 		
+#if defined(VTUNE_TRACE)
 		__itt_task_begin(domain, __itt_null, __itt_null, shAnalysisTask);
+#endif
 
 		for (const auto &vnet : router.all_vnets) {
 			router.net_stats[vnet->global_index].num_heap_pops = 0;
@@ -6164,7 +6209,9 @@ bool partitioning_multi_sink_delta_stepping_route(const t_router_opts *opts)
 			route_tree_clear(router.state.route_trees[id]);
 		}
 
+#if defined(VTUNE_TRACE)
 		__itt_task_end(domain);
+#endif
 	}
 
 	fclose(iter_file);
@@ -6172,6 +6219,9 @@ bool partitioning_multi_sink_delta_stepping_route(const t_router_opts *opts)
 
 	if (routed) {
 		printf("Routed in %d iterations\n", router.iter.load()+1);
+		printf("Final crit path delay %g\n", crit_path_delay);
+	} else {
+		printf("Failed to route in %d iterations\n", opts->max_router_iterations);
 	}
 
 	printf("Total num heap pops: %lu\n", total_stats.num_heap_pops);
@@ -6183,8 +6233,10 @@ bool partitioning_multi_sink_delta_stepping_route(const t_router_opts *opts)
 
 	sprintf(buffer, "%s/final_stats.txt", g_dirname);
 	FILE *final_file = fopen(buffer, "w");
-	fprintf(final_file, "iter route real_route update pop visit push crit\n");
-	fprintf(final_file, "%d %g %g %g %lu %lu %lu %g\n",
+	fprintf(final_file, "num_vnets num_mvnets iter route real_route update pop visit push crit\n");
+	fprintf(final_file, "%d %d %d %g %g %g %lu %lu %lu %g\n",
+			total_num_vnets,
+			total_num_vnets_before_merging,
 			routed ? router.iter.load()+1 : -1,
 			duration_cast<nanoseconds>(total_time).count() / 1e9,
 			duration_cast<nanoseconds>(total_real_route_time).count() / 1e9,
