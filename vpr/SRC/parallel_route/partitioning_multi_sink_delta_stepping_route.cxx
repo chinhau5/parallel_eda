@@ -100,10 +100,11 @@ struct new_virtual_net_t {
 };
 
 struct fpga_tree_node_t {
+	/* build_net_tree */
 	box bb;
-
 	vector<net_t *> nets;
 
+	/* create_virtual_net_tree */
 	vector<new_virtual_net_t> vnets;
 
 	/* coloring */
@@ -141,7 +142,6 @@ struct /*alignas(64)*/ router_t {
 	int num_threads;
 	route_parameters_t params;
 	float pres_fac;
-	int pmc_overflow;
 
 	/* debug */
 	//tbb::spin_mutex *locks;
@@ -2985,6 +2985,25 @@ void split_nets_recursive_multi_layer(
 void clear_tree(fpga_tree_node_t *node)
 {
 	if (node) {
+		if (node->next) {
+			clear_tree(node->next);
+			delete node->next;
+			node->next = nullptr;
+		}
+
+		printf("clearing node with %lu vnets\n", node->vnets.size());
+
+		node->bb = bg::make_inverse<box>();
+		node->nets.clear();
+		node->vnets.clear();
+		node->scheduled.clear();
+		node->roots.clear();
+		node->net_g.clear();
+		node->net_g_2.clear();
+		node->topo.clear();
+		node->num_incoming_edges.clear();
+		node->current_num_incoming_edges.clear();
+
 		clear_tree(node->left);
 		if (node->left) {
 			delete node->left;
@@ -2996,9 +3015,6 @@ void clear_tree(fpga_tree_node_t *node)
 			delete node->right;
 			node->right = nullptr;
 		}
-
-		node->bb = bg::make_inverse<box>();
-		node->nets.clear();
 	}
 }
 
@@ -4433,9 +4449,9 @@ void schedule_nets_by_convert(fpga_tree_node_t *node, const LoadFunc &load, int 
 	assert(!node->roots.empty());
 }
 
-void add_new_merge_vnet(const new_virtual_net_t &vnet, vector<new_virtual_net_t> &merged_vnets)
+void add_new_merge_vnet(const new_virtual_net_t *vnet, vector<new_virtual_net_t> &merged_vnets)
 {
-	merged_vnets.push_back(vnet);
+	merged_vnets.push_back(*vnet);
 
 	auto &mvnet = merged_vnets.back();
 
@@ -4474,9 +4490,13 @@ void schedule_nets_by_merge_and_convert(fpga_tree_node_t *node, int &total_num_v
 
 	int num_colors = custom_vertex_coloring(overlap, order_map, color_map);
 
-	vector<new_virtual_net_t> sorted_vnets = node->vnets;
-	sort(begin(sorted_vnets), end(sorted_vnets), [&] (const new_virtual_net_t &a, const new_virtual_net_t &b) -> bool {
-			return make_pair(get(color_map, a.local_index), a.net->local_id) < make_pair(get(color_map, b.local_index), b.net->local_id);
+	vector<const new_virtual_net_t *> sorted_vnets;
+	for (const auto &vnet : node->vnets) {
+		sorted_vnets.push_back(&vnet);
+	}
+
+	sort(begin(sorted_vnets), end(sorted_vnets), [&] (const new_virtual_net_t *a, const new_virtual_net_t *b) -> bool {
+			return make_pair(get(color_map, a->local_index), a->net->local_id) < make_pair(get(color_map, b->local_index), b->net->local_id);
 			});
 
 	vector<new_virtual_net_t> merged_vnets;
@@ -4484,56 +4504,56 @@ void schedule_nets_by_merge_and_convert(fpga_tree_node_t *node, int &total_num_v
 	vector<int> color_start;
 
 	add_new_merge_vnet(sorted_vnets[0], merged_vnets);
-	vnet_to_merged_vnet[sorted_vnets[0].local_index] = 0;
+	vnet_to_merged_vnet[sorted_vnets[0]->local_index] = 0;
 	color_start.push_back(0);
 
-	int current_net_local_id = sorted_vnets[0].net->local_id;
-	int current_color = get(color_map, sorted_vnets[0].local_index);
+	int current_net_local_id = sorted_vnets[0]->net->local_id;
+	int current_color = get(color_map, sorted_vnets[0]->local_index);
 
 	for (int i = 1; i < sorted_vnets.size(); ++i) {
-		bool is_new_net = sorted_vnets[i].net->local_id != current_net_local_id;
-		bool is_new_color = get(color_map, sorted_vnets[i].local_index) != current_color;
+		bool is_new_net = sorted_vnets[i]->net->local_id != current_net_local_id;
+		bool is_new_color = get(color_map, sorted_vnets[i]->local_index) != current_color;
 
-		//printf("current net local id %d current color %d vnet local index %d color %d net local id %d\n", current_net_local_id, current_color, sorted_vnets[i].local_index, get(color_map, sorted_vnets[i].local_index), sorted_vnets[i].net->local_id);
+		//printf("current net local id %d current color %d vnet local index %d color %d net local id %d\n", current_net_local_id, current_color, sorted_vnets[i]->local_index, get(color_map, sorted_vnets[i]->local_index), sorted_vnets[i]->net->local_id);
 
 		if (is_new_net || is_new_color) {
 			if (is_new_net) {
-				current_net_local_id = sorted_vnets[i].net->local_id;
+				current_net_local_id = sorted_vnets[i]->net->local_id;
 				//printf("\tnew net local id %d\n", current_net_local_id);
 			}
 			if (is_new_color) {
-				current_color = get(color_map, sorted_vnets[i].local_index);
+				current_color = get(color_map, sorted_vnets[i]->local_index);
 				color_start.push_back(merged_vnets.size());
 				//printf("\tnew color %d color start %d\n", current_color, color_start.back());
 			}
 
-			vnet_to_merged_vnet[sorted_vnets[i].local_index] = merged_vnets.size();
+			vnet_to_merged_vnet[sorted_vnets[i]->local_index] = merged_vnets.size();
 
 			add_new_merge_vnet(sorted_vnets[i], merged_vnets);
 
-			//printf("\tvnet to merged vnet %d -> %d\n", sorted_vnets[i].local_index, vnet_to_merged_vnet[sorted_vnets[i].local_index]);
+			//printf("\tvnet to merged vnet %d -> %d\n", sorted_vnets[i]->local_index, vnet_to_merged_vnet[sorted_vnets[i]->local_index]);
 		} else {
-			assert(sorted_vnets[i].sinks.size() == 1);
-			assert(sorted_vnets[i].sinks[0]->net == merged_vnets.back().net);
+			assert(sorted_vnets[i]->sinks.size() == 1);
+			assert(sorted_vnets[i]->sinks[0]->net == merged_vnets.back().net);
 
 			auto &mvnet = merged_vnets.back();
 
-			for (int j = 0; j < sorted_vnets[i].sinks.size(); ++j) {
-				mvnet.sinks.push_back(sorted_vnets[i].sinks[j]);
-				mvnet.bounding_boxes.push_back(sorted_vnets[i].bounding_boxes[j]);
+			for (int j = 0; j < sorted_vnets[i]->sinks.size(); ++j) {
+				mvnet.sinks.push_back(sorted_vnets[i]->sinks[j]);
+				mvnet.bounding_boxes.push_back(sorted_vnets[i]->bounding_boxes[j]);
 
-				//for (const auto &b : sorted_vnets[i].bounding_boxes[0]) {
+				//for (const auto &b : sorted_vnets[i]->bounding_boxes[0]) {
 				//bg::expand(mvnet.overlap_g_boxes[0], b);
 				//}
-				for (const auto &b : sorted_vnets[i].bounding_boxes[j]) {
+				for (const auto &b : sorted_vnets[i]->bounding_boxes[j]) {
 					mvnet.overlap_g_boxes.push_back(b);
 				}
 			}
 
-			vnet_to_merged_vnet[sorted_vnets[i].local_index] = merged_vnets.size()-1;
+			vnet_to_merged_vnet[sorted_vnets[i]->local_index] = merged_vnets.size()-1;
 
 			//printf("\tadding to existing mvnet\n");
-			//printf("\tvnet to merged vnet %d -> %d\n", sorted_vnets[i].local_index, vnet_to_merged_vnet[sorted_vnets[i].local_index]);
+			//printf("\tvnet to merged vnet %d -> %d\n", sorted_vnets[i]->local_index, vnet_to_merged_vnet[sorted_vnets[i]->local_index]);
 		}
 	}
 	color_start.push_back(merged_vnets.size());
@@ -4546,7 +4566,7 @@ void schedule_nets_by_merge_and_convert(fpga_tree_node_t *node, int &total_num_v
 	/* checking */
 	int total_sinks_0 = 0;
 	for (const auto &vnet : sorted_vnets) {
-		total_sinks_0 += vnet.sinks.size();
+		total_sinks_0 += vnet->sinks.size();
 	}
 	int total_sinks_1 = 0;
 	for (const auto &vnet : merged_vnets) {
@@ -4750,9 +4770,12 @@ void schedule_nets_by_merge_and_convert(fpga_tree_node_t *node, int &total_num_v
 
 	assert(num_vertices(node->net_g_2) == node->net_g.size());
 
-	sorted_vnets = node->vnets;
-	sort(begin(sorted_vnets), end(sorted_vnets), [&] (const new_virtual_net_t &a, const new_virtual_net_t &b) -> bool {
-			return make_pair(color_map_map[get(new_color_map, a.local_index)], a.net->local_id) < make_pair(color_map_map[get(new_color_map, b.local_index)], b.net->local_id);
+	sorted_vnets.clear();
+	for (const auto &vnet : node->vnets) {
+		sorted_vnets.push_back(&vnet);
+	}
+	sort(begin(sorted_vnets), end(sorted_vnets), [&] (const new_virtual_net_t *a, const new_virtual_net_t *b) -> bool {
+			return make_pair(color_map_map[get(new_color_map, a->local_index)], a->net->local_id) < make_pair(color_map_map[get(new_color_map, b->local_index)], b->net->local_id);
 			});
 
 	//printf("mvnet sorted start\n");
@@ -5413,6 +5436,160 @@ void congestion_map(const vector<new_virtual_net_t *> &vnets)
 
 void print_context(int pid, int rank);
 
+void alloc_structs(int total_num_vnets, router_t &router)
+{
+	assert(router.state.added_rr_nodes == nullptr);
+	assert(router.state.back_added_rr_nodes == nullptr);
+
+	router.state.added_rr_nodes = new vector<RRNode>[total_num_vnets];
+	router.state.back_added_rr_nodes = new vector<RRNode>[total_num_vnets];
+
+	router.routed.resize(total_num_vnets);
+	router.route_time.resize(total_num_vnets);
+	router.update_time.resize(total_num_vnets);
+	router.net_stats.resize(total_num_vnets);
+	router.sink_stats.resize(total_num_vnets);
+	for (const auto &vnet : router.all_vnets) {
+		router.sink_stats[vnet->global_index].resize(vnet->sinks.size());
+	}
+}
+
+void build(const t_router_opts *opts, router_t &router, int &total_num_vnets, int &total_num_vnets_before_merging)
+{
+	build_net_tree(router, opts, [] (const net_t *net) -> float { return net->sinks.size(); });
+
+	total_num_vnets = 0;
+	create_virtual_net_tree(&router.net_root, opts->bb_factor, true, 0, 0, 0, total_num_vnets);
+
+	total_num_vnets_before_merging = total_num_vnets;
+
+	printf("total num nets %lu total num vnets %d\n", router.all_nets.size(), total_num_vnets);
+
+	vector<new_virtual_net_t *> sorted_vnets;
+	get_sorted_vnets_to_route(&router.net_root, sorted_vnets);
+
+	assert(sorted_vnets.size() == total_num_vnets);
+
+	vector<bool> vnets_added(total_num_vnets, false);
+	for (const auto &vnet : sorted_vnets) {
+		vnets_added[vnet->global_index] = true;
+	}
+	assert(all_of(begin(vnets_added), end(vnets_added), [] (const bool &val) -> bool { return val; }));
+
+	/* the check below is incorrect because vnets in different levels are 
+	 * sorted independently of one another */
+	//int prev_num_sinks = std::numeric_limits<int>::max();
+	//for (const auto &vnet : sorted_vnets) {
+		//printf("%lu %d\n", vnet->net->sinks.size(), prev_num_sinks);
+		//assert(vnet->net->sinks.size() <= prev_num_sinks);
+		//prev_num_sinks = vnet->net->sinks.size();
+	//}
+
+	//printf("vnets start\n");
+	//for (const auto &vnet : sorted_vnets) {
+		//printf("vnet %d net %d vnet sinks %d net sinks %d\n", vnet->global_index, vnet->net->local_id, vnet->sinks.size(), vnet->net->sinks.size());
+	//}
+
+	set_vnet_bounding_boxes_2(sorted_vnets, opts->bb_factor);
+
+	fill_all_vnets(&router.net_root, router.all_vnets);
+
+	congestion_map(router.all_vnets);
+
+	printf("Scheduling by coloring\n");
+
+	schedule_net_tree_by_coloring(&router.net_root);
+
+	printf("Scheduling by convert\n");
+
+#if 0
+	schedule_net_tree_by_convert(&router.net_root, 0, pow(2, opts->num_net_cuts), [] (const new_virtual_net_t &net) ->float { return net.sinks.size(); });
+#else
+	total_num_vnets = 0;
+	schedule_net_tree_by_merge_and_convert(&router.net_root, 0, pow(2, opts->num_net_cuts), [] (const new_virtual_net_t &net) ->float { return net.sinks.size(); }, total_num_vnets);
+#endif
+
+	printf("total num nets %lu total num vnets %d\n", router.all_nets.size(), total_num_vnets);
+
+	//write_net_g(g_dirname, &router.net_root, 0, 0);
+
+	printf("Net tree\n");
+	print_tree(&router.net_root, 0, 0, 0);
+
+	router.all_vnets.clear();
+
+	fill_all_vnets(&router.net_root, router.all_vnets);
+
+	congestion_map(router.all_vnets);
+
+	router.state.added_rr_nodes = nullptr;
+	router.state.back_added_rr_nodes = nullptr;
+	alloc_structs(total_num_vnets, router);
+}
+
+void build_phase_two(const t_router_opts *opts, router_t &router, int &total_num_vnets)
+{
+	extern int nx, ny;
+	bg::assign_values(router.net_root.bb, 0, 0, nx+1, ny+1);
+
+	total_num_vnets = 0;
+	for (const auto &net : router.current_nets) {
+		new_virtual_net_t vnet;
+
+		vnet.local_index = total_num_vnets;
+		vnet.global_index = total_num_vnets;
+		vnet.net = net;
+		vnet.source = &net->source;
+
+		box vnet_bb;
+		bg::assign_inverse(vnet_bb);
+		bg::expand(vnet_bb, point(net->source.x, net->source.y));
+		for (int i = 0; i < net->sinks.size(); ++i) {
+			bg::expand(vnet_bb, point(net->sinks[i].x, net->sinks[i].y));
+		}
+		bg::add_value(vnet_bb.max_corner(), opts->bb_factor);
+		bg::subtract_value(vnet_bb.min_corner(), 1+opts->bb_factor);
+		clip(vnet_bb, make_pair(nx+1, ny+1));
+
+		for (int i = 0; i < net->sinks.size(); ++i) {
+			vnet.sinks.push_back(&net->sinks[i]);
+			vnet.bounding_boxes.push_back({ vnet_bb });
+		}
+		vnet.overlap_g_boxes.push_back(vnet_bb);
+
+		router.net_root.vnets.push_back(vnet);
+
+		++total_num_vnets;
+	}
+
+	for (const auto &net : router.current_nets) {
+		router.net_root.nets.push_back(net);
+	}
+
+	total_num_vnets = 0;
+	schedule_net_tree_by_merge_and_convert(&router.net_root, 0, pow(2, opts->num_net_cuts), [] (const new_virtual_net_t &net) ->float { return net.sinks.size(); }, total_num_vnets);
+
+	assert(router.current_nets.size() == total_num_vnets);
+
+	printf("Net tree\n");
+	print_tree(&router.net_root, 0, 0, 0);
+
+	router.all_vnets.clear();
+	fill_all_vnets(&router.net_root, router.all_vnets);
+	assert(router.all_vnets.size() == router.current_nets.size());
+
+	alloc_structs(total_num_vnets, router);
+
+	for (const auto &vnet : router.all_vnets) {
+		const auto &net = vnet->net;
+		const auto &rt = router.state.route_trees[net->local_id];
+		for (const auto &rt_node_i : route_tree_get_nodes(rt)) {
+			const auto &rt_node = get_vertex_props(rt.graph, rt_node_i);
+			router.state.added_rr_nodes[vnet->global_index].push_back(rt_node.rr_node);
+		}
+	}
+}
+
 bool partitioning_multi_sink_delta_stepping_route(const t_router_opts *opts)
 {
 #if TBB_USE_DEBUG == 1
@@ -5589,71 +5766,11 @@ bool partitioning_multi_sink_delta_stepping_route(const t_router_opts *opts)
 
 	//exit(0);
 
-	build_net_tree(router, opts, [] (const net_t *net) -> float { return net->sinks.size(); });
+	int total_num_vnets_in_phase_one;
+	int total_num_vnets_before_merging;
+	build(opts, router, total_num_vnets_in_phase_one, total_num_vnets_before_merging);
 
-	int total_num_vnets = 0;
-	create_virtual_net_tree(&router.net_root, opts->bb_factor, true, 0, 0, 0, total_num_vnets);
-
-	int total_num_vnets_before_merging = total_num_vnets;
-
-	printf("total num nets %lu total num vnets %d\n", router.all_nets.size(), total_num_vnets);
-
-	vector<new_virtual_net_t *> sorted_vnets;
-	get_sorted_vnets_to_route(&router.net_root, sorted_vnets);
-
-	assert(sorted_vnets.size() == total_num_vnets);
-
-	vector<bool> vnets_added(total_num_vnets, false);
-	for (const auto &vnet : sorted_vnets) {
-		vnets_added[vnet->global_index] = true;
-	}
-	assert(all_of(begin(vnets_added), end(vnets_added), [] (const bool &val) -> bool { return val; }));
-
-	/* the check below is incorrect because vnets in different levels are 
-	 * sorted independently of one another */
-	//int prev_num_sinks = std::numeric_limits<int>::max();
-	//for (const auto &vnet : sorted_vnets) {
-		//printf("%lu %d\n", vnet->net->sinks.size(), prev_num_sinks);
-		//assert(vnet->net->sinks.size() <= prev_num_sinks);
-		//prev_num_sinks = vnet->net->sinks.size();
-	//}
-
-	//printf("vnets start\n");
-	//for (const auto &vnet : sorted_vnets) {
-		//printf("vnet %d net %d vnet sinks %d net sinks %d\n", vnet->global_index, vnet->net->local_id, vnet->sinks.size(), vnet->net->sinks.size());
-	//}
-
-	set_vnet_bounding_boxes_2(sorted_vnets, opts->bb_factor);
-
-	fill_all_vnets(&router.net_root, router.all_vnets);
-
-	congestion_map(router.all_vnets);
-
-	printf("Scheduling by coloring\n");
-
-	schedule_net_tree_by_coloring(&router.net_root);
-
-	printf("Scheduling by convert\n");
-
-#if 0
-	schedule_net_tree_by_convert(&router.net_root, 0, pow(2, opts->num_net_cuts), [] (const new_virtual_net_t &net) ->float { return net.sinks.size(); });
-#else
-	total_num_vnets = 0;
-	schedule_net_tree_by_merge_and_convert(&router.net_root, 0, pow(2, opts->num_net_cuts), [] (const new_virtual_net_t &net) ->float { return net.sinks.size(); }, total_num_vnets);
-#endif
-
-	printf("total num nets %lu total num vnets %d\n", router.all_nets.size(), total_num_vnets);
-
-	//write_net_g(g_dirname, &router.net_root, 0, 0);
-
-	printf("Net tree\n");
-	print_tree(&router.net_root, 0, 0, 0);
-
-	router.all_vnets.clear();
-
-	fill_all_vnets(&router.net_root, router.all_vnets);
-
-	congestion_map(router.all_vnets);
+	int total_num_vnets = total_num_vnets_in_phase_one; 
 
 	//init_fpga_regions(4, router.e_state, opts->num_threads, fpga_regions);
 
@@ -5771,9 +5888,6 @@ bool partitioning_multi_sink_delta_stepping_route(const t_router_opts *opts)
 		//route_tree_init(router.state.back_route_trees[i]);
 	}
 
-	router.state.added_rr_nodes = new vector<RRNode>[total_num_vnets];
-	router.state.back_added_rr_nodes = new vector<RRNode>[total_num_vnets];
-
     router.state.net_timing = new t_net_timing[router.all_nets.size()+global_nets.size()];
     init_net_timing(router.all_nets, global_nets, router.state.net_timing);
 
@@ -5784,22 +5898,11 @@ bool partitioning_multi_sink_delta_stepping_route(const t_router_opts *opts)
 
 	router.pres_fac = opts->first_iter_pres_fac;
 
-	router.pmc_overflow = opts->pmc_overflow;
-
 	//void *aligned_current_num_incoming_edges;
 	//assert(posix_memalign(&aligned_current_num_incoming_edges, 64, sizeof(aligned_atomic<int, 64>)*nets.size()) == 0);
 	//assert(((unsigned long)aligned_current_num_incoming_edges & 63) == 0);
 	//router.sync.current_num_incoming_edges = new(aligned_current_num_incoming_edges) aligned_atomic<int, 64>[num_virtual_nets];
 	//router.sync.current_num_incoming_edges = new std::atomic<int>[num_virtual_nets];
-
-	router.routed.resize(total_num_vnets);
-	router.route_time.resize(total_num_vnets);
-	router.update_time.resize(total_num_vnets);
-	router.net_stats.resize(total_num_vnets);
-	router.sink_stats.resize(total_num_vnets);
-	for (int i = 0; i < router.sink_stats.size(); ++i) {
-		router.sink_stats[i].resize(router.all_vnets[i]->sinks.size());
-	}
 
 	//router.locks = new tbb::spin_mutex[router.all_nets.size()];
 
@@ -5822,7 +5925,7 @@ bool partitioning_multi_sink_delta_stepping_route(const t_router_opts *opts)
 
 	sprintf(buffer, "%s/iter_stats.txt", g_dirname);
 	FILE *iter_file = fopen(buffer, "w");
-	fprintf(iter_file, "route real_route update pop visit push overuse num_v_g crit\n");
+	fprintf(iter_file, "route real_route update pop visit push overuse per_dec num_v_g crit\n");
 
 	sprintf(buffer, "%s/iter_tree_stats.txt", g_dirname);
 	FILE *iter_tree_file = fopen(buffer, "w");
@@ -5831,7 +5934,8 @@ bool partitioning_multi_sink_delta_stepping_route(const t_router_opts *opts)
 	float crit_path_delay = -1;
 
 	bool routed = false;
-	unsigned long prev_num_overused_nodes = std::numeric_limits<unsigned long>::max();
+	long prev_num_overused_nodes = std::numeric_limits<long>::max();
+	int trans_iter = -1;
 	for (; router.iter < opts->max_router_iterations && !routed; ++router.iter) {
 		/* hack */
 		//tbb::parallel_for(tbb::blocked_range<int>(0, opts->num_threads, 1),
@@ -6116,8 +6220,9 @@ bool partitioning_multi_sink_delta_stepping_route(const t_router_opts *opts)
 			//lmao2(router, opts, nets.size(), [&router] (const net_t *net) -> float { return router.net_stats[net->local_id].num_heap_pops; });
 		}
 
-		unsigned long num_overused_nodes = 0;
+		long num_overused_nodes = 0;
 		vector<int> overused_nodes_by_type(NUM_RR_TYPES, 0);
+		float per_dec = 0;
 
 		if (feasible_routing(router.g, router.state.congestion)) {
 			//dump_route(*current_traces_ptr, "route.txt");
@@ -6131,9 +6236,11 @@ bool partitioning_multi_sink_delta_stepping_route(const t_router_opts *opts)
 				}
 			}
 
-			//bool switch_to_phase_two = (router.iter > 10 && num_overused_nodes > prev_num_overused_nodes);
-			bool switch_to_phase_two = false;
-			if (switch_to_phase_two) {
+			per_dec = abs(100.0*(num_overused_nodes - prev_num_overused_nodes)/prev_num_overused_nodes);
+			printf("overuse %ld prev overuse %ld per dec %g\n", num_overused_nodes, prev_num_overused_nodes, per_dec);
+			bool switch_to_phase_two = (router.iter > 10 && per_dec < 5.0f);
+			//bool switch_to_phase_two = true;
+			if (switch_to_phase_two && !router.phase_two) {
 				vector<net_t *> congested_nets;
 				for (const auto &net : router.current_nets) {
 					if (route_tree_is_congested(router.state.route_trees[net->local_id], router.g, router.state.congestion)) {
@@ -6147,17 +6254,21 @@ bool partitioning_multi_sink_delta_stepping_route(const t_router_opts *opts)
 				router.current_nets = std::move(congested_nets);
 
 				clear_tree(&router.net_root);
-				build_net_tree(router, opts, [&router] (const net_t *net) -> float { return router.net_stats[net->local_id].num_heap_pops; });
+				//build_net_tree(router, opts, [&router] (const net_t *net) -> float { return router.net_stats[net->local_id].num_heap_pops; });
+				delete [] router.state.added_rr_nodes;
+				delete [] router.state.back_added_rr_nodes;
+				router.state.added_rr_nodes = nullptr;
+				router.state.back_added_rr_nodes = nullptr;
+
+				build_phase_two(opts, router, total_num_vnets);
 
 				router.phase_two = true;
+				trans_iter = router.iter;
 
 				++num_repartitions;
-
-				prev_num_overused_nodes = std::numeric_limits<unsigned long>::max();
-			} else {
-				prev_num_overused_nodes = num_overused_nodes;
 			}
 
+			prev_num_overused_nodes = num_overused_nodes;
 			//auto update_cost_start = timer::now();
 
 			if (router.iter == 0) {
@@ -6182,10 +6293,10 @@ bool partitioning_multi_sink_delta_stepping_route(const t_router_opts *opts)
 
 		//analyze_timing_time = timer::now()-analyze_timing_start;
 		
-		printf("Overused: %lu/%d (%g) Crit path delay: %g\n", num_overused_nodes, num_vertices(router.g), 100.0*num_overused_nodes/num_vertices(router.g), crit_path_delay);
+		printf("Overused: %lu/%d (%g) Per dec %g Crit path delay: %g\n", num_overused_nodes, num_vertices(router.g), 100.0*num_overused_nodes/num_vertices(router.g), per_dec, crit_path_delay);
 		printf("\n");
 
-		fprintf(iter_file, "%g %g %g %lu %lu %lu %lu %d %g\n",
+		fprintf(iter_file, "%g %g %g %lu %lu %lu %lu %g %d %g\n",
 				duration_cast<nanoseconds>(route_time).count()/1e9,
 				duration_cast<nanoseconds>(iteration_real_route_time).count()/1e9,
 				duration_cast<nanoseconds>(iteration_update_time).count()/1e9,
@@ -6193,6 +6304,7 @@ bool partitioning_multi_sink_delta_stepping_route(const t_router_opts *opts)
 				iteration_stats.num_neighbor_visits,
 				iteration_stats.num_heap_pushes,
 				num_overused_nodes,
+				per_dec,
 				num_vertices(router.g),
 				crit_path_delay);
 
@@ -6224,6 +6336,7 @@ bool partitioning_multi_sink_delta_stepping_route(const t_router_opts *opts)
 		printf("Failed to route in %d iterations\n", opts->max_router_iterations);
 	}
 
+	printf("Trans iter %d\n", trans_iter);
 	printf("Total num heap pops: %lu\n", total_stats.num_heap_pops);
 	printf("Total num neighbor visits: %lu\n", total_stats.num_neighbor_visits);
 	printf("Total num heap pushes: %lu\n", total_stats.num_heap_pushes);
@@ -6233,11 +6346,12 @@ bool partitioning_multi_sink_delta_stepping_route(const t_router_opts *opts)
 
 	sprintf(buffer, "%s/final_stats.txt", g_dirname);
 	FILE *final_file = fopen(buffer, "w");
-	fprintf(final_file, "num_vnets num_mvnets iter route real_route update pop visit push crit\n");
-	fprintf(final_file, "%d %d %d %g %g %g %lu %lu %lu %g\n",
-			total_num_vnets,
+	fprintf(final_file, "num_vnets num_mvnets iter trans_iter route real_route update pop visit push crit\n");
+	fprintf(final_file, "%d %d %d %d %g %g %g %lu %lu %lu %g\n",
+			total_num_vnets_in_phase_one,
 			total_num_vnets_before_merging,
 			routed ? router.iter.load()+1 : -1,
+			trans_iter,
 			duration_cast<nanoseconds>(total_time).count() / 1e9,
 			duration_cast<nanoseconds>(total_real_route_time).count() / 1e9,
 			duration_cast<nanoseconds>(total_update_time).count() / 1e9,
